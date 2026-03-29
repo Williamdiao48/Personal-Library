@@ -1,0 +1,65 @@
+{
+  "name": "personal-library",
+  "version": "0.1.0",
+  "description": "A local-first desktop reading library",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "package": "electron-vite build && electron-builder",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "electron-rebuild -f -w better-sqlite3"
+  },
+  "dependencies": {
+    "@headlessui/react": "^2.2.9",
+    "@mozilla/readability": "^0.5.0",
+    "@tanstack/react-virtual": "^3.13.23",
+    "adm-zip": "^0.5.16",
+    "better-sqlite3": "^11.0.0",
+    "epub-gen-memory": "^1.1.2",
+    "jsdom": "^24.1.1",
+    "pdfjs-dist": "^5.4.624",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.0",
+    "sanitize-html": "^2.13.0"
+  },
+  "devDependencies": {
+    "@electron-toolkit/tsconfig": "^1.0.1",
+    "@types/adm-zip": "^0.5.5",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/sanitize-html": "^2.13.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-rebuild": "^3.2.9",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.5.3",
+    "vite": "^5.3.4"
+  },
+  "build": {
+    "appId": "com.personal-library.app",
+    "productName": "Personal Library",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.books"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}

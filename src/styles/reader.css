@@ -1,0 +1,435 @@
+/* Reader typography — applied to the .html-reader scroll container */
+
+.html-reader {
+  flex: 1;
+  overflow-y: auto;
+  padding: 48px 24px 96px;
+}
+
+.html-reader > * {
+  max-width: var(--reader-max-width, 680px);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.html-reader p,
+.html-reader li,
+.html-reader blockquote {
+  font-size: var(--reader-font-size, 18px);
+  line-height: var(--reader-line-height, 1.75);
+  font-family: var(--reader-font-family, Georgia, 'Times New Roman', serif);
+  color: #d4d4d4;
+  margin-bottom: var(--reader-para-spacing, 1.2em);
+}
+
+.html-reader h1, .html-reader h2, .html-reader h3,
+.html-reader h4, .html-reader h5, .html-reader h6 {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #f0f0f0;
+  margin: 1.6em 0 .6em;
+  line-height: 1.3;
+}
+
+.html-reader h1 { font-size: 28px; }
+.html-reader h2 { font-size: 22px; }
+.html-reader h3 { font-size: 18px; }
+
+.html-reader a {
+  color: #9b8dff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.html-reader blockquote {
+  border-left: 3px solid #444;
+  padding-left: 20px;
+  color: #999;
+  font-style: italic;
+}
+
+.html-reader pre, .html-reader code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 14px;
+  background: #2a2a2a;
+  border-radius: 4px;
+}
+
+.html-reader pre {
+  padding: 16px;
+  overflow-x: auto;
+}
+
+.html-reader code {
+  padding: 2px 5px;
+}
+
+.html-reader img {
+  max-width: 100%;
+  border-radius: 6px;
+  margin: 1em 0;
+}
+
+.html-reader hr {
+  border: none;
+  border-top: 1px solid #333;
+  margin: 2em 0;
+}
+
+/* ── PDF reader ─────────────────────────────────────────────── */
+
+.pdf-reader {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Single-page paginated viewport — mirrors .epub-page-outer.
+   The canvas is centered inside; click zones and footer are
+   absolutely positioned relative to this container. */
+.pdf-page-outer {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2a2a2a;   /* dark mat surrounding the page */
+}
+
+/* Two-page spread wrapper */
+.pdf-spread {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Rendered PDF canvas */
+.pdf-page-outer canvas {
+  display: block;
+  box-shadow: 0 4px 32px rgba(0, 0, 0, 0.6);
+  flex-shrink: 0;  /* never let the flex container squash the canvas */
+}
+
+/* Loading / error message — centered by parent flex */
+.pdf-loading-msg {
+  color: #888;
+  font-size: 14px;
+}
+
+/* ── Page-jump control (lives in the reader-header right side) ─ */
+
+.pdf-page-jump {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #888;
+}
+
+/* Clickable page number — looks like text, acts like a button */
+.pdf-page-display {
+  color: #d4d4d4;
+  font-size: 13px;
+  cursor: text;
+  border-bottom: 1px dashed #555;
+  padding: 0 2px;
+  line-height: 1.4;
+  min-width: 28px;
+  text-align: center;
+}
+
+.pdf-page-display:hover {
+  border-bottom-color: #999;
+  color: #fff;
+}
+
+/* Inline numeric input for jumping to a page */
+.pdf-page-input {
+  width: 48px;
+  background: #1e1e1e;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #d4d4d4;
+  font-size: 13px;
+  text-align: center;
+  padding: 2px 4px;
+  outline: none;
+}
+
+.pdf-page-input:focus {
+  border-color: #888;
+}
+
+.pdf-page-sep {
+  color: #666;
+  user-select: none;
+}
+
+/* ── PDF → EPUB conversion modal ───────────────────────────── */
+
+.convert-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.convert-modal {
+  background: #222;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 28px 32px;
+  width: 360px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.convert-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #f0f0f0;
+}
+
+.convert-step {
+  margin: 0;
+  font-size: 13px;
+  color: #888;
+}
+
+.convert-error {
+  margin: 0;
+  font-size: 13px;
+  color: #e06060;
+}
+
+.convert-bar-track {
+  height: 4px;
+  background: #333;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.convert-bar-fill {
+  height: 100%;
+  background: #7c6fcd;
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+
+.convert-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.convert-btn-primary {
+  padding: 7px 16px;
+  background: #7c6fcd;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.convert-btn-primary:hover { background: #9080e0; }
+
+.convert-btn-secondary {
+  padding: 7px 16px;
+  background: transparent;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #888;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.convert-btn-secondary:hover { border-color: #666; color: #d4d4d4; }
+
+.convert-btn-cancel {
+  padding: 7px 16px;
+  background: transparent;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #666;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.convert-btn-cancel:hover { border-color: #666; color: #aaa; }
+
+/* ── Multi-chapter layout ───────────────────────────────────── */
+
+.html-reader .chapter-title {
+  text-align: center;
+  font-size: 18px;
+  font-weight: 600;
+  color: #aaa;
+  letter-spacing: .02em;
+  margin-top: 0;
+  margin-bottom: 2em;
+}
+
+/* Chapter navigation bar — prev on the left, next/end on the right.
+   The chapter picker now lives in the top navbar, so this is just two items. */
+.chapter-nav {
+  max-width: 680px;
+  margin: 64px auto 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  border-top: 1px solid #333;
+  padding-top: 32px;
+}
+
+.chapter-nav-btn {
+  padding: 8px 20px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #d4d4d4;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.chapter-nav-btn:hover:not(:disabled) {
+  background: #333;
+  border-color: #666;
+}
+
+.chapter-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.chapter-nav-end {
+  font-size: 12px;
+  color: #555;
+  font-style: italic;
+}
+
+/* ── Html reader shell + theme variants ─────────────────────────── */
+
+/* Wraps the header + scrollable content; fills the reader-shell flex column */
+.html-reader-shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+
+/* ── Light theme ─────────────────────────────────────────────────── */
+
+.html-theme-light .reader-header       { background: #f5f5f5; border-color: #e0e0e0; }
+.html-theme-light .epub-back-btn       { color: #777; }
+.html-theme-light .epub-back-btn:hover { color: #111; }
+.html-theme-light .epub-top-btn                    { color: #555; border-color: #ccc; }
+.html-theme-light .epub-top-btn:hover              { color: #111; border-color: #999; }
+.html-theme-light .epub-top-btn.active             { background: #e5e5e5; border-color: #bbb; color: #111; }
+.html-theme-light .epub-settings-panel             { background: #fff; border-color: #e0e0e0; box-shadow: 0 4px 20px rgba(0,0,0,0.12); }
+.html-theme-light .epub-settings-label             { color: #999; }
+.html-theme-light .epub-settings-btn               { border-color: #ddd; color: #555; }
+.html-theme-light .epub-settings-btn:hover         { border-color: #bbb; color: #111; }
+.html-theme-light .epub-settings-btn.active        { background: #ebebeb; border-color: #bbb; color: #111; }
+.html-theme-light .epub-settings-size-display      { color: #1c1c1e; }
+
+.html-theme-light .html-reader { background: #ffffff; }
+.html-theme-light .html-reader p,
+.html-theme-light .html-reader li,
+.html-theme-light .html-reader blockquote          { color: #1c1c1e; }
+.html-theme-light .html-reader h1,
+.html-theme-light .html-reader h2,
+.html-theme-light .html-reader h3,
+.html-theme-light .html-reader h4,
+.html-theme-light .html-reader h5,
+.html-theme-light .html-reader h6                  { color: #000; }
+.html-theme-light .html-reader a                   { color: #5040cc; }
+.html-theme-light .html-reader blockquote          { border-color: #ccc; color: #666; }
+.html-theme-light .html-reader pre,
+.html-theme-light .html-reader code                { background: #f0f0f0; color: #1c1c1e; }
+.html-theme-light .html-reader hr                  { border-color: #ddd; }
+.html-theme-light .html-reader .chapter-title      { color: #555; }
+
+.html-theme-light .chapter-nav                             { border-color: #ddd; }
+.html-theme-light .chapter-nav-btn                         { background: #ebebeb; border-color: #ccc; color: #333; }
+.html-theme-light .chapter-nav-btn:hover:not(:disabled)    { background: #e0e0e0; border-color: #999; }
+.html-theme-light .chapter-nav-end                         { color: #999; }
+
+/* ── Sepia theme ─────────────────────────────────────────────────── */
+
+.html-theme-sepia .reader-header       { background: #e8d8c0; border-color: #c8b89a; }
+.html-theme-sepia .epub-back-btn       { color: #a08060; }
+.html-theme-sepia .epub-back-btn:hover { color: #3b2a1a; }
+.html-theme-sepia .epub-top-btn                    { color: #7a6040; border-color: #c8b89a; }
+.html-theme-sepia .epub-top-btn:hover              { color: #3b2a1a; border-color: #a08060; }
+.html-theme-sepia .epub-top-btn.active             { background: #dcc9a0; border-color: #a08060; color: #3b2a1a; }
+.html-theme-sepia .epub-settings-panel             { background: #f2e8d5; border-color: #c8b89a; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+.html-theme-sepia .epub-settings-label             { color: #a08060; }
+.html-theme-sepia .epub-settings-btn               { border-color: #c8b89a; color: #7a6040; }
+.html-theme-sepia .epub-settings-btn:hover         { border-color: #a08060; color: #3b2a1a; }
+.html-theme-sepia .epub-settings-btn.active        { background: #dcc9a0; border-color: #a08060; color: #3b2a1a; }
+.html-theme-sepia .epub-settings-size-display      { color: #3b2a1a; }
+
+.html-theme-sepia .html-reader { background: #f2e8d5; }
+.html-theme-sepia .html-reader p,
+.html-theme-sepia .html-reader li,
+.html-theme-sepia .html-reader blockquote          { color: #3b2a1a; }
+.html-theme-sepia .html-reader h1,
+.html-theme-sepia .html-reader h2,
+.html-theme-sepia .html-reader h3,
+.html-theme-sepia .html-reader h4,
+.html-theme-sepia .html-reader h5,
+.html-theme-sepia .html-reader h6                  { color: #2a1a08; }
+.html-theme-sepia .html-reader a                   { color: #7a4a1a; }
+.html-theme-sepia .html-reader blockquote          { border-color: #c8b89a; color: #7a6040; }
+.html-theme-sepia .html-reader pre,
+.html-theme-sepia .html-reader code                { background: #e8d8b8; color: #3b2a1a; }
+.html-theme-sepia .html-reader hr                  { border-color: #c8b89a; }
+.html-theme-sepia .html-reader .chapter-title      { color: #8a7060; }
+
+.html-theme-sepia .chapter-nav                             { border-color: #c8b89a; }
+.html-theme-sepia .chapter-nav-btn                         { background: #e8d8c0; border-color: #c8b89a; color: #3b2a1a; }
+.html-theme-sepia .chapter-nav-btn:hover:not(:disabled)    { background: #dcc9a0; border-color: #a08060; }
+.html-theme-sepia .chapter-nav-end                         { color: #a08060; }
+
+/* ── Continuous scroll mode ─────────────────────────────────── */
+
+/* Chapter separator — shown between chapters in continuous mode */
+.html-reader .chapter-separator {
+  max-width: var(--reader-max-width, 680px);
+  margin: 48px auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #444;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.html-reader .chapter-separator::before,
+.html-reader .chapter-separator::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #333;
+}
+
+.html-theme-light .html-reader .chapter-separator { color: #bbb; }
+.html-theme-light .html-reader .chapter-separator::before,
+.html-theme-light .html-reader .chapter-separator::after { background: #ddd; }
+
+.html-theme-sepia .html-reader .chapter-separator { color: #c8b89a; }
+.html-theme-sepia .html-reader .chapter-separator::before,
+.html-theme-sepia .html-reader .chapter-separator::after { background: #c8b89a; }

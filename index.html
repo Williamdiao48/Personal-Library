@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Content-Security-Policy — defence-in-depth for the Electron renderer.
+
+      script-src 'self' blob:
+        'self'  — Vite built bundle / dev server scripts
+        blob:   — pdfjs-dist inline worker (bundled as a blob: URL by Vite)
+
+      style-src 'self' 'unsafe-inline'
+        Vite injects style tags at runtime; unsafe-inline is required for that.
+
+      img-src 'self' data: library:
+        'self'      — bundled assets
+        data:       — inline images (e.g. pdfjs-rendered page thumbnails)
+        library:    — cover images served from userData via our custom scheme
+        NOTE: 'https:' wildcard removed — no external image sources needed.
+
+      font-src 'self' data:
+        pdfjs extracts embedded PDF fonts and references them as data: URIs.
+
+      connect-src 'self' ws: wss:
+        ws:/wss: — Vite HMR WebSocket in dev mode only.
+
+      worker-src blob: 'self'
+        Explicit allowance for pdfjs inline worker (blob: URL).
+
+      object-src 'none'    — block <object>/<embed> (Flash, plugins)
+      frame-src  'none'    — block all iframes
+      base-uri   'self'    — prevent <base href="…"> hijacking
+      form-action 'none'   — no form submissions in this app
+    -->
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               script-src 'self' blob:;
+               style-src 'self' 'unsafe-inline';
+               img-src 'self' data: library:;
+               font-src 'self' data:;
+               connect-src 'self' ws: wss:;
+               worker-src blob: 'self';
+               object-src 'none';
+               frame-src 'none';
+               base-uri 'self';
+               form-action 'none';" />
+    <title>Personal Library</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+  </body>
+</html>
