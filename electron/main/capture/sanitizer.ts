@@ -19,7 +19,10 @@ export function sanitize(html: string): string {
       'img': ['src', 'alt', 'title', 'loading'],
       'td':  ['colspan', 'rowspan'],
       'th':  ['colspan', 'rowspan'],
-      '*':   ['class', 'id'],
+      // class/id intentionally omitted: a malicious article could set
+      // class="epub-settings-overlay" (or any other app class) to trigger
+      // our own CSS (position:fixed; inset:0; z-index:99) and clickjack the
+      // reader UI. Readability-extracted prose needs no class/id to render.
     },
     allowedSchemes: ['http', 'https'],
     transformTags: {

@@ -22,8 +22,9 @@
       font-src 'self' data:
         pdfjs extracts embedded PDF fonts and references them as data: URIs.
 
-      connect-src 'self' ws: wss:
-        ws:/wss: — Vite HMR WebSocket in dev mode only.
+      connect-src 'self' ws://localhost:* wss://localhost:*
+        Scoped to localhost — Vite HMR WebSocket in dev mode only.
+        Wildcard host removed: no legitimate reason to connect to external ws origins.
 
       worker-src blob: 'self'
         Explicit allowance for pdfjs inline worker (blob: URL).
@@ -39,7 +40,7 @@
                style-src 'self' 'unsafe-inline';
                img-src 'self' data: library:;
                font-src 'self' data:;
-               connect-src 'self' ws: wss:;
+               connect-src 'self' ws://localhost:* wss://localhost:*;
                worker-src blob: 'self';
                object-src 'none';
                frame-src 'none';

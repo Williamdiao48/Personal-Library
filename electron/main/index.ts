@@ -132,7 +132,11 @@ app.whenReady().then(() => {
     if (!filePath.startsWith(userData + sep)) {
       return new Response('Forbidden', { status: 403 })
     }
-    return net.fetch(`file://${filePath}`)
+    return net.fetch(`file://${filePath}`).then(res => {
+      const headers = new Headers(res.headers)
+      headers.set('X-Content-Type-Options', 'nosniff')
+      return new Response(res.body, { status: res.status, headers })
+    })
   })
 
   initDatabase()
