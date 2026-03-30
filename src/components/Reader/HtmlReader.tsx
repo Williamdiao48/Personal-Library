@@ -76,6 +76,7 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
   const [showSearch,      setShowSearch]      = useState(false)
   const [searchQuery,     setSearchQuery]     = useState('')
   const [showChapterList, setShowChapterList] = useState(false)
+  const [readingProgress, setReadingProgress] = useState(() => Math.round((item.scroll_position ?? 0) * 100))
 
   function adjustFontSize(delta: number) {
     const next = Math.max(12, Math.min(32, fontSize + delta))
@@ -208,6 +209,7 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     recordActivity()
     const scrollable = el.scrollHeight - el.clientHeight
     const frac = scrollable > 0 ? el.scrollTop / scrollable : 1
+    setReadingProgress(Math.round(frac * 100))
     scheduleSaveProgress(frac)
     scheduleSaveScrollPos(0, el.scrollTop)
   }, [chapters, scheduleSaveProgress, scheduleSaveScrollPos, recordActivity])

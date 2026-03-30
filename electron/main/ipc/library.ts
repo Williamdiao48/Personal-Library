@@ -162,6 +162,7 @@ export function registerLibraryHandlers(): void {
 
   // Save raw image bytes as cover (called by PdfReader after rendering page 1).
   ipcMain.handle('library:setCover', async (_e, id: string, data: ArrayBuffer, ext: string) => {
+    if (!['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) return null
     const userData = app.getPath('userData')
     const db = getDb()
 
@@ -258,7 +259,9 @@ export function registerLibraryHandlers(): void {
 
       if (currentCount !== null) {
         if (currentCount <= item.chapter_end) {
-          // No new chapters — verify via content hash before declaring done.
+          // No new chapters. Content edits to existing chapters are not detected
+          // here — content_hash covers single-file items only; multi-chapter
+          // items use chapter count as the change signal.
           return { changed: false, wordCount: item.word_count ?? 0 }
         }
 

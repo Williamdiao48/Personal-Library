@@ -151,15 +151,20 @@ export function registerStatsHandlers(): void {
 
     // Current streak: walk backwards from today; accept yesterday as starting point
     // if the user hasn't read today yet (so the streak doesn't "break" mid-day).
-    const daySet  = new Set(days)
-    const today   = new Date()
-    const todayStr = today.toISOString().split('T')[0]
-    const check   = new Date(today)
+    // Use local date parts — toISOString() is UTC and breaks near midnight for
+    // users whose local timezone is behind UTC.
+    const localDateStr = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+    const daySet   = new Set(days)
+    const today    = new Date()
+    const todayStr = localDateStr(today)
+    const check    = new Date(today)
     if (!daySet.has(todayStr)) check.setDate(check.getDate() - 1)
 
     let current = 0
     while (true) {
-      const s = check.toISOString().split('T')[0]
+      const s = localDateStr(check)
       if (!daySet.has(s)) break
       current++
       check.setDate(check.getDate() - 1)
