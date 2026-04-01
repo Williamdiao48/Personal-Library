@@ -82,6 +82,14 @@ export default function Sidebar({ collectionMgmt, authors, authorItemCounts, cap
   const [newName, setNewName]                 = useState('')
   const [saving, setSaving]                   = useState(false)
   const [collectionError, setCollectionError] = useState<string | null>(null)
+  const [contextMenu, setContextMenu]         = useState<{ id: string; x: number; y: number } | null>(null)
+
+  useEffect(() => {
+    if (!contextMenu) return
+    function close() { setContextMenu(null) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [contextMenu])
 
   // Tracks whether Escape was pressed so onBlur knows not to commit
   const editCancelled = useRef(false)
@@ -215,15 +223,14 @@ export default function Sidebar({ collectionMgmt, authors, authorItemCounts, cap
             <div
               key={col.id}
               className={`sidebar-collection-row${currentCollection === col.id ? ' active' : ''}`}
+              onContextMenu={e => {
+                e.preventDefault()
+                setContextMenu({ id: col.id, x: e.clientX, y: e.clientY })
+              }}
             >
               <Link className="sidebar-collection-link" to={`/?collection=${col.id}`}>
                 <span className="sidebar-collection-name">{col.name}</span>
-                {count > 0 && <span className="sidebar-collection-count">{count}</span>}
               </Link>
-              <div className="sidebar-collection-actions">
-                <button onClick={() => startEdit(col)} title="Rename" disabled={saving}>✏</button>
-                <button onClick={() => { setConfirmDeleteId(col.id); setEditingId(null) }} title="Delete" disabled={saving}>✕</button>
-              </div>
             </div>
           )
         })}
@@ -357,6 +364,36 @@ export default function Sidebar({ collectionMgmt, authors, authorItemCounts, cap
             )
           })}
         </section>
+      )}
+
+      {/* ── Collection context menu ─────────────────── */}
+      {contextMenu && (
+        <div
+          className="sidebar-context-menu"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onMouseDown={e => e.stopPropagation()}
+        >
+          <button
+            className="sidebar-context-menu-item"
+            onClick={() => {
+              const col = collections.find(c => c.id === contextMenu.id)
+              if (col) startEdit(col)
+              setContextMenu(null)
+            }}
+          >
+            Rename
+          </button>
+          <button
+            className="sidebar-context-menu-item sidebar-context-menu-item--danger"
+            onClick={() => {
+              setConfirmDeleteId(contextMenu.id)
+              setEditingId(null)
+              setContextMenu(null)
+            }}
+          >
+            Delete
+          </button>
+        </div>
       )}
 
       {/* ── Footer ──────────────────────────────────── */}

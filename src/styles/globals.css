@@ -666,42 +666,37 @@ html, body, #root {
   text-overflow: ellipsis;
 }
 
-.sidebar-collection-count {
-  font-size: 11px;
-  color: var(--text-muted);
-  background: var(--bg);
-  border-radius: 10px;
-  padding: 1px 6px;
-  flex-shrink: 0;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
 
-.sidebar-collection-row:hover .sidebar-collection-count { opacity: 1; }
-
-.sidebar-collection-actions {
-  display: none;
-  gap: 2px;
-}
-
-.sidebar-collection-row:hover .sidebar-collection-actions { display: flex; }
-
-.sidebar-collection-actions button {
-  padding: 0;
-  width: 20px;
-  height: 20px;
-  font-size: 10px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-radius: 4px;
+.sidebar-context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  padding: 4px;
+  min-width: 130px;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
 }
 
-.sidebar-collection-actions button:hover { background: var(--border); color: var(--text); }
+.sidebar-context-menu-item {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font-ui);
+  text-align: left;
+  padding: 7px 12px;
+  border-radius: calc(var(--radius) - 2px);
+  cursor: pointer;
+  transition: background var(--t-fast);
+}
+
+.sidebar-context-menu-item:hover { background: var(--bg-hover); }
+
+.sidebar-context-menu-item--danger { color: var(--danger); }
+.sidebar-context-menu-item--danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
 
 .sidebar-collection-edit-form {
   padding: 2px 4px;
@@ -2281,10 +2276,11 @@ html[data-theme="sepia"] .item-card-refresh-status--error    { background: #fee2
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 16px;
   padding: 2px 4px;
   border-radius: 3px;
   transition: color var(--t-fast), background var(--t-fast);
+  line-height: 1;
 }
 
 .sidebar-authors-toggle:hover { color: var(--text); background: var(--bg-hover); }
