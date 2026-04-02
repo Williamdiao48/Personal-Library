@@ -6,7 +6,7 @@ import { SCHEMA } from './schema'
 let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
-const CURRENT_VERSION = 11
+const CURRENT_VERSION = 12
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -71,6 +71,7 @@ ALTER TABLE items ADD COLUMN chapter_end INTEGER DEFAULT NULL;`,
     );
   `,
   11: `ALTER TABLE progress ADD COLUMN max_scroll_position REAL DEFAULT NULL;`,
+  12: `CREATE INDEX IF NOT EXISTS idx_item_tags_item_id ON item_tags(item_id);`,
 }
 
 export function initDatabase(): void {
@@ -80,6 +81,9 @@ export function initDatabase(): void {
   db = new Database(dbPath)
   db.pragma('journal_mode = WAL')   // write-ahead log: safer, faster concurrent reads
   db.pragma('foreign_keys = ON')    // enforce FK constraints (ON DELETE CASCADE/SET NULL)
+  db.pragma('synchronous = NORMAL') // safe with WAL; skips unnecessary fsyncs vs FULL
+  db.pragma('cache_size = -32000')  // 32 MB page cache (default ~8 MB)
+  db.pragma('temp_store = MEMORY')  // temp B-trees/indexes stay in RAM
   db.exec(SCHEMA)        // idempotent: creates tables only if they don't exist
   runMigrations()
 

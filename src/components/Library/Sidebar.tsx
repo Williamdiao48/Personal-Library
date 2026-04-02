@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, memo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import type { Collection, CaptureJob } from '../../types'
 
@@ -61,7 +61,7 @@ function LiveEta({ job }: { job: CaptureJob }) {
   return <span className="capture-job-eta">{eta}</span>
 }
 
-export default function Sidebar({ collectionMgmt, authors, authorItemCounts, captureJobs, onDismissJob }: Props) {
+const Sidebar = memo(function Sidebar({ collectionMgmt, authors, authorItemCounts, captureJobs, onDismissJob }: Props) {
   const { collections, itemCounts, onCreate, onDelete, onRename } = collectionMgmt
 
   const [searchParams] = useSearchParams()
@@ -426,4 +426,6 @@ export default function Sidebar({ collectionMgmt, authors, authorItemCounts, cap
       </div>
     </aside>
   )
-}
+})
+
+export default Sidebar

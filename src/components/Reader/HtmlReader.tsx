@@ -60,8 +60,9 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
   const { recordActivity } = useReadingSession(item.id)
 
   const scrollRef = useRef<HTMLDivElement>(null)
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const posTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveTimer            = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const posTimer             = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const activityThrottleRef  = useRef<number>(0)
 
   // ── Reader settings (localStorage) ───────────────────────────────
 
@@ -206,7 +207,8 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     if (chapters) return
     const el = scrollRef.current
     if (!el) return
-    recordActivity()
+    const now = Date.now()
+    if (now - activityThrottleRef.current >= 1000) { activityThrottleRef.current = now; recordActivity() }
     const scrollable = el.scrollHeight - el.clientHeight
     const frac = scrollable > 0 ? el.scrollTop / scrollable : 1
     setReadingProgress(Math.round(frac * 100))
@@ -242,7 +244,8 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     if (!chapters || continuousMode) return
     const el = scrollRef.current
     if (!el) return
-    recordActivity()
+    const now = Date.now()
+    if (now - activityThrottleRef.current >= 1000) { activityThrottleRef.current = now; recordActivity() }
     scheduleSaveScrollPos(currentChapterRef.current, el.scrollTop)
   }, [chapters, continuousMode, scheduleSaveScrollPos, recordActivity])
 
@@ -273,7 +276,8 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     if (!chapters || !continuousMode) return
     const el = scrollRef.current
     if (!el) return
-    recordActivity()
+    const now = Date.now()
+    if (now - activityThrottleRef.current >= 1000) { activityThrottleRef.current = now; recordActivity() }
 
     // Detect current chapter from scroll position.
     // Walk chapters in order; the current chapter is the last one whose top

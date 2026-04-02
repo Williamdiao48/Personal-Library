@@ -275,12 +275,12 @@ export default function LibraryView() {
     setItems(prev => prev.map(i => i.id === itemId ? { ...i, status } : i))
   }
 
-  async function handleCollectionCreate(name: string) {
+  const handleCollectionCreate = useCallback(async (name: string) => {
     const col = await collectionService.create(name)
     setAllCollections(prev => [...prev, col].sort((a, b) => a.name.localeCompare(b.name)))
-  }
+  }, [])
 
-  async function handleCollectionDelete(id: string) {
+  const handleCollectionDelete = useCallback(async (id: string) => {
     await collectionService.delete(id)
     setAllCollections(prev => prev.filter(c => c.id !== id))
     setItemCollectionsMap(prev => {
@@ -296,9 +296,9 @@ export default function LibraryView() {
       next.delete('collection')
       setSearchParams(next)
     }
-  }
+  }, [collectionFilter, searchParams, setSearchParams])
 
-  async function handleCollectionRename(id: string, name: string) {
+  const handleCollectionRename = useCallback(async (id: string, name: string) => {
     await collectionService.rename(id, name)
     setAllCollections(prev =>
       prev.map(c => c.id === id ? { ...c, name } : c)
@@ -311,7 +311,15 @@ export default function LibraryView() {
       }
       return next
     })
-  }
+  }, [])
+
+  const collectionMgmt = useMemo(() => ({
+    collections: allCollections,
+    itemCounts:  collectionItemCounts,
+    onCreate:    handleCollectionCreate,
+    onDelete:    handleCollectionDelete,
+    onRename:    handleCollectionRename,
+  }), [allCollections, collectionItemCounts, handleCollectionCreate, handleCollectionDelete, handleCollectionRename])
 
   // ── Bulk selection ───────────────────────────────────────────
 
@@ -676,13 +684,7 @@ export default function LibraryView() {
   return (
     <div className="library-layout" onClick={() => { if (selectedIds.size > 0) clearSelection() }}>
       <Sidebar
-        collectionMgmt={{
-          collections:  allCollections,
-          itemCounts:   collectionItemCounts,
-          onCreate:     handleCollectionCreate,
-          onDelete:     handleCollectionDelete,
-          onRename:     handleCollectionRename,
-        }}
+        collectionMgmt={collectionMgmt}
         authors={allAuthors}
         authorItemCounts={authorItemCounts}
         captureJobs={captureJobs}

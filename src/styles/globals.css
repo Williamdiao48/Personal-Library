@@ -762,16 +762,34 @@ html, body, #root {
   padding: 0;
   cursor: pointer;
   text-align: left;
-  transition: border-color var(--t-fast), transform var(--t-mid), box-shadow var(--t-mid);
+  transition: border-color var(--t-fast), transform var(--t-mid);
   will-change: transform;
-  contain: layout style;
+  contain: layout style paint;
   user-select: none;
+}
+
+/* Pre-render the hover shadow on a composited layer so the browser doesn't
+   re-rasterize the blur on every animation frame. Transitioning opacity is
+   GPU-accelerated; transitioning box-shadow directly is not. */
+.item-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  transition: opacity var(--t-mid);
+  pointer-events: none;
+  z-index: -1;
 }
 
 .item-card:hover {
   border-color: var(--accent-dim);
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+}
+
+.item-card:hover::after {
+  opacity: 1;
 }
 
 .item-card--confirming {
