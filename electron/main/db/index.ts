@@ -6,7 +6,7 @@ import { SCHEMA } from './schema'
 let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
-const CURRENT_VERSION = 12
+const CURRENT_VERSION = 13
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -72,6 +72,23 @@ ALTER TABLE items ADD COLUMN chapter_end INTEGER DEFAULT NULL;`,
   `,
   11: `ALTER TABLE progress ADD COLUMN max_scroll_position REAL DEFAULT NULL;`,
   12: `CREATE INDEX IF NOT EXISTS idx_item_tags_item_id ON item_tags(item_id);`,
+  13: `
+    CREATE TABLE IF NOT EXISTS annotations (
+      id             TEXT    PRIMARY KEY,
+      item_id        TEXT    NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      type           TEXT    NOT NULL
+        CHECK(type IN ('bookmark', 'highlight', 'note')),
+      chapter_index  INTEGER DEFAULT NULL,
+      position       REAL    NOT NULL DEFAULT 0,
+      selected_text  TEXT    DEFAULT NULL,
+      context_before TEXT    DEFAULT NULL,
+      context_after  TEXT    DEFAULT NULL,
+      note_text      TEXT    DEFAULT NULL,
+      created_at     INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_annotations_item_id
+      ON annotations(item_id, chapter_index, position);
+  `,
 }
 
 export function initDatabase(): void {

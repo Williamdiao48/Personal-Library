@@ -8,8 +8,10 @@ import { readerService } from '../../services/reader'
 import { convertService } from '../../services/convert'
 import { useReadingSession } from '../../hooks/useReadingSession'
 import { usePdfSearch } from '../../hooks/usePdfSearch'
+import { useAnnotations } from '../../hooks/useAnnotations'
 import SearchBar from './SearchBar'
-import type { Item, ConvertChapter } from '../../types'
+import AnnotationsPanel from './AnnotationsPanel'
+import type { Item, ConvertChapter, Annotation } from '../../types'
 import ConvertProgress from './ConvertProgress'
 import '../../styles/epub-reader.css'
 
@@ -388,6 +390,46 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   const [editing,       setEditing]       = useState(false)
   const [pageInput,     setPageInput]     = useState('')
   const [renderKey,     setRenderKey]     = useState(0)
+
+  // Annotations
+  const [showPanel,       setShowPanel]       = useState(false)
+  const [noteEditorState, setNoteEditorState] = useState<{
+    existingId?: string
+    initialText?: string
+  } | null>(null)
+  const [noteText, setNoteText] = useState('')
+
+  const annot = useAnnotations({
+    itemId:       item.id,
+    contentRef:   outerRef,   // PDF has no text DOM; outerRef is just used for deletion
+    chapterIndex: null,       // PDF annotations are page-indexed, no chapter concept
+  })
+
+  function handleCreateBookmark() {
+    annot.createBookmark(currentPageRef.current)
+  }
+
+  function handleAddNote() {
+    setNoteText('')
+    setNoteEditorState({})
+  }
+
+  async function savePdfNote() {
+    if (!noteEditorState) return
+    const text = noteText.trim()
+    if (!text) { setNoteEditorState(null); return }
+    if (noteEditorState.existingId) {
+      await annot.updateNote(noteEditorState.existingId, text)
+    } else {
+      await annot.createNote(currentPageRef.current, text)
+    }
+    setNoteEditorState(null)
+    setNoteText('')
+  }
+
+  function handleJumpToAnnotation(annotation: Annotation) {
+    goTo(annotation.position)
+  }
 
   // Conversion state
   const [converting,   setConverting]   = useState(false)
@@ -969,6 +1011,58 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
           </button>
         )}
 
+        {/* Bookmark current page */}
+        {ready && !showSearch && (
+          <button
+            className="epub-top-btn"
+            style={{ marginLeft: '4px' }}
+            onClick={handleCreateBookmark}
+            title="Bookmark current page"
+            aria-label="Bookmark this page"
+          >
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+              <path d="M3 2h10v13l-5-3-5 3V2z" stroke="currentColor" strokeWidth="1.5"/>
+            </svg>
+          </button>
+        )}
+
+        {/* Add note at current page */}
+        {ready && !showSearch && (
+          <button
+            className="epub-top-btn"
+            style={{ marginLeft: '4px' }}
+            onClick={handleAddNote}
+            title="Add note at this page"
+            aria-label="Add note"
+          >
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+              <path d="M2 3h12v8H9l-3 3V11H2V3z" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+            </svg>
+          </button>
+        )}
+
+        {/* Annotations panel toggle */}
+        {ready && !showSearch && (
+          <div style={{ position: 'relative', marginLeft: '4px' }}>
+            <button
+              className={`epub-top-btn${showPanel ? ' active' : ''}`}
+              onClick={() => setShowPanel(s => !s)}
+              aria-label="Annotations"
+              title="Annotations"
+              style={{ position: 'relative' }}
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+                <rect x="1" y="3" width="14" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+                <rect x="1" y="7" width="10" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+                <rect x="1" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+              </svg>
+              {annot.annotations.length > 0 && (
+                <span className="annot-badge">{annot.annotations.length}</span>
+              )}
+            </button>
+          </div>
+        )}
+
         {/* Aa zoom settings */}
         <div className="epub-settings-wrapper">
           <button
@@ -1004,8 +1098,9 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
 
       </header>
 
-      {/* ── Page viewport ────────────────────────────────────── */}
-      <div ref={outerRef} className="pdf-page-outer">
+      {/* ── Page viewport + annotations panel ───────────────── */}
+      <div className="reader-with-panel">
+      <div ref={outerRef} className="pdf-page-outer" style={{ flex: 1, minWidth: 0 }}>
 
         {loading && <div className="pdf-loading-msg">Loading PDF…</div>}
         {error   && <div className="pdf-loading-msg">{error}</div>}
@@ -1045,6 +1140,45 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
         )}
 
       </div>
+
+      {showPanel && (
+        <AnnotationsPanel
+          annotations={annot.annotations}
+          contentType={item.content_type}
+          onJump={handleJumpToAnnotation}
+          onDelete={annot.deleteAnnotation}
+          onUpdateNote={annot.updateNote}
+          onClose={() => setShowPanel(false)}
+        />
+      )}
+      </div>
+
+      {/* Note editor modal */}
+      {noteEditorState && (
+        <div className="note-editor-overlay" onClick={() => setNoteEditorState(null)}>
+          <div className="note-editor-modal" onClick={e => e.stopPropagation()}>
+            <div className="note-editor-header">
+              {noteEditorState.existingId ? 'Edit note' : `Add note — Page ${currentPageRef.current}`}
+            </div>
+            <textarea
+              className="note-editor-textarea"
+              value={noteText}
+              onChange={e => setNoteText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); savePdfNote() }
+                if (e.key === 'Escape') { setNoteEditorState(null); setNoteText('') }
+              }}
+              autoFocus
+              rows={4}
+              placeholder="Write a note…"
+            />
+            <div className="note-editor-actions">
+              <button className="annot-save-btn" onClick={savePdfNote}>Save</button>
+              <button className="annot-cancel-btn" onClick={() => { setNoteEditorState(null); setNoteText('') }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Conversion progress modal ─────────────────────────── */}
       {converting && (

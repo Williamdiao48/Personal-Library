@@ -3,8 +3,11 @@ import { libraryService } from '../../services/library'
 import { readerService } from '../../services/reader'
 import { useReadingSession } from '../../hooks/useReadingSession'
 import { useTextHighlight } from '../../hooks/useTextHighlight'
+import { useAnnotations } from '../../hooks/useAnnotations'
 import SearchBar from './SearchBar'
-import type { Item, EpubBook } from '../../types'
+import TextSelectionPopup from './TextSelectionPopup'
+import AnnotationsPanel from './AnnotationsPanel'
+import type { Item, EpubBook, Annotation } from '../../types'
 import '../../styles/epub-reader.css'
 
 const SAVE_DEBOUNCE_MS = 600
@@ -72,7 +75,15 @@ export default function EpubReader({ item, onBack }: Props) {
   const [showChapterList,   setShowChapterList]   = useState(false)
   const [showSearch,        setShowSearch]        = useState(false)
   const [searchQuery,       setSearchQuery]       = useState('')
+  const [showPanel,         setShowPanel]         = useState(false)
   const [chapterPageCounts, setChapterPageCounts] = useState<number[]>([])
+  const [noteEditorState, setNoteEditorState] = useState<{
+    range:       Range | null
+    position:    number
+    existingId?: string
+    initialText?: string
+  } | null>(null)
+  const [noteText, setNoteText] = useState('')
 
   const outerRef   = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -90,6 +101,8 @@ export default function EpubReader({ item, onBack }: Props) {
   // Carries the within-chapter page from initial localStorage read to the first
   // page-count measurement (effect 3), where totalPages is known for clamping.
   const pendingPageRef        = useRef<number | null>(null)
+  // Set before calling jumpToChapter; consumed after chapter settles to jump to annotation mark
+  const pendingJumpAnnotationId = useRef<string | null>(null)
 
   // Keep both state and ref in sync for xAnim
   function updateXAnim(next: XAnim | null) {
@@ -122,6 +135,107 @@ export default function EpubReader({ item, onBack }: Props) {
 
   const { matchCount, currentMatch, goNext: hlNext, goPrev: hlPrev } =
     useTextHighlight(contentRef, showSearch ? searchQuery : '', chapter, handleSearchActivate)
+
+  // ── Annotations ───────────────────────────────────────────────
+
+  const annot = useAnnotations({
+    itemId:       item.id,
+    contentRef:   contentRef,
+    chapterIndex: chapter,
+  })
+
+  // Re-apply highlights after chapter content settles (chapter change or annotation change)
+  useEffect(() => {
+    if (loading) return
+    let cancelled = false
+    const raf = requestAnimationFrame(() => {
+      if (cancelled) return
+      annot.applyHighlightsToDOM(chapterRef.current)
+
+      // If there's a pending jump-to-annotation, find the mark and flip to its page
+      const pendingId = pendingJumpAnnotationId.current
+      if (pendingId) {
+        pendingJumpAnnotationId.current = null
+        const container = contentRef.current
+        const outer     = outerRef.current
+        if (container && outer) {
+          const mark = container.querySelector<HTMLElement>(`mark[data-annotation-id="${pendingId}"]`)
+          if (mark) {
+            const w        = outerWidthRef.current
+            const markRect = mark.getBoundingClientRect()
+            const outerRect = outer.getBoundingClientRect()
+            const logicalX  = (markRect.left - outerRect.left) + pageRef.current * w
+            const target    = Math.max(0, Math.min(Math.floor(logicalX / w), totalPagesRef.current - 1))
+            if (target !== pageRef.current) {
+              pageRef.current = target
+              setPage(target)
+            }
+          }
+        }
+      }
+    })
+    return () => { cancelled = true; cancelAnimationFrame(raf) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapter, annot.annotations, loading, fontSize, fontFamily])
+
+  function getCurrentEpubPosition(): number {
+    const total = totalPagesRef.current
+    return total > 1 ? pageRef.current / total : 0
+  }
+
+  function handleSelectionHighlight(range: Range) {
+    annot.createHighlight(range, getCurrentEpubPosition())
+  }
+
+  function handleSelectionNote(range: Range) {
+    setNoteText('')
+    setNoteEditorState({ range, position: getCurrentEpubPosition() })
+  }
+
+  async function saveNote() {
+    if (!noteEditorState) return
+    const text = noteText.trim()
+    if (!text) { setNoteEditorState(null); return }
+    if (noteEditorState.existingId) {
+      await annot.updateNote(noteEditorState.existingId, text)
+    } else {
+      await annot.createNote(noteEditorState.position, text, noteEditorState.range ?? undefined)
+      window.getSelection()?.removeAllRanges()
+    }
+    setNoteEditorState(null)
+    setNoteText('')
+  }
+
+  function handleJumpToAnnotation(annotation: Annotation) {
+    // If different chapter, jump there and set pending annotation id
+    if (annotation.chapter_index !== null && annotation.chapter_index !== chapterRef.current) {
+      pendingJumpAnnotationId.current = annotation.id
+      jumpToChapter(annotation.chapter_index)
+      return
+    }
+    // Same chapter — find the mark and flip to its page
+    const container = contentRef.current
+    const outer     = outerRef.current
+    if (container && outer) {
+      const mark = container.querySelector<HTMLElement>(`mark[data-annotation-id="${annotation.id}"]`)
+      if (mark) {
+        const w         = outerWidthRef.current
+        const markRect  = mark.getBoundingClientRect()
+        const outerRect = outer.getBoundingClientRect()
+        const logicalX  = (markRect.left - outerRect.left) + pageRef.current * w
+        const target    = Math.max(0, Math.min(Math.floor(logicalX / w), totalPagesRef.current - 1))
+        if (target !== pageRef.current) {
+          pageRef.current = target
+          setPage(target)
+        }
+        return
+      }
+    }
+    // Fallback: jump to position fraction
+    const target = Math.round(annotation.position * (totalPagesRef.current - 1))
+    pageRef.current = target
+    setPage(target)
+  }
 
   function openSearch() {
     setShowSearch(true)
@@ -586,6 +700,37 @@ export default function EpubReader({ item, onBack }: Props) {
     '--epub-side-padding':  `${COL_PADDING_PX[colPadding]}px`,
   } as React.CSSProperties
 
+  const noteEditorModal = noteEditorState && (
+    <div className="note-editor-overlay" onClick={() => setNoteEditorState(null)}>
+      <div className="note-editor-modal" onClick={e => e.stopPropagation()}>
+        <div className="note-editor-header">
+          {noteEditorState.existingId ? 'Edit note' : 'Add note'}
+        </div>
+        {noteEditorState.range && !noteEditorState.existingId && (
+          <blockquote className="note-editor-quote">
+            {noteEditorState.range.toString().slice(0, 120)}
+          </blockquote>
+        )}
+        <textarea
+          className="note-editor-textarea"
+          value={noteText}
+          onChange={e => setNoteText(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveNote() }
+            if (e.key === 'Escape') { setNoteEditorState(null); setNoteText('') }
+          }}
+          autoFocus
+          rows={4}
+          placeholder="Write a note…"
+        />
+        <div className="note-editor-actions">
+          <button className="annot-save-btn" onClick={saveNote}>Save</button>
+          <button className="annot-cancel-btn" onClick={() => { setNoteEditorState(null); setNoteText('') }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+
   return (
     <div className={`epub-reader epub-theme-${theme}`}>
 
@@ -664,6 +809,26 @@ export default function EpubReader({ item, onBack }: Props) {
               <line x1="10.5" y1="10.5" x2="14" y2="14" />
             </svg>
           </button>
+        )}
+
+        {/* Annotations panel toggle */}
+        {!showSearch && (
+          <div style={{ position: 'relative', marginLeft: '4px' }}>
+            <button
+              className={`epub-top-btn${showPanel ? ' active' : ''}`}
+              onClick={() => setShowPanel(s => !s)}
+              aria-label="Annotations"
+              title="Annotations"
+              style={{ position: 'relative' }}
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+                <path d="M3 2h10v13l-5-3-5 3V2z" stroke="currentColor" strokeWidth="1.5"/>
+              </svg>
+              {annot.annotations.length > 0 && (
+                <span className="annot-badge">{annot.annotations.length}</span>
+              )}
+            </button>
+          </div>
         )}
 
         <div className="epub-settings-wrapper">
@@ -755,8 +920,9 @@ export default function EpubReader({ item, onBack }: Props) {
 
       </header>
 
-      {/* ── Page viewport ──────────────────────────────────────── */}
-      <div ref={outerRef} className="epub-page-outer">
+      {/* ── Page viewport + annotations panel ─────────────────��─ */}
+      <div className="reader-with-panel">
+      <div ref={outerRef} className="epub-page-outer" style={{ flex: 1, minWidth: 0 }}>
 
         {/* Active (current) chapter */}
         <div
@@ -816,8 +982,27 @@ export default function EpubReader({ item, onBack }: Props) {
           </div>
         )}
 
+        {/* TextSelectionPopup — must be outside epub-page-outer (overflow:hidden) */}
+        <TextSelectionPopup
+          containerRef={contentRef}
+          onHighlight={handleSelectionHighlight}
+          onNote={handleSelectionNote}
+        />
       </div>
 
+      {showPanel && (
+        <AnnotationsPanel
+          annotations={annot.annotations}
+          contentType={item.content_type}
+          onJump={handleJumpToAnnotation}
+          onDelete={annot.deleteAnnotation}
+          onUpdateNote={annot.updateNote}
+          onClose={() => setShowPanel(false)}
+        />
+      )}
+      </div>
+
+      {noteEditorModal}
     </div>
   )
 }

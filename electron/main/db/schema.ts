@@ -78,4 +78,20 @@ export const SCHEMA = `
     content='',        -- contentless: we manage the index manually
     tokenize='porter unicode61'
   );
+
+  CREATE TABLE IF NOT EXISTS annotations (
+    id             TEXT    PRIMARY KEY,
+    item_id        TEXT    NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    type           TEXT    NOT NULL
+      CHECK(type IN ('bookmark', 'highlight', 'note')),
+    chapter_index  INTEGER DEFAULT NULL,    -- 0-based chapter; NULL for PDF / single-page
+    position       REAL    NOT NULL DEFAULT 0, -- 0.0-1.0 scroll fraction OR PDF page number
+    selected_text  TEXT    DEFAULT NULL,    -- highlighted text (highlight / text-anchored note)
+    context_before TEXT    DEFAULT NULL,    -- ~30 chars before selection for re-anchoring
+    context_after  TEXT    DEFAULT NULL,    -- ~30 chars after selection for re-anchoring
+    note_text      TEXT    DEFAULT NULL,    -- user's freeform note
+    created_at     INTEGER NOT NULL         -- unix ms
+  );
+  CREATE INDEX IF NOT EXISTS idx_annotations_item_id
+    ON annotations(item_id, chapter_index, position);
 `

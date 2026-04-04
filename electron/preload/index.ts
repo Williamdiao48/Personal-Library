@@ -84,6 +84,18 @@ contextBridge.exposeInMainWorld('api', {
     upsertPeriodGoal:  (type: string, period: string, target: number | null) => ipcRenderer.invoke('goals:upsertPeriodGoal', type, period, target),
   },
 
+  // Annotations
+  annotations: {
+    getForItem: (itemId: string) =>
+      ipcRenderer.invoke('annotations:getForItem', itemId),
+    create: (payload: object) =>
+      ipcRenderer.invoke('annotations:create', payload),
+    updateNote: (id: string, noteText: string | null) =>
+      ipcRenderer.invoke('annotations:updateNote', id, noteText),
+    delete: (id: string) =>
+      ipcRenderer.invoke('annotations:delete', id),
+  },
+
   // Backup
   backup: {
     export: () => ipcRenderer.invoke('backup:export'),

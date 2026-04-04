@@ -136,6 +136,34 @@ export interface ConvertChapter { title: string; content: string }
 export interface ConvertPayload { itemId: string; chapters: ConvertChapter[] }
 export interface ConvertResult  { id: string; title: string }
 
+// ── Annotation types ─────────────────────────────────────────────
+
+export type AnnotationType = 'bookmark' | 'highlight' | 'note'
+
+export interface Annotation {
+  id:             string
+  item_id:        string
+  type:           AnnotationType
+  chapter_index:  number | null   // 0-based chapter; null = whole-document / PDF
+  position:       number          // 0.0-1.0 scroll fraction OR PDF page number
+  selected_text:  string | null
+  context_before: string | null
+  context_after:  string | null
+  note_text:      string | null
+  created_at:     number          // unix ms
+}
+
+export interface CreateAnnotationPayload {
+  item_id:        string
+  type:           AnnotationType
+  chapter_index:  number | null
+  position:       number
+  selected_text?: string | null
+  context_before?: string | null
+  context_after?:  string | null
+  note_text?:     string | null
+}
+
 export interface BackupExportResult {
   path:          string
   itemCount:     number
@@ -207,6 +235,12 @@ export interface Api {
     addItem:    (goalId: string, itemId: string)      => Promise<void>
     removeItem:       (goalId: string, itemId: string)                               => Promise<void>
     upsertPeriodGoal: (type: 'time' | 'count', period: GoalPeriod, target: number | null) => Promise<Goal | null>
+  }
+  annotations: {
+    getForItem: (itemId: string)                              => Promise<Annotation[]>
+    create:     (payload: CreateAnnotationPayload)            => Promise<Annotation>
+    updateNote: (id: string, noteText: string | null)         => Promise<void>
+    delete:     (id: string)                                  => Promise<void>
   }
   onRequestCapture:  (callback: (url: string) => void) => () => void
   onCaptureProgress: (callback: (payload: { jobId: string; msg: string }) => void) => () => void

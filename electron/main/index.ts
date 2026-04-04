@@ -9,6 +9,7 @@ import { registerConvertHandlers } from './ipc/convert'
 import { registerStatsHandlers }   from './ipc/stats'
 import { registerBackupHandlers }  from './ipc/backup'
 import { registerGoalsHandlers }   from './ipc/goals'
+import { registerAnnotationHandlers } from './ipc/annotations'
 
 // Must be called before app.whenReady()
 protocol.registerSchemesAsPrivileged([
@@ -147,6 +148,7 @@ app.whenReady().then(() => {
   registerConvertHandlers()
   registerStatsHandlers()
   registerGoalsHandlers()
+  registerAnnotationHandlers()
   registerBackupHandlers()
 
   createWindow()

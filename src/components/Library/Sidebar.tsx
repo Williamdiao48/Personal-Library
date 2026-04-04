@@ -230,6 +230,7 @@ const Sidebar = memo(function Sidebar({ collectionMgmt, authors, authorItemCount
             >
               <Link className="sidebar-collection-link" to={`/?collection=${col.id}`}>
                 <span className="sidebar-collection-name">{col.name}</span>
+                <span className="sidebar-collection-count">{itemCounts[col.id] ?? 0}</span>
               </Link>
             </div>
           )

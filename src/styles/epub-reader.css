@@ -496,3 +496,241 @@
 .epub-theme-sepia .epub-settings-btn:hover      { border-color: #a08060; color: #3b2a1a; }
 .epub-theme-sepia .epub-settings-btn.active     { background: #dcc9a0; border-color: #a08060; color: #3b2a1a; }
 .epub-theme-sepia .epub-settings-size-display   { color: #3b2a1a; }
+
+/* ── Annotations panel ──────────────────────────────────────────────────── */
+
+.reader-with-panel {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.annotations-panel {
+  width: 260px;
+  flex-shrink: 0;
+  border-left: 1px solid rgba(255,255,255,0.08);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e1e;
+  font-size: 13px;
+}
+
+.annotations-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  position: sticky;
+  top: 0;
+  background: #1e1e1e;
+  z-index: 1;
+}
+
+.annotations-panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #888;
+}
+
+.annot-close-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #666;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  border-radius: 3px;
+}
+.annot-close-btn:hover { color: #ccc; background: rgba(255,255,255,0.06); }
+
+.annotations-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.annotations-empty {
+  color: #555;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 16px 14px;
+  white-space: pre-line;
+}
+
+.annotation-row {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.annotation-row:last-child { border-bottom: none; }
+
+.annotation-row-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.annotation-row-icon {
+  color: #888;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.annotation-row-pos {
+  color: #777;
+  font-size: 11px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annotation-row-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.annotation-row:hover .annotation-row-actions { opacity: 1; }
+
+.annot-action-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #666;
+  padding: 3px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+}
+.annot-action-btn:hover { color: #ccc; background: rgba(255,255,255,0.08); }
+.annot-delete-btn:hover { color: #f87171 !important; }
+
+.annotation-quote {
+  margin: 6px 0 0 0;
+  padding: 4px 8px;
+  border-left: 2px solid rgba(255, 200, 0, 0.5);
+  background: rgba(255, 220, 0, 0.06);
+  border-radius: 0 3px 3px 0;
+  font-size: 12px;
+  color: #bbb;
+  font-style: italic;
+  line-height: 1.4;
+}
+
+.annotation-note-text {
+  margin: 5px 0 0 0;
+  font-size: 12px;
+  color: #aaa;
+  line-height: 1.4;
+}
+
+.annotation-note-editor {
+  margin-top: 6px;
+}
+
+.annotation-note-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 4px;
+  color: #ddd;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 6px 8px;
+  resize: vertical;
+  font-family: inherit;
+}
+.annotation-note-textarea:focus {
+  outline: none;
+  border-color: rgba(255,255,255,0.25);
+}
+
+.annotation-note-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.annot-save-btn,
+.annot-cancel-btn {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.15);
+  cursor: pointer;
+  background: rgba(255,255,255,0.06);
+  color: #ccc;
+}
+.annot-save-btn:hover   { background: rgba(255,255,255,0.12); color: #fff; }
+.annot-cancel-btn:hover { background: rgba(255,255,255,0.04); color: #aaa; }
+
+/* Annotation count badge on toolbar button */
+.annot-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  font-size: 8px;
+  font-weight: 700;
+  background: #f59e0b;
+  color: #000;
+  border-radius: 5px;
+  padding: 0 3px;
+  min-width: 11px;
+  text-align: center;
+  pointer-events: none;
+  line-height: 13px;
+}
+
+/* Highlight marks injected into reader content */
+.annotation-mark {
+  background-color: rgba(255, 220, 0, 0.28);
+  border-bottom: 2px solid rgba(255, 200, 0, 0.6);
+  cursor: pointer;
+  border-radius: 1px;
+}
+.annotation-mark:hover {
+  background-color: rgba(255, 220, 0, 0.45);
+}
+
+/* Light theme overrides */
+.epub-theme-light .annotations-panel {
+  background: #fafafa;
+  border-left-color: rgba(0,0,0,0.1);
+}
+.epub-theme-light .annotations-panel-header { background: #fafafa; border-bottom-color: rgba(0,0,0,0.08); }
+.epub-theme-light .annotations-panel-title  { color: #999; }
+.epub-theme-light .annot-close-btn          { color: #bbb; }
+.epub-theme-light .annot-close-btn:hover    { color: #555; background: rgba(0,0,0,0.06); }
+.epub-theme-light .annotation-row           { border-bottom-color: rgba(0,0,0,0.05); }
+.epub-theme-light .annotation-row-pos       { color: #aaa; }
+.epub-theme-light .annotation-row-icon      { color: #bbb; }
+.epub-theme-light .annot-action-btn         { color: #bbb; }
+.epub-theme-light .annot-action-btn:hover   { color: #444; background: rgba(0,0,0,0.06); }
+.epub-theme-light .annotation-quote         { background: rgba(255,200,0,0.12); color: #555; }
+.epub-theme-light .annotation-note-text     { color: #666; }
+.epub-theme-light .annotation-note-textarea { background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.12); color: #333; }
+.epub-theme-light .annotation-note-textarea:focus { border-color: rgba(0,0,0,0.25); }
+.epub-theme-light .annotations-empty        { color: #bbb; }
+.epub-theme-light .annot-save-btn,
+.epub-theme-light .annot-cancel-btn         { border-color: rgba(0,0,0,0.15); background: rgba(0,0,0,0.04); color: #555; }
+
+/* Sepia theme overrides */
+.epub-theme-sepia .annotations-panel {
+  background: #f2e8d5;
+  border-left-color: #c8b89a;
+}
+.epub-theme-sepia .annotations-panel-header { background: #f2e8d5; border-bottom-color: #c8b89a; }
+.epub-theme-sepia .annotations-panel-title  { color: #a08060; }
+.epub-theme-sepia .annotation-row           { border-bottom-color: rgba(0,0,0,0.05); }
+.epub-theme-sepia .annotation-row-pos       { color: #a08060; }
+.epub-theme-sepia .annotation-row-icon      { color: #b09070; }
+.epub-theme-sepia .annotation-quote         { background: rgba(255,200,0,0.1); color: #7a6040; border-left-color: #d4a017; }
+.epub-theme-sepia .annotation-note-text     { color: #7a6040; }

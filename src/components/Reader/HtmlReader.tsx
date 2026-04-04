@@ -3,8 +3,11 @@ import { libraryService } from '../../services/library'
 import { readerService } from '../../services/reader'
 import { useReadingSession } from '../../hooks/useReadingSession'
 import { useTextHighlight } from '../../hooks/useTextHighlight'
+import { useAnnotations } from '../../hooks/useAnnotations'
 import SearchBar from './SearchBar'
-import type { Item } from '../../types'
+import TextSelectionPopup from './TextSelectionPopup'
+import AnnotationsPanel from './AnnotationsPanel'
+import type { Item, Annotation } from '../../types'
 import '../../styles/reader.css'
 import '../../styles/epub-reader.css'   // reuse settings panel + button styles
 
@@ -77,7 +80,18 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
   const [showSearch,      setShowSearch]      = useState(false)
   const [searchQuery,     setSearchQuery]     = useState('')
   const [showChapterList, setShowChapterList] = useState(false)
+  const [showPanel,       setShowPanel]       = useState(false)
   const [readingProgress, setReadingProgress] = useState(() => Math.round((item.scroll_position ?? 0) * 100))
+
+  // Note editor state: null = closed
+  const [noteEditorState, setNoteEditorState] = useState<{
+    range:       Range | null
+    position:    number
+    chapterIdx:  number | null
+    existingId?: string
+    initialText?: string
+  } | null>(null)
+  const [noteText, setNoteText] = useState('')
 
   function adjustFontSize(delta: number) {
     const next = Math.max(12, Math.min(32, fontSize + delta))
@@ -139,6 +153,97 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
   const [currentChapter, setCurrentChapter] = useState(initialChapter)
   const currentChapterRef = useRef(initialChapter)
   const pendingScrollRef  = useRef<{ y: number; isLegacyFrac: boolean } | null>(initialScrollY)
+
+  // ── Annotations ──────────────────────────────────────────────────
+
+  // For single articles: chapterIndex = null. For multi-chapter: 0-based index.
+  const annotChapterIndex = chapters ? currentChapter : null
+  const annot = useAnnotations({
+    itemId:       item.id,
+    contentRef:   scrollRef,
+    chapterIndex: annotChapterIndex,
+  })
+
+  // Re-apply highlights after content changes (chapter nav, initial load)
+  useEffect(() => {
+    let cancelled = false
+    const outer = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (cancelled) return
+        annot.applyHighlightsToDOM(annotChapterIndex)
+      })
+    })
+    return () => { cancelled = true; cancelAnimationFrame(outer) }
+  // We intentionally re-run when annotations array changes too
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentChapter, content, annot.annotations, annotChapterIndex])
+
+  function getCurrentPosition(): number {
+    const el = scrollRef.current
+    if (!el) return 0
+    const scrollable = el.scrollHeight - el.clientHeight
+    return scrollable > 0 ? el.scrollTop / scrollable : 0
+  }
+
+  function handleSelectionHighlight(range: Range) {
+    annot.createHighlight(range, getCurrentPosition())
+  }
+
+  function handleSelectionNote(range: Range) {
+    const pos = getCurrentPosition()
+    setNoteText('')
+    setNoteEditorState({ range, position: pos, chapterIdx: annotChapterIndex })
+  }
+
+  async function saveNote() {
+    if (!noteEditorState) return
+    const text = noteText.trim()
+    if (!text) { setNoteEditorState(null); return }
+    if (noteEditorState.existingId) {
+      await annot.updateNote(noteEditorState.existingId, text)
+    } else {
+      await annot.createNote(noteEditorState.position, text, noteEditorState.range ?? undefined)
+      // Clear the text selection after saving
+      window.getSelection()?.removeAllRanges()
+    }
+    setNoteEditorState(null)
+    setNoteText('')
+  }
+
+  function handleJumpToAnnotation(annotation: Annotation) {
+    const el = scrollRef.current
+    if (!el) return
+
+    // If multi-chapter and different chapter, navigate there first
+    if (chapters && annotation.chapter_index !== null && annotation.chapter_index !== currentChapter) {
+      goToChapter(annotation.chapter_index)
+      // After navigation, the re-apply effect will mark the text; then we scroll
+      // We use a timeout to wait for chapter content to render
+      setTimeout(() => {
+        const el2 = scrollRef.current
+        if (!el2) return
+        const mark = el2.querySelector<HTMLElement>(`mark[data-annotation-id="${annotation.id}"]`)
+        if (mark) {
+          mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          return
+        }
+        // Fallback to position
+        const scrollable = el2.scrollHeight - el2.clientHeight
+        el2.scrollTo({ top: annotation.position * scrollable, behavior: 'smooth' })
+      }, 400)
+      return
+    }
+
+    // Try to find the mark in DOM first
+    const mark = el.querySelector<HTMLElement>(`mark[data-annotation-id="${annotation.id}"]`)
+    if (mark) {
+      mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return
+    }
+    // Fallback: scroll to stored position
+    const scrollable = el.scrollHeight - el.clientHeight
+    el.scrollTo({ top: annotation.position * scrollable, behavior: 'smooth' })
+  }
 
   // ── In-content search ────────────────────────────────────────────
 
@@ -379,6 +484,48 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
 
   const ch = chapters?.[currentChapter]
 
+  const noteEditorModal = noteEditorState && (
+    <div className="note-editor-overlay" onClick={() => setNoteEditorState(null)}>
+      <div className="note-editor-modal" onClick={e => e.stopPropagation()}>
+        <div className="note-editor-header">
+          {noteEditorState.existingId ? 'Edit note' : 'Add note'}
+        </div>
+        {noteEditorState.range && !noteEditorState.existingId && (
+          <blockquote className="note-editor-quote">
+            {noteEditorState.range.toString().slice(0, 120)}
+          </blockquote>
+        )}
+        <textarea
+          className="note-editor-textarea"
+          value={noteText}
+          onChange={e => setNoteText(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveNote() }
+            if (e.key === 'Escape') { setNoteEditorState(null); setNoteText('') }
+          }}
+          autoFocus
+          rows={4}
+          placeholder="Write a note…"
+        />
+        <div className="note-editor-actions">
+          <button className="annot-save-btn" onClick={saveNote}>Save</button>
+          <button className="annot-cancel-btn" onClick={() => { setNoteEditorState(null); setNoteText('') }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+
+  const annotationsPanel = showPanel && (
+    <AnnotationsPanel
+      annotations={annot.annotations}
+      contentType={item.content_type}
+      onJump={handleJumpToAnnotation}
+      onDelete={annot.deleteAnnotation}
+      onUpdateNote={annot.updateNote}
+      onClose={() => setShowPanel(false)}
+    />
+  )
+
   const header = (
     <header className="reader-header">
       <button className="epub-back-btn" onClick={onBack}>← Library</button>
@@ -467,6 +614,23 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
           </svg>
         </button>
       )}
+
+      <div style={{ position: 'relative', marginLeft: '8px' }}>
+        <button
+          className={`epub-top-btn${showPanel ? ' active' : ''}`}
+          onClick={() => setShowPanel(s => !s)}
+          aria-label="Annotations"
+          title="Annotations"
+          style={{ position: 'relative' }}
+        >
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+            <path d="M3 2h10v13l-5-3-5 3V2z" stroke="currentColor" strokeWidth="1.5"/>
+          </svg>
+          {annot.annotations.length > 0 && (
+            <span className="annot-badge">{annot.annotations.length}</span>
+          )}
+        </button>
+      </div>
 
       <div className="epub-settings-wrapper" style={{ marginLeft: '8px' }}>
         <button
@@ -582,18 +746,27 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     return (
       <div className={`html-reader-shell html-theme-${theme}`} style={shellStyle}>
         {header}
-<div ref={scrollRef} className="html-reader" onScroll={handleScroll}>
-          {chapters.map((c, i) => (
-            <div key={i}>
-              {i > 0 && (
-                <div className="chapter-separator" aria-hidden="true">
-                  Chapter {i + 1}
-                </div>
-              )}
-              <div id={`chapter-${i}`} dangerouslySetInnerHTML={{ __html: c.html }} />
-            </div>
-          ))}
+        <div className="reader-with-panel">
+          <div ref={scrollRef} className="html-reader" style={{ flex: 1, minWidth: 0 }} onScroll={handleScroll}>
+            {chapters.map((c, i) => (
+              <div key={i}>
+                {i > 0 && (
+                  <div className="chapter-separator" aria-hidden="true">
+                    Chapter {i + 1}
+                  </div>
+                )}
+                <div id={`chapter-${i}`} dangerouslySetInnerHTML={{ __html: c.html }} />
+              </div>
+            ))}
+            <TextSelectionPopup
+              containerRef={scrollRef}
+              onHighlight={handleSelectionHighlight}
+              onNote={handleSelectionNote}
+            />
+          </div>
+          {annotationsPanel}
         </div>
+        {noteEditorModal}
       </div>
     )
   }
@@ -604,29 +777,37 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     return (
       <div className={`html-reader-shell html-theme-${theme}`} style={shellStyle}>
         {header}
-<div ref={scrollRef} className="html-reader" onScroll={handleScroll}>
-          <div dangerouslySetInnerHTML={{ __html: ch.html }} />
-
-          <nav className="chapter-nav">
-            <button
-              className="chapter-nav-btn chapter-nav-prev"
-              onClick={() => goToChapter(currentChapter - 1)}
-              disabled={currentChapter === 0}
-            >
-              ← Previous
-            </button>
-            {currentChapter < chapters.length - 1 ? (
+        <div className="reader-with-panel">
+          <div ref={scrollRef} className="html-reader" style={{ flex: 1, minWidth: 0 }} onScroll={handleScroll}>
+            <div dangerouslySetInnerHTML={{ __html: ch.html }} />
+            <nav className="chapter-nav">
               <button
-                className="chapter-nav-btn chapter-nav-next"
-                onClick={() => goToChapter(currentChapter + 1)}
+                className="chapter-nav-btn chapter-nav-prev"
+                onClick={() => goToChapter(currentChapter - 1)}
+                disabled={currentChapter === 0}
               >
-                Next →
+                ← Previous
               </button>
-            ) : (
-              <span className="chapter-nav-end">End of story</span>
-            )}
-          </nav>
+              {currentChapter < chapters.length - 1 ? (
+                <button
+                  className="chapter-nav-btn chapter-nav-next"
+                  onClick={() => goToChapter(currentChapter + 1)}
+                >
+                  Next →
+                </button>
+              ) : (
+                <span className="chapter-nav-end">End of story</span>
+              )}
+            </nav>
+            <TextSelectionPopup
+              containerRef={scrollRef}
+              onHighlight={handleSelectionHighlight}
+              onNote={handleSelectionNote}
+            />
+          </div>
+          {annotationsPanel}
         </div>
+        {noteEditorModal}
       </div>
     )
   }
@@ -639,12 +820,22 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
       <div className="reader-progress-track">
         <div className="reader-progress-fill" style={{ width: `${readingProgress}%` }} />
       </div>
-      <div
-        ref={scrollRef}
-        className="html-reader"
-        onScroll={handleScroll}
-        dangerouslySetInnerHTML={{ __html: content }}
-      />
+      <div className="reader-with-panel">
+        <div
+          ref={scrollRef}
+          className="html-reader"
+          style={{ flex: 1, minWidth: 0 }}
+          onScroll={handleScroll}
+          dangerouslySetInnerHTML={{ __html: content }}
+        />
+        <TextSelectionPopup
+          containerRef={scrollRef}
+          onHighlight={handleSelectionHighlight}
+          onNote={handleSelectionNote}
+        />
+        {annotationsPanel}
+      </div>
+      {noteEditorModal}
     </div>
   )
 }

@@ -698,6 +698,19 @@ html, body, #root {
 .sidebar-context-menu-item--danger { color: var(--danger); }
 .sidebar-context-menu-item--danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
 
+.sidebar-collection-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  padding: 1px 5px;
+  border-radius: 10px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.sidebar-collection-row:hover .sidebar-collection-count { opacity: 1; }
+
 .sidebar-collection-edit-form {
   padding: 2px 4px;
 }
@@ -2648,3 +2661,108 @@ html[data-theme="sepia"] .item-card-refresh-status--error    { background: #fee2
 }
 
 /* PDF reader uses dark-only — keep existing epub-top-btn styles */
+
+/* ── Text selection popup ───────────────────────────────────────────────── */
+
+.text-selection-popup {
+  position: fixed;
+  z-index: 1000;
+  background: #1e1e1e;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 6px;
+  padding: 3px;
+  display: flex;
+  gap: 2px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+  pointer-events: all;
+}
+
+.sel-popup-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #ccc;
+  font-size: 12px;
+  padding: 5px 9px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.sel-popup-btn:hover {
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+}
+
+/* ── Note editor modal ──────────────────────────────────────────────────── */
+
+.note-editor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.note-editor-modal {
+  background: #1e1e1e;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 8px;
+  padding: 16px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+
+.note-editor-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ccc;
+  margin-bottom: 10px;
+}
+
+.note-editor-quote {
+  margin: 0 0 10px 0;
+  padding: 6px 10px;
+  border-left: 2px solid rgba(255,200,0,0.5);
+  background: rgba(255,220,0,0.06);
+  border-radius: 0 4px 4px 0;
+  font-size: 12px;
+  color: #bbb;
+  font-style: italic;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.note-editor-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 5px;
+  color: #e0e0e0;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  resize: vertical;
+  font-family: inherit;
+}
+.note-editor-textarea:focus {
+  outline: none;
+  border-color: rgba(255,255,255,0.28);
+}
+
+.note-editor-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  justify-content: flex-end;
+}
