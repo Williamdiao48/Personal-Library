@@ -84,6 +84,39 @@ contextBridge.exposeInMainWorld('api', {
     upsertPeriodGoal:  (type: string, period: string, target: number | null) => ipcRenderer.invoke('goals:upsertPeriodGoal', type, period, target),
   },
 
+  // Auto-updater
+  updater: {
+    checkForUpdates: () => ipcRenderer.invoke('updater:checkForUpdates'),
+    downloadUpdate:  () => ipcRenderer.invoke('updater:downloadUpdate'),
+    quitAndInstall:  () => ipcRenderer.invoke('updater:quitAndInstall'),
+
+    onUpdateAvailable: (callback: (info: { version: string }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, info: { version: string }) => callback(info)
+      ipcRenderer.on('updater:update-available', handler)
+      return () => ipcRenderer.removeListener('updater:update-available', handler)
+    },
+    onUpdateNotAvailable: (callback: () => void) => {
+      const handler = () => callback()
+      ipcRenderer.on('updater:update-not-available', handler)
+      return () => ipcRenderer.removeListener('updater:update-not-available', handler)
+    },
+    onDownloadProgress: (callback: (info: { percent: number }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, info: { percent: number }) => callback(info)
+      ipcRenderer.on('updater:download-progress', handler)
+      return () => ipcRenderer.removeListener('updater:download-progress', handler)
+    },
+    onUpdateDownloaded: (callback: () => void) => {
+      const handler = () => callback()
+      ipcRenderer.on('updater:update-downloaded', handler)
+      return () => ipcRenderer.removeListener('updater:update-downloaded', handler)
+    },
+    onError: (callback: (info: { message: string }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, info: { message: string }) => callback(info)
+      ipcRenderer.on('updater:error', handler)
+      return () => ipcRenderer.removeListener('updater:error', handler)
+    },
+  },
+
   // Annotations
   annotations: {
     getForItem: (itemId: string) =>

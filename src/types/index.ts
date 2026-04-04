@@ -236,6 +236,16 @@ export interface Api {
     removeItem:       (goalId: string, itemId: string)                               => Promise<void>
     upsertPeriodGoal: (type: 'time' | 'count', period: GoalPeriod, target: number | null) => Promise<Goal | null>
   }
+  updater: {
+    checkForUpdates:      () => Promise<void>
+    downloadUpdate:       () => Promise<void>
+    quitAndInstall:       () => Promise<void>
+    onUpdateAvailable:    (callback: (info: { version: string }) => void) => () => void
+    onUpdateNotAvailable: (callback: () => void) => () => void
+    onDownloadProgress:   (callback: (info: { percent: number }) => void) => () => void
+    onUpdateDownloaded:   (callback: () => void) => () => void
+    onError:              (callback: (info: { message: string }) => void) => () => void
+  }
   annotations: {
     getForItem: (itemId: string)                              => Promise<Annotation[]>
     create:     (payload: CreateAnnotationPayload)            => Promise<Annotation>

@@ -2622,9 +2622,11 @@ html[data-theme="sepia"] .item-card-refresh-status--error    { background: #fee2
   color: var(--text);
   animation: toast-in 0.18s ease;
 }
-.toast--success { border-left: 3px solid var(--accent); }
-.toast--error   { border-left: 3px solid #e05c5c; }
-.toast--info    { border-left: 3px solid var(--text-muted); }
+.toast--success  { border-left: 3px solid var(--accent); }
+.toast--error    { border-left: 3px solid #e05c5c; }
+.toast--info     { border-left: 3px solid var(--text-muted); }
+.toast--clickable { cursor: pointer; }
+.toast--clickable:hover { filter: brightness(1.08); }
 .toast-icon           { font-size: 12px; flex-shrink: 0; color: var(--accent); }
 .toast-icon--error    { color: #e05c5c; }
 .toast-message {

@@ -3,10 +3,10 @@ import ToastContainer from '../components/Toast/ToastContainer'
 
 export type ToastType = 'info' | 'success' | 'error'
 
-interface Toast { id: string; message: string; type: ToastType }
+interface Toast { id: string; message: string; type: ToastType; onClick?: () => void }
 
 interface ToastCtx {
-  addToast:    (message: string, type: ToastType, id?: string) => string
+  addToast:    (message: string, type: ToastType, id?: string, onClick?: () => void) => string
   updateToast: (id: string, message: string, type: ToastType) => void
   removeToast: (id: string) => void
 }
@@ -27,11 +27,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     timers.current.set(id, t)
   }, [])
 
-  const addToast = useCallback((message: string, type: ToastType, id?: string): string => {
+  const addToast = useCallback((message: string, type: ToastType, id?: string, onClick?: () => void): string => {
     const toastId = id ?? crypto.randomUUID()
     setToasts(prev => {
       const existing = prev.findIndex(t => t.id === toastId)
-      const toast: Toast = { id: toastId, message, type }
+      const toast: Toast = { id: toastId, message, type, onClick }
       return existing >= 0
         ? prev.map(t => t.id === toastId ? toast : t)
         : [...prev, toast]

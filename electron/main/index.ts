@@ -1,4 +1,5 @@
 import { app, BrowserWindow, protocol, net } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import { join, resolve, sep } from 'path'
 import { initDatabase } from './db'
 import { registerLibraryHandlers } from './ipc/library'
@@ -10,6 +11,7 @@ import { registerStatsHandlers }   from './ipc/stats'
 import { registerBackupHandlers }  from './ipc/backup'
 import { registerGoalsHandlers }   from './ipc/goals'
 import { registerAnnotationHandlers } from './ipc/annotations'
+import { registerUpdaterHandlers } from './ipc/updater'
 
 // Must be called before app.whenReady()
 protocol.registerSchemesAsPrivileged([
@@ -94,6 +96,11 @@ function createWindow(): BrowserWindow {
       win.webContents.send('request-capture', pendingCaptureUrl)
       pendingCaptureUrl = null
     }
+    // Check for updates 3s after launch so startup performance isn't affected.
+    // Only runs in packaged builds — dev always has app.isPackaged = false.
+    if (app.isPackaged) {
+      setTimeout(() => autoUpdater.checkForUpdates(), 3000)
+    }
   })
 
   // ── Navigation hardening ──────────────────────────────────────────────────
@@ -149,6 +156,7 @@ app.whenReady().then(() => {
   registerStatsHandlers()
   registerGoalsHandlers()
   registerAnnotationHandlers()
+  registerUpdaterHandlers()
   registerBackupHandlers()
 
   createWindow()
