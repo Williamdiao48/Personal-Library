@@ -167,6 +167,40 @@
   user-select: none;
 }
 
+/* ── PDF scroll mode ──────────────────────────────────────────── */
+
+/*
+ * Scroll container — fills .pdf-page-outer and provides the scrollable surface.
+ * overflow-y: auto here (not on the outer) so IntersectionObserver can use this
+ * element as the root, keeping intersection detection cheap.
+ */
+.pdf-scroll-container {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 24px 64px;
+  box-sizing: border-box;
+  gap: 16px;
+}
+
+/* Individual page slot — height/width set via inline style from pageDims */
+.pdf-scroll-page {
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* Canvas inside each scroll page — same drop-shadow as spread mode */
+.pdf-scroll-page canvas {
+  display: block;
+  box-shadow: 0 4px 32px rgba(0, 0, 0, 0.6);
+  width: 100%;
+  height: 100%;
+}
+
 /* ── PDF → EPUB conversion modal ───────────────────────────── */
 
 .convert-overlay {

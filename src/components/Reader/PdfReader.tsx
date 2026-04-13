@@ -24,11 +24,20 @@ const CHAPTER_HEADING_RE = /^(chapter|part|section|prologue|epilogue|afterword|i
 const ZOOM_LEVELS = [0.75, 1.0, 1.25, 1.5] as const
 type ZoomLevel = typeof ZOOM_LEVELS[number]
 
-const LS_PDF_ZOOM = 'pdf-zoom'
+const LS_PDF_ZOOM      = 'pdf-zoom'
+const LS_PDF_VIEW_MODE = 'pdf-view-mode'
+
+type ViewMode = 'spread' | 'scroll'
+interface PageDim { width: number; height: number }
 
 function loadSavedZoom(): ZoomLevel {
   const n = Number(localStorage.getItem(LS_PDF_ZOOM))
   return (ZOOM_LEVELS as readonly number[]).includes(n) ? (n as ZoomLevel) : 1.0
+}
+
+function loadSavedViewMode(): ViewMode {
+  const v = localStorage.getItem(LS_PDF_VIEW_MODE)
+  return v === 'spread' || v === 'scroll' ? v : 'spread'
 }
 
 /** Snap any page number to the left side of its two-page spread (always odd). */
@@ -378,6 +387,14 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   const saveTimer           = useRef<ReturnType<typeof setTimeout> | null>(null)
   const convertCancelledRef = useRef(false)
 
+  // Scroll mode refs
+  const scrollContainerRef  = useRef<HTMLDivElement>(null)
+  const scrollPageDivRefs   = useRef<Map<number, HTMLDivElement>>(new Map())    // 1-based page → div
+  const scrollCanvasRefs    = useRef<Map<number, HTMLCanvasElement>>(new Map())  // 1-based page → canvas
+  const scrollRenderTasks   = useRef<Map<number, RenderTask>>(new Map())         // 1-based page → task
+  const viewModeRef         = useRef<ViewMode>(loadSavedViewMode())
+  const scrollRestoredRef   = useRef(false)  // restore position only once per PDF load
+
   const [pdfDoc,        setPdfDoc]        = useState<PDFDocumentProxy | null>(null)
   const [totalPages,    setTotalPages]    = useState(0)
   const [currentPage,   setCurrentPage]   = useState(1)
@@ -390,6 +407,8 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   const [editing,       setEditing]       = useState(false)
   const [pageInput,     setPageInput]     = useState('')
   const [renderKey,     setRenderKey]     = useState(0)
+  const [viewMode,      setViewMode]      = useState<ViewMode>(loadSavedViewMode)
+  const [pageDims,      setPageDims]      = useState<PageDim[]>([])
 
   // Annotations
   const [showPanel,       setShowPanel]       = useState(false)
@@ -444,6 +463,24 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   // Note: the hook is declared here but goTo is wired up after its definition.
 
   const pdfSearch = usePdfSearch()
+
+  // ── Scroll mode callback-ref helpers ────────────────────────────
+  // Using Map-based callback refs avoids the "hooks in loops" problem for N pages.
+  function setScrollPageDiv(page: number) {
+    return (el: HTMLDivElement | null) => {
+      if (el) scrollPageDivRefs.current.set(page, el)
+      else    scrollPageDivRefs.current.delete(page)
+    }
+  }
+  function setScrollCanvas(page: number) {
+    return (el: HTMLCanvasElement | null) => {
+      if (el) scrollCanvasRefs.current.set(page, el)
+      else    scrollCanvasRefs.current.delete(page)
+    }
+  }
+
+  // Keep viewModeRef in sync so stable callbacks (goTo, keyboard) see current value
+  useEffect(() => { viewModeRef.current = viewMode }, [viewMode])
 
   // ── 1. Load PDF ─────────────────────────────────────────────────
 
@@ -512,6 +549,8 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       pdfWorker?.destroy()
       leftRenderTaskRef.current?.cancel()
       rightRenderTaskRef.current?.cancel()
+      scrollRenderTasks.current.forEach(t => t.cancel())
+      scrollRenderTasks.current.clear()
       if (saveTimer.current) clearTimeout(saveTimer.current)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -539,6 +578,26 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     }
 
     extractCover().catch(() => {})
+    return () => { cancelled = true }
+  }, [pdfDoc]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── 1c. Pre-fetch page dimensions for scroll mode layout ────────
+  // Metadata-only — getViewport() never renders canvas. Fast (~5–20ms for 300p).
+  useEffect(() => {
+    const doc = pdfDocRef.current
+    if (!doc || loading) return
+    let cancelled = false
+    async function fetchDims() {
+      const dims: PageDim[] = []
+      for (let i = 1; i <= doc!.numPages; i++) {
+        if (cancelled) return
+        const page = await doc!.getPage(i)
+        const vp   = page.getViewport({ scale: 1 })
+        dims.push({ width: vp.width, height: vp.height })
+      }
+      if (!cancelled) setPageDims(dims)
+    }
+    fetchDims().catch(() => {})
     return () => { cancelled = true }
   }, [pdfDoc]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -615,6 +674,111 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     return () => ro.disconnect()
   }, [])
 
+  // ── 3b. Scroll mode: lazy canvas rendering via IntersectionObserver ──
+  useEffect(() => {
+    if (viewMode !== 'scroll' || pageDims.length === 0) return
+    const container = scrollContainerRef.current
+    const doc = pdfDocRef.current
+    if (!container || !doc) return
+
+    scrollRenderTasks.current.forEach(t => t.cancel())
+    scrollRenderTasks.current.clear()
+
+    async function renderScrollPage(pageNum: number) {
+      const canvas = scrollCanvasRefs.current.get(pageNum)
+      const outer  = outerRef.current
+      if (!canvas || !outer || !doc) return
+      scrollRenderTasks.current.get(pageNum)?.cancel()
+      scrollRenderTasks.current.delete(pageNum)
+
+      const page     = await doc.getPage(pageNum)
+      const contW    = outer.clientWidth - 48
+      const base     = page.getViewport({ scale: 1 })
+      const scale    = Math.min((contW / base.width) * zoomRef.current, (contW / base.width) * 2.5)
+      const vp       = page.getViewport({ scale })
+      canvas.width   = Math.round(vp.width)
+      canvas.height  = Math.round(vp.height)
+
+      const task = page.render({ canvasContext: canvas.getContext('2d')!, viewport: vp })
+      scrollRenderTasks.current.set(pageNum, task)
+      try {
+        await task.promise
+        scrollRenderTasks.current.delete(pageNum)
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name !== 'RenderingCancelledException') {
+          console.error('[PdfReader] scroll render error p', pageNum, err)
+        }
+      }
+    }
+
+    function clearScrollPage(pageNum: number) {
+      scrollRenderTasks.current.get(pageNum)?.cancel()
+      scrollRenderTasks.current.delete(pageNum)
+      const canvas = scrollCanvasRefs.current.get(pageNum)
+      if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
+    }
+
+    const renderIO = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const page = Number((entry.target as HTMLElement).dataset.page)
+          if (!page) continue
+          if (entry.isIntersecting) renderScrollPage(page)
+          else clearScrollPage(page)
+        }
+      },
+      { root: container, rootMargin: '400px 0px', threshold: 0 },
+    )
+    scrollPageDivRefs.current.forEach(div => renderIO.observe(div))
+
+    return () => {
+      renderIO.disconnect()
+      scrollRenderTasks.current.forEach(t => t.cancel())
+      scrollRenderTasks.current.clear()
+    }
+  }, [viewMode, pageDims, renderKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── 3c. Scroll mode: current-page tracking via IntersectionObserver ──
+  useEffect(() => {
+    if (viewMode !== 'scroll' || pageDims.length === 0) return
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const ratioMap = new Map<number, number>()
+
+    const trackIO = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const page = Number((entry.target as HTMLElement).dataset.page)
+          if (page) ratioMap.set(page, entry.intersectionRatio)
+        }
+        let bestPage  = currentPageRef.current
+        let bestRatio = -1
+        ratioMap.forEach((r, p) => { if (r > bestRatio) { bestRatio = r; bestPage = p } })
+        if (bestPage !== currentPageRef.current) {
+          currentPageRef.current = bestPage
+          setCurrentPage(bestPage)
+          scheduleSave(bestPage, totalPagesRef.current)
+        }
+      },
+      { root: container, threshold: [0, 0.1, 0.5, 1.0] },
+    )
+    scrollPageDivRefs.current.forEach(div => trackIO.observe(div))
+
+    return () => trackIO.disconnect()
+  }, [viewMode, pageDims, scheduleSave])
+
+  // ── 3d. Scroll mode: restore position once pageDims are ready ────
+  useEffect(() => {
+    if (viewMode !== 'scroll' || pageDims.length === 0) return
+    if (scrollRestoredRef.current) return
+    scrollRestoredRef.current = true
+    requestAnimationFrame(() => {
+      scrollPageDivRefs.current.get(currentPageRef.current)
+        ?.scrollIntoView({ behavior: 'instant', block: 'start' })
+    })
+  }, [viewMode, pageDims])
+
   // ── 4. Navigation ───────────────────────────────────────────────
 
   const scheduleSave = useCallback((page: number, total: number) => {
@@ -624,16 +788,24 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     }, SAVE_DEBOUNCE_MS)
   }, [item.id])
 
-  // goTo: clamps to valid range and snaps to spread-start (always odd page)
+  // goTo: clamps to valid range. In spread mode, snaps to spread-start (odd page).
+  // In scroll mode, goes directly to the exact page and scrolls to its div.
   const goTo = useCallback((n: number) => {
     const doc = pdfDocRef.current
     if (!doc) return
     const clamped = Math.max(1, Math.min(n, doc.numPages))
-    const page    = Math.max(1, toSpreadStart(clamped))
     recordActivity()
-    currentPageRef.current = page
-    setCurrentPage(page)
-    scheduleSave(page, doc.numPages)
+    if (viewModeRef.current === 'scroll') {
+      currentPageRef.current = clamped
+      setCurrentPage(clamped)
+      scheduleSave(clamped, doc.numPages)
+      scrollPageDivRefs.current.get(clamped)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    } else {
+      const page = Math.max(1, toSpreadStart(clamped))
+      currentPageRef.current = page
+      setCurrentPage(page)
+      scheduleSave(page, doc.numPages)
+    }
   }, [scheduleSave, recordActivity])
 
   // Drive PDF search navigation: whenever targetPage changes, jump to it.
@@ -685,13 +857,34 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
         return
       }
 
-      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-        e.preventDefault()
-        goTo(currentPageRef.current + 2)
-      }
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-        e.preventDefault()
-        goTo(currentPageRef.current - 2)
+      if (viewModeRef.current === 'scroll') {
+        const container = scrollContainerRef.current
+        if (!container) return
+        const vh = container.clientHeight
+        switch (e.key) {
+          case 'ArrowDown':
+            e.preventDefault(); container.scrollBy({ top:  80, behavior: 'smooth' }); break
+          case 'ArrowUp':
+            e.preventDefault(); container.scrollBy({ top: -80, behavior: 'smooth' }); break
+          case 'PageDown':
+          case ' ':
+            e.preventDefault(); container.scrollBy({ top:  vh, behavior: 'smooth' }); break
+          case 'PageUp':
+            e.preventDefault(); container.scrollBy({ top: -vh, behavior: 'smooth' }); break
+          case 'Home':
+            e.preventDefault(); goTo(1); break
+          case 'End':
+            e.preventDefault(); goTo(totalPagesRef.current); break
+        }
+      } else {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+          e.preventDefault()
+          goTo(currentPageRef.current + 2)
+        }
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+          e.preventDefault()
+          goTo(currentPageRef.current - 2)
+        }
       }
     }
     window.addEventListener('keydown', handleKey)
@@ -722,6 +915,12 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     zoomRef.current = z
     setZoom(z)
     localStorage.setItem(LS_PDF_ZOOM, String(z))
+    if (viewModeRef.current === 'scroll') {
+      // Cancel all in-flight scroll renders; renderKey change re-triggers the IO effect
+      scrollRenderTasks.current.forEach(t => t.cancel())
+      scrollRenderTasks.current.clear()
+      setRenderKey(k => k + 1)
+    }
   }
 
   // ── PDF → EPUB conversion ───────────────────────────────────────
@@ -975,7 +1174,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
                   onClick={startEditing}
                   title="Click to jump to a page"
                 >
-                  {rightPage ? `${currentPage}–${rightPage}` : currentPage}
+                  {viewMode === 'scroll' ? currentPage : (rightPage ? `${currentPage}–${rightPage}` : currentPage)}
                 </span>
               )}
               <span className="pdf-page-sep">/ {totalPages}</span>
@@ -1063,6 +1262,43 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
           </div>
         )}
 
+        {/* Scroll / Spread mode toggle */}
+        {ready && !showSearch && (
+          <button
+            className={`epub-top-btn${viewMode === 'scroll' ? ' active' : ''}`}
+            title={viewMode === 'scroll' ? 'Spread view' : 'Scroll view'}
+            aria-label={viewMode === 'scroll' ? 'Switch to spread view' : 'Switch to scroll view'}
+            onClick={() => {
+              const next: ViewMode = viewMode === 'spread' ? 'scroll' : 'spread'
+              localStorage.setItem(LS_PDF_VIEW_MODE, next)
+              viewModeRef.current = next
+              setViewMode(next)
+              requestAnimationFrame(() => {
+                if (next === 'scroll') {
+                  scrollPageDivRefs.current.get(currentPageRef.current)
+                    ?.scrollIntoView({ behavior: 'instant', block: 'start' })
+                } else {
+                  goTo(currentPageRef.current)  // re-snap to spread start
+                }
+              })
+            }}
+          >
+            {viewMode === 'scroll' ? (
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                <rect x="1" y="2" width="6" height="12" rx="1" />
+                <rect x="9" y="2" width="6" height="12" rx="1" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                <rect x="3" y="1" width="10" height="14" rx="1" />
+                <line x1="5" y1="5" x2="11" y2="5" />
+                <line x1="5" y1="8" x2="11" y2="8" />
+                <line x1="5" y1="11" x2="9" y2="11" />
+              </svg>
+            )}
+          </button>
+        )}
+
         {/* Aa zoom settings */}
         <div className="epub-settings-wrapper">
           <button
@@ -1106,15 +1342,39 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
         {error   && <div className="pdf-loading-msg">{error}</div>}
 
         {/* Two-page spread — left canvas always present, right only when there's a page */}
-        {ready && (
+        {ready && viewMode === 'spread' && (
           <div className="pdf-spread">
             <canvas ref={leftCanvasRef} />
             {showRight && <canvas ref={rightCanvasRef} />}
           </div>
         )}
 
-        {/* Click zones */}
-        {canPrev && (
+        {/* Vertical scroll mode — stacked pages, lazy canvas rendering */}
+        {ready && viewMode === 'scroll' && pageDims.length > 0 && (
+          <div ref={scrollContainerRef} className="pdf-scroll-container">
+            {pageDims.map((dim, idx) => {
+              const pageNum  = idx + 1
+              const contW    = (outerRef.current?.clientWidth ?? 800) - 48
+              const fitScale = contW / dim.width
+              const dispH    = Math.round(dim.height * fitScale * zoomRef.current)
+              const dispW    = Math.round(dim.width  * fitScale * zoomRef.current)
+              return (
+                <div
+                  key={pageNum}
+                  ref={setScrollPageDiv(pageNum)}
+                  className="pdf-scroll-page"
+                  style={{ height: dispH, width: dispW }}
+                  data-page={pageNum}
+                >
+                  <canvas ref={setScrollCanvas(pageNum)} />
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Click zones — spread mode only */}
+        {canPrev && viewMode === 'spread' && (
           <div
             className="epub-click-prev"
             onClick={() => goTo(currentPage - 2)}
@@ -1122,7 +1382,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
             role="button"
           />
         )}
-        {canNext && (
+        {canNext && viewMode === 'spread' && (
           <div
             className="epub-click-next"
             onClick={() => goTo(currentPage + 2)}
