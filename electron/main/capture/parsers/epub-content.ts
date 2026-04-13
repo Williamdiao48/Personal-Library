@@ -75,7 +75,7 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
     'div', 'span', 'section', 'article',
   ],
   allowedAttributes: {
-    a:   ['href', 'title'],
+    a:   ['href', 'title', 'data-epub-chapter', 'data-epub-fragment'],
     img: ['src', 'alt', 'title'],
     th:  ['colspan', 'rowspan'],
     td:  ['colspan', 'rowspan'],
@@ -341,6 +341,79 @@ function inlineImages(xhtml: string, xhtmlDir: string, zip: AdmZip): string {
   })
 }
 
+// ── Internal link rewriting ────────────────────────────────────────────────
+
+/**
+ * Rewrite EPUB-internal <a href="..."> links into data-epub-* attributes so
+ * they survive sanitization and can be intercepted by the renderer at runtime.
+ *
+ * - Cross-chapter:  href → data-epub-chapter="N" [data-epub-fragment="..."]
+ * - Same-chapter:   #anchor → data-epub-fragment="..."
+ * - External:       http/https hrefs pass through unchanged
+ * - Non-spine:      href stripped, no data attrs (renders as non-clickable text)
+ * - No-href anchors (<a id="...">): returned untouched (section markers)
+ *
+ * Security notes:
+ *   1. Pre-existing data-epub-* attributes from the EPUB source are stripped
+ *      before we write ours, preventing a malicious EPUB from spoofing chapter
+ *      navigation (the sanitizer must allow these attrs to survive our rewrite,
+ *      so we cannot rely on it to remove attacker-supplied values).
+ *   2. Fragment values are HTML-encoded before attribute injection.
+ *      The href regex [^"'] already excludes raw quotes, but encoding is
+ *      defence-in-depth against entity edge cases.
+ *   3. chapterIdx is a Map-derived integer — no encoding needed.
+ */
+function rewriteEpubLinks(
+  xhtml:            string,
+  xhtmlDir:         string,
+  spineHrefToIndex: Map<string, number>,
+): string {
+  function encodeAttr(v: string): string {
+    return v
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+  }
+
+  return xhtml.replace(/<a\b([^>]*)>/gi, (fullTag, attrs: string) => {
+    const hrefMatch = /\bhref=(["'])([^"']*)\1/.exec(attrs)
+    if (!hrefMatch) return fullTag  // <a id="..."> section marker — leave untouched
+
+    const href     = hrefMatch[2]
+    const hashIdx  = href.indexOf('#')
+    const pathPart = hashIdx >= 0 ? href.slice(0, hashIdx) : href
+    const fragment = hashIdx >= 0 ? href.slice(hashIdx + 1) : ''
+
+    // External links — sanitizer keeps http/https hrefs as-is
+    if (/^https?:\/\//i.test(pathPart)) return fullTag
+
+    // Strip href + any pre-existing data-epub-* (spoofing prevention)
+    const stripped = attrs
+      .replace(/\s*\bhref=(["'])[^"']*\1/, '')
+      .replace(/\s*\bdata-epub-chapter=(["'])[^"']*\1/g, '')
+      .replace(/\s*\bdata-epub-fragment=(["'])[^"']*\1/g, '')
+
+    if (!pathPart) {
+      // Pure same-chapter fragment: <a href="#fn-1">
+      return `<a${stripped} data-epub-fragment="${encodeAttr(fragment)}">`
+    }
+
+    // Cross-chapter relative path
+    const resolved  = resolveZipPath(xhtmlDir, pathPart)
+    const chapterIdx = resolved ? spineHrefToIndex.get(resolved) : undefined
+
+    if (chapterIdx === undefined) {
+      // Non-spine resource — strip href, no data attrs (dead link)
+      return `<a${stripped}>`
+    }
+
+    const fragAttr = fragment ? ` data-epub-fragment="${encodeAttr(fragment)}"` : ''
+    return `<a${stripped} data-epub-chapter="${chapterIdx}"${fragAttr}>`
+  })
+}
+
 // ── Main export ────────────────────────────────────────────────────────────
 
 export function extractEpubContent(filePath: string): EpubBook {
@@ -368,6 +441,17 @@ export function extractEpubContent(filePath: string): EpubBook {
   // 4. Build title map from nav/ncx
   const titleMap = buildTitleMap(zip, opfDir, manifest)
 
+  // 4b. Build href → output-chapter-index map for internal link rewriting.
+  // Mirrors the main loop's continue condition so indices match exactly.
+  const spineHrefToIndex = new Map<string, number>()
+  let outIdxPre = 0
+  for (const href of spineHrefs) {
+    const zp = resolveZipPath(opfDir, href)
+    if (zp) {
+      try { zip.readAsText(zp); spineHrefToIndex.set(zp, outIdxPre++) } catch { /* skip missing entries */ }
+    }
+  }
+
   // 5. Extract each chapter
   const chapters: EpubChapter[] = []
 
@@ -393,8 +477,11 @@ export function extractEpubContent(filePath: string): EpubBook {
     // Inline images before sanitization (data URIs are in the allowed scheme list)
     const withImages = inlineImages(xhtml, xhtmlDir, zip)
 
+    // Rewrite internal EPUB links to data-epub-* attributes before sanitization
+    const withRewritten = rewriteEpubLinks(withImages, xhtmlDir, spineHrefToIndex)
+
     // Sanitize — strips <style>, <script>, <iframe>, and all non-allow-listed content
-    const sanitized = sanitizeHtml(withImages, SANITIZE_OPTIONS)
+    const sanitized = sanitizeHtml(withRewritten, SANITIZE_OPTIONS)
 
     // Remove any leading elements that are just the book title (running headers)
     const html = stripLeadingTitleElements(sanitized, bookTitle)

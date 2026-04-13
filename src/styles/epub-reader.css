@@ -118,6 +118,14 @@
   color: #9b8dff;
   text-decoration: underline;
   text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* Non-spine resource links: href stripped, no data-epub-* — render as plain text */
+.epub-page-content a:not([href]):not([data-epub-chapter]):not([data-epub-fragment]) {
+  color: inherit;
+  text-decoration: none;
+  cursor: default;
 }
 
 .epub-page-content blockquote {

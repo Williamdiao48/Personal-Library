@@ -103,6 +103,8 @@ export default function EpubReader({ item, onBack }: Props) {
   const pendingPageRef        = useRef<number | null>(null)
   // Set before calling jumpToChapter; consumed after chapter settles to jump to annotation mark
   const pendingJumpAnnotationId = useRef<string | null>(null)
+  // Set when a link click targets a fragment; consumed in the post-render rAF
+  const pendingFragmentRef = useRef<string | null>(null)
 
   // Keep both state and ref in sync for xAnim
   function updateXAnim(next: XAnim | null) {
@@ -172,6 +174,14 @@ export default function EpubReader({ item, onBack }: Props) {
             }
           }
         }
+      }
+
+      // If there's a pending fragment from a cross-chapter link, jump to it
+      const pendingFrag = pendingFragmentRef.current
+      if (pendingFrag) {
+        pendingFragmentRef.current = null
+        const el = contentRef.current?.querySelector<HTMLElement>(`[id="${CSS.escape(pendingFrag)}"]`)
+        if (el) handleSearchActivate(el)
       }
     })
     return () => { cancelled = true; cancelAnimationFrame(raf) }
@@ -562,6 +572,41 @@ export default function EpubReader({ item, onBack }: Props) {
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
   }, []) // stable — all navigation uses refs; state setters are stable
+
+  // ── Internal EPUB link navigation ─────────────────────────────
+  useEffect(() => {
+    const container = contentRef.current
+    if (!container) return
+
+    function handleLinkClick(e: MouseEvent) {
+      const anchor = (e.target as HTMLElement).closest('a')
+      if (!anchor) return
+
+      const chapterAttr  = anchor.getAttribute('data-epub-chapter')
+      const fragmentAttr = anchor.getAttribute('data-epub-fragment')
+
+      if (chapterAttr !== null) {
+        e.preventDefault()
+        const idx = parseInt(chapterAttr, 10)
+        if (!Number.isFinite(idx)) return
+        if (fragmentAttr) pendingFragmentRef.current = fragmentAttr
+        jumpToChapter(idx)
+        return
+      }
+
+      if (fragmentAttr !== null) {
+        // Same-chapter fragment — reuse existing column-math
+        e.preventDefault()
+        const el = container.querySelector<HTMLElement>(`[id="${CSS.escape(fragmentAttr)}"]`)
+        if (el) handleSearchActivate(el)
+        return
+      }
+      // http/https links: Electron's will-navigate handles them — no action needed
+    }
+
+    container.addEventListener('click', handleLinkClick)
+    return () => container.removeEventListener('click', handleLinkClick)
+  }, [chapter]) // re-attach when chapter HTML is replaced
 
   // ── Navigation helpers ─────────────────────────────────────────
 
