@@ -12,4 +12,7 @@ export const annotationsService = {
 
   delete: (id: string): Promise<void> =>
     window.api.annotations.delete(id),
+
+  swapSortOrder: (id1: string, id2: string): Promise<void> =>
+    window.api.annotations.swapSortOrder(id1, id2),
 }

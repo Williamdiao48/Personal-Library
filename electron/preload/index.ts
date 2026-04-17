@@ -127,6 +127,8 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('annotations:updateNote', id, noteText),
     delete: (id: string) =>
       ipcRenderer.invoke('annotations:delete', id),
+    swapSortOrder: (id1: string, id2: string) =>
+      ipcRenderer.invoke('annotations:swapSortOrder', id1, id2),
   },
 
   // Backup

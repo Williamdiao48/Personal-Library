@@ -6,7 +6,7 @@ import { SCHEMA } from './schema'
 let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
-const CURRENT_VERSION = 13
+const CURRENT_VERSION = 14
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -72,6 +72,10 @@ ALTER TABLE items ADD COLUMN chapter_end INTEGER DEFAULT NULL;`,
   `,
   11: `ALTER TABLE progress ADD COLUMN max_scroll_position REAL DEFAULT NULL;`,
   12: `CREATE INDEX IF NOT EXISTS idx_item_tags_item_id ON item_tags(item_id);`,
+  14: `
+    ALTER TABLE annotations ADD COLUMN sort_order INTEGER DEFAULT NULL;
+    UPDATE annotations SET sort_order = rowid;
+  `,
   13: `
     CREATE TABLE IF NOT EXISTS annotations (
       id             TEXT    PRIMARY KEY,

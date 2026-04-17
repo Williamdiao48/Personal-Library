@@ -90,7 +90,8 @@ export const SCHEMA = `
     context_before TEXT    DEFAULT NULL,    -- ~30 chars before selection for re-anchoring
     context_after  TEXT    DEFAULT NULL,    -- ~30 chars after selection for re-anchoring
     note_text      TEXT    DEFAULT NULL,    -- user's freeform note
-    created_at     INTEGER NOT NULL         -- unix ms
+    created_at     INTEGER NOT NULL,        -- unix ms
+    sort_order     INTEGER DEFAULT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_annotations_item_id
     ON annotations(item_id, chapter_index, position);

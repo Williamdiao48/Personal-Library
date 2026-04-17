@@ -151,6 +151,7 @@ export interface Annotation {
   context_after:  string | null
   note_text:      string | null
   created_at:     number          // unix ms
+  sort_order:     number | null
 }
 
 export interface CreateAnnotationPayload {
@@ -247,10 +248,11 @@ export interface Api {
     onError:              (callback: (info: { message: string }) => void) => () => void
   }
   annotations: {
-    getForItem: (itemId: string)                              => Promise<Annotation[]>
-    create:     (payload: CreateAnnotationPayload)            => Promise<Annotation>
-    updateNote: (id: string, noteText: string | null)         => Promise<void>
-    delete:     (id: string)                                  => Promise<void>
+    getForItem:    (itemId: string)                              => Promise<Annotation[]>
+    create:        (payload: CreateAnnotationPayload)            => Promise<Annotation>
+    updateNote:    (id: string, noteText: string | null)         => Promise<void>
+    delete:        (id: string)                                  => Promise<void>
+    swapSortOrder: (id1: string, id2: string)                    => Promise<void>
   }
   onRequestCapture:  (callback: (url: string) => void) => () => void
   onCaptureProgress: (callback: (payload: { jobId: string; msg: string }) => void) => () => void
