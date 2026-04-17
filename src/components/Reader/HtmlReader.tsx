@@ -7,6 +7,8 @@ import { useAnnotations } from '../../hooks/useAnnotations'
 import SearchBar from './SearchBar'
 import TextSelectionPopup from './TextSelectionPopup'
 import AnnotationsPanel from './AnnotationsPanel'
+import BookmarksPanel from './BookmarksPanel'
+import NotePopover from './NotePopover'
 import type { Item, Annotation } from '../../types'
 import '../../styles/reader.css'
 import '../../styles/epub-reader.css'   // reuse settings panel + button styles
@@ -81,7 +83,9 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
   const [searchQuery,     setSearchQuery]     = useState('')
   const [showChapterList, setShowChapterList] = useState(false)
   const [showPanel,       setShowPanel]       = useState(false)
+  const [showBookmarks,   setShowBookmarks]   = useState(false)
   const [readingProgress, setReadingProgress] = useState(() => Math.round((item.scroll_position ?? 0) * 100))
+  const [notePopup, setNotePopup] = useState<{ x: number; y: number; annotation: Annotation } | null>(null)
 
   // Note editor state: null = closed
   const [noteEditorState, setNoteEditorState] = useState<{
@@ -245,6 +249,40 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     el.scrollTo({ top: annotation.position * scrollable, behavior: 'smooth' })
   }
 
+  const bookmarks      = annot.annotations.filter(a => a.type === 'bookmark')
+  const isBookmarked   = bookmarks.some(b =>
+    b.chapter_index === annotChapterIndex &&
+    Math.abs(b.position - getCurrentPosition()) < 0.01
+  )
+
+  function handleBookmarkToggle() {
+    if (isBookmarked) {
+      const existing = bookmarks.find(b =>
+        b.chapter_index === annotChapterIndex &&
+        Math.abs(b.position - getCurrentPosition()) < 0.01
+      )
+      if (existing) annot.deleteAnnotation(existing.id)
+    } else {
+      annot.createBookmark(getCurrentPosition())
+    }
+  }
+
+  // Click handler for note marks
+  useEffect(() => {
+    const container = scrollRef.current
+    if (!container) return
+    const handleMarkClick = (e: MouseEvent) => {
+      const mark = (e.target as HTMLElement).closest('mark[data-annotation-id]') as HTMLElement | null
+      if (!mark || mark.dataset.type !== 'note') return
+      const annotation = annot.annotations.find(a => a.id === mark.dataset.annotationId)
+      if (!annotation?.note_text) return
+      const rect = mark.getBoundingClientRect()
+      setNotePopup({ x: rect.left + rect.width / 2, y: rect.top, annotation })
+    }
+    container.addEventListener('click', handleMarkClick)
+    return () => container.removeEventListener('click', handleMarkClick)
+  }, [annot.annotations])
+
   // ── In-content search ────────────────────────────────────────────
 
   const contentKey = continuousMode ? 0 : currentChapter
@@ -312,6 +350,7 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     if (chapters) return
     const el = scrollRef.current
     if (!el) return
+    setNotePopup(null)
     const now = Date.now()
     if (now - activityThrottleRef.current >= 1000) { activityThrottleRef.current = now; recordActivity() }
     const scrollable = el.scrollHeight - el.clientHeight
@@ -515,6 +554,17 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     </div>
   )
 
+  const bookmarksPanel = showBookmarks && (
+    <BookmarksPanel
+      bookmarks={annot.annotations.filter(a => a.type === 'bookmark')}
+      contentType={item.content_type}
+      onJump={handleJumpToAnnotation}
+      onDelete={annot.deleteAnnotation}
+      onMove={annot.swapAnnotationOrder}
+      onClose={() => setShowBookmarks(false)}
+    />
+  )
+
   const annotationsPanel = showPanel && (
     <AnnotationsPanel
       annotations={annot.annotations}
@@ -522,6 +572,7 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
       onJump={handleJumpToAnnotation}
       onDelete={annot.deleteAnnotation}
       onUpdateNote={annot.updateNote}
+      onMove={annot.swapAnnotationOrder}
       onClose={() => setShowPanel(false)}
     />
   )
@@ -615,22 +666,50 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
         </button>
       )}
 
-      <div style={{ position: 'relative', marginLeft: '8px' }}>
-        <button
-          className={`epub-top-btn${showPanel ? ' active' : ''}`}
-          onClick={() => setShowPanel(s => !s)}
-          aria-label="Annotations"
-          title="Annotations"
-          style={{ position: 'relative' }}
-        >
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-            <path d="M3 2h10v13l-5-3-5 3V2z" stroke="currentColor" strokeWidth="1.5"/>
-          </svg>
-          {annot.annotations.length > 0 && (
-            <span className="annot-badge">{annot.annotations.length}</span>
-          )}
-        </button>
-      </div>
+      <button
+        className={`epub-top-btn${isBookmarked ? ' active' : ''}`}
+        onClick={handleBookmarkToggle}
+        aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark this position'}
+        title={isBookmarked ? 'Remove bookmark' : 'Bookmark'}
+        style={{ marginLeft: '8px' }}
+      >
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+          <path
+            d="M3 2h10v13l-5-3-5 3V2z"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            fill={isBookmarked ? 'currentColor' : 'none'}
+          />
+        </svg>
+      </button>
+
+      <button
+        className={`epub-top-btn${showBookmarks ? ' active' : ''}`}
+        onClick={() => { setShowBookmarks(s => !s); setShowPanel(false) }}
+        aria-label="Bookmarks"
+        title="Bookmarks"
+        style={{ marginLeft: '4px' }}
+      >
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+          <path d="M2 2h12v12l-4-2.5L6 14V2z" stroke="currentColor" strokeWidth="1.5"/>
+          <line x1="5" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.2"/>
+          <line x1="5" y1="9" x2="9" y2="9" stroke="currentColor" strokeWidth="1.2"/>
+        </svg>
+      </button>
+
+      <button
+        className={`epub-top-btn${showPanel ? ' active' : ''}`}
+        onClick={() => { setShowPanel(s => !s); setShowBookmarks(false) }}
+        aria-label="Annotations"
+        title="Annotations"
+        style={{ marginLeft: '4px' }}
+      >
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+          <rect x="1" y="3" width="14" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+          <rect x="1" y="7" width="10" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+          <rect x="1" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+        </svg>
+      </button>
 
       <div className="epub-settings-wrapper" style={{ marginLeft: '8px' }}>
         <button
@@ -764,9 +843,18 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
               onNote={handleSelectionNote}
             />
           </div>
+          {bookmarksPanel}
           {annotationsPanel}
         </div>
         {noteEditorModal}
+        {notePopup && (
+          <NotePopover
+            x={notePopup.x}
+            y={notePopup.y}
+            annotation={notePopup.annotation}
+            onClose={() => setNotePopup(null)}
+          />
+        )}
       </div>
     )
   }
@@ -805,9 +893,18 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
               onNote={handleSelectionNote}
             />
           </div>
+          {bookmarksPanel}
           {annotationsPanel}
         </div>
         {noteEditorModal}
+        {notePopup && (
+          <NotePopover
+            x={notePopup.x}
+            y={notePopup.y}
+            annotation={notePopup.annotation}
+            onClose={() => setNotePopup(null)}
+          />
+        )}
       </div>
     )
   }
@@ -833,9 +930,18 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
           onHighlight={handleSelectionHighlight}
           onNote={handleSelectionNote}
         />
+        {bookmarksPanel}
         {annotationsPanel}
       </div>
       {noteEditorModal}
+      {notePopup && (
+        <NotePopover
+          x={notePopup.x}
+          y={notePopup.y}
+          annotation={notePopup.annotation}
+          onClose={() => setNotePopup(null)}
+        />
+      )}
     </div>
   )
 }

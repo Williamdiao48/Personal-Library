@@ -7,29 +7,18 @@ interface Props {
   onJump:       (annotation: Annotation) => void
   onDelete:     (id: string) => void
   onUpdateNote: (id: string, text: string | null) => void
+  onMove:       (id1: string, id2: string) => void
   onClose:      () => void
 }
 
 function formatPosition(annotation: Annotation, contentType: ContentType): string {
-  if (contentType === 'pdf') {
-    return `Page ${Math.round(annotation.position)}`
-  }
-  if (annotation.chapter_index !== null) {
-    return `Ch. ${annotation.chapter_index + 1} · ${Math.round(annotation.position * 100)}%`
-  }
+  if (contentType === 'pdf') return `Page ${Math.round(annotation.position)}`
+  if (annotation.chapter_index !== null) return `Ch. ${annotation.chapter_index + 1} · ${Math.round(annotation.position * 100)}%`
   return `${Math.round(annotation.position * 100)}%`
 }
 
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max) + '…'
-}
-
-function BookmarkIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M3 2h10v13l-5-3-5 3V2z" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-    </svg>
-  )
 }
 
 function HighlightIcon() {
@@ -49,58 +38,74 @@ function NoteIcon() {
   )
 }
 
-interface ItemRowProps {
+interface RowProps {
   annotation:   Annotation
   contentType:  ContentType
+  isFirst:      boolean
+  isLast:       boolean
   onJump:       (a: Annotation) => void
   onDelete:     (id: string) => void
   onUpdateNote: (id: string, text: string | null) => void
+  onMove:       (id1: string, id2: string) => void
+  prevId:       string | undefined
+  nextId:       string | undefined
 }
 
-function AnnotationRow({ annotation, contentType, onJump, onDelete, onUpdateNote }: ItemRowProps) {
+function AnnotationRow({ annotation, contentType, isFirst, isLast, onJump, onDelete, onUpdateNote, onMove, prevId, nextId }: RowProps) {
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(annotation.note_text ?? '')
 
   const saveEdit = () => {
-    const trimmed = editText.trim() || null
-    onUpdateNote(annotation.id, trimmed)
+    onUpdateNote(annotation.id, editText.trim() || null)
     setEditing(false)
   }
 
-  const icon = annotation.type === 'bookmark'
-    ? <BookmarkIcon />
-    : annotation.type === 'highlight'
-    ? <HighlightIcon />
-    : <NoteIcon />
+  const icon = annotation.type === 'highlight' ? <HighlightIcon /> : <NoteIcon />
 
   return (
     <div className="annotation-row">
       <div className="annotation-row-header">
         <span className="annotation-row-icon">{icon}</span>
-        <span className="annotation-row-pos">{formatPosition(annotation, contentType)}</span>
+        <button
+          className="annotation-row-pos annotation-row-pos-link"
+          onClick={() => onJump(annotation)}
+          title="Jump to annotation"
+        >
+          {formatPosition(annotation, contentType)}
+        </button>
         <div className="annotation-row-actions">
           <button
             className="annot-action-btn"
-            onClick={() => onJump(annotation)}
-            title="Jump to"
-            aria-label="Jump to annotation"
+            onClick={() => !isFirst && prevId && onMove(annotation.id, prevId)}
+            disabled={isFirst}
+            title="Move up"
+            aria-label="Move up"
           >
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M8 2v12M2 8l6-6 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              <path d="M8 13V3M3 8l5-5 5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
           </button>
-          {annotation.type !== 'bookmark' && (
-            <button
-              className="annot-action-btn"
-              onClick={() => { setEditing(e => !e); setEditText(annotation.note_text ?? '') }}
-              title={editing ? 'Cancel' : 'Edit note'}
-              aria-label="Edit note"
-            >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M11 2l3 3-9 9H2v-3L11 2z" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-              </svg>
-            </button>
-          )}
+          <button
+            className="annot-action-btn"
+            onClick={() => !isLast && nextId && onMove(annotation.id, nextId)}
+            disabled={isLast}
+            title="Move down"
+            aria-label="Move down"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M8 3v10M3 8l5 5 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </button>
+          <button
+            className="annot-action-btn"
+            onClick={() => { setEditing(e => !e); setEditText(annotation.note_text ?? '') }}
+            title={editing ? 'Cancel' : 'Edit note'}
+            aria-label="Edit note"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M11 2l3 3-9 9H2v-3L11 2z" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+            </svg>
+          </button>
           <button
             className="annot-action-btn annot-delete-btn"
             onClick={() => onDelete(annotation.id)}
@@ -149,17 +154,10 @@ function AnnotationRow({ annotation, contentType, onJump, onDelete, onUpdateNote
   )
 }
 
-export default function AnnotationsPanel({ annotations, contentType, onJump, onDelete, onUpdateNote, onClose }: Props) {
-  const isEmpty = annotations.length === 0
-
-  // Sort: chapter_index NULLS FIRST, then position, then created_at
-  const sorted = [...annotations].sort((a, b) => {
-    const ca = a.chapter_index ?? -1
-    const cb = b.chapter_index ?? -1
-    if (ca !== cb) return ca - cb
-    if (a.position !== b.position) return a.position - b.position
-    return a.created_at - b.created_at
-  })
+export default function AnnotationsPanel({ annotations, contentType, onJump, onDelete, onUpdateNote, onMove, onClose }: Props) {
+  // Only show highlights and notes (bookmarks go in BookmarksPanel)
+  const items = annotations.filter(a => a.type === 'highlight' || a.type === 'note')
+  const isEmpty = items.length === 0
 
   return (
     <div className="annotations-panel">
@@ -179,14 +177,19 @@ export default function AnnotationsPanel({ annotations, contentType, onJump, onD
             No annotations yet.{'\n'}Select text to highlight or add a note.
           </p>
         ) : (
-          sorted.map(annotation => (
+          items.map((annotation, i) => (
             <AnnotationRow
               key={annotation.id}
               annotation={annotation}
               contentType={contentType}
+              isFirst={i === 0}
+              isLast={i === items.length - 1}
+              prevId={items[i - 1]?.id}
+              nextId={items[i + 1]?.id}
               onJump={onJump}
               onDelete={onDelete}
               onUpdateNote={onUpdateNote}
+              onMove={onMove}
             />
           ))
         )}

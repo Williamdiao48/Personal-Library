@@ -7,6 +7,8 @@ import { useAnnotations } from '../../hooks/useAnnotations'
 import SearchBar from './SearchBar'
 import TextSelectionPopup from './TextSelectionPopup'
 import AnnotationsPanel from './AnnotationsPanel'
+import BookmarksPanel from './BookmarksPanel'
+import NotePopover from './NotePopover'
 import type { Item, EpubBook, Annotation } from '../../types'
 import '../../styles/epub-reader.css'
 
@@ -76,6 +78,8 @@ export default function EpubReader({ item, onBack }: Props) {
   const [showSearch,        setShowSearch]        = useState(false)
   const [searchQuery,       setSearchQuery]       = useState('')
   const [showPanel,         setShowPanel]         = useState(false)
+  const [showBookmarks,     setShowBookmarks]     = useState(false)
+  const [notePopup, setNotePopup] = useState<{ x: number; y: number; annotation: Annotation } | null>(null)
   const [chapterPageCounts, setChapterPageCounts] = useState<number[]>([])
   const [noteEditorState, setNoteEditorState] = useState<{
     range:       Range | null
@@ -245,6 +249,18 @@ export default function EpubReader({ item, onBack }: Props) {
     const target = Math.round(annotation.position * (totalPagesRef.current - 1))
     pageRef.current = target
     setPage(target)
+  }
+
+  const bookmarks    = annot.annotations.filter(a => a.type === 'bookmark')
+  const isBookmarked = bookmarks.some(b => b.chapter_index === chapterRef.current)
+
+  function handleBookmarkToggle() {
+    if (isBookmarked) {
+      const existing = bookmarks.find(b => b.chapter_index === chapterRef.current)
+      if (existing) annot.deleteAnnotation(existing.id)
+    } else {
+      annot.createBookmark(getCurrentEpubPosition())
+    }
   }
 
   function openSearch() {
@@ -608,6 +624,22 @@ export default function EpubReader({ item, onBack }: Props) {
     return () => container.removeEventListener('click', handleLinkClick)
   }, [chapter]) // re-attach when chapter HTML is replaced
 
+  // ── Note mark click handler ────────────────────────────────────
+  useEffect(() => {
+    const container = contentRef.current
+    if (!container) return
+    const handleMarkClick = (e: MouseEvent) => {
+      const mark = (e.target as HTMLElement).closest('mark[data-annotation-id]') as HTMLElement | null
+      if (!mark || mark.dataset.type !== 'note') return
+      const annotation = annot.annotations.find(a => a.id === mark.dataset.annotationId)
+      if (!annotation?.note_text) return
+      const rect = mark.getBoundingClientRect()
+      setNotePopup({ x: rect.left + rect.width / 2, y: rect.top, annotation })
+    }
+    container.addEventListener('click', handleMarkClick)
+    return () => container.removeEventListener('click', handleMarkClick)
+  }, [annot.annotations, chapter])
+
   // ── Navigation helpers ─────────────────────────────────────────
 
   function changeChapter(index: number, goToLastPage: boolean) {
@@ -652,6 +684,7 @@ export default function EpubReader({ item, onBack }: Props) {
 
   function prevPage() {
     if (xAnimRef.current) return
+    setNotePopup(null)
     recordActivity()
     if (pageRef.current > 0) {
       const prev = pageRef.current - 1
@@ -664,6 +697,7 @@ export default function EpubReader({ item, onBack }: Props) {
 
   function nextPage() {
     if (xAnimRef.current) return
+    setNotePopup(null)
     recordActivity()
     const bk = bookRef.current
     if (pageRef.current < totalPagesRef.current - 1) {
@@ -856,24 +890,58 @@ export default function EpubReader({ item, onBack }: Props) {
           </button>
         )}
 
+        {/* Bookmark toggle */}
+        {!showSearch && (
+          <button
+            className={`epub-top-btn${isBookmarked ? ' active' : ''}`}
+            onClick={handleBookmarkToggle}
+            aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark this page'}
+            title={isBookmarked ? 'Remove bookmark' : 'Bookmark'}
+            style={{ marginLeft: '4px' }}
+          >
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+              <path
+                d="M3 2h10v13l-5-3-5 3V2z"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                fill={isBookmarked ? 'currentColor' : 'none'}
+              />
+            </svg>
+          </button>
+        )}
+
+        {/* Bookmarks panel toggle */}
+        {!showSearch && (
+          <button
+            className={`epub-top-btn${showBookmarks ? ' active' : ''}`}
+            onClick={() => { setShowBookmarks(s => !s); setShowPanel(false) }}
+            aria-label="Bookmarks"
+            title="Bookmarks"
+            style={{ marginLeft: '4px' }}
+          >
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+              <path d="M2 2h12v12l-4-2.5L6 14V2z" stroke="currentColor" strokeWidth="1.5"/>
+              <line x1="5" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.2"/>
+              <line x1="5" y1="9" x2="9" y2="9" stroke="currentColor" strokeWidth="1.2"/>
+            </svg>
+          </button>
+        )}
+
         {/* Annotations panel toggle */}
         {!showSearch && (
-          <div style={{ position: 'relative', marginLeft: '4px' }}>
-            <button
-              className={`epub-top-btn${showPanel ? ' active' : ''}`}
-              onClick={() => setShowPanel(s => !s)}
-              aria-label="Annotations"
-              title="Annotations"
-              style={{ position: 'relative' }}
-            >
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-                <path d="M3 2h10v13l-5-3-5 3V2z" stroke="currentColor" strokeWidth="1.5"/>
-              </svg>
-              {annot.annotations.length > 0 && (
-                <span className="annot-badge">{annot.annotations.length}</span>
-              )}
-            </button>
-          </div>
+          <button
+            className={`epub-top-btn${showPanel ? ' active' : ''}`}
+            onClick={() => { setShowPanel(s => !s); setShowBookmarks(false) }}
+            aria-label="Annotations"
+            title="Annotations"
+            style={{ marginLeft: '4px' }}
+          >
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+              <rect x="1" y="3" width="14" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+              <rect x="1" y="7" width="10" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+              <rect x="1" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+            </svg>
+          </button>
         )}
 
         <div className="epub-settings-wrapper">
@@ -1035,6 +1103,16 @@ export default function EpubReader({ item, onBack }: Props) {
         />
       </div>
 
+      {showBookmarks && (
+        <BookmarksPanel
+          bookmarks={annot.annotations.filter(a => a.type === 'bookmark')}
+          contentType={item.content_type}
+          onJump={handleJumpToAnnotation}
+          onDelete={annot.deleteAnnotation}
+          onMove={annot.swapAnnotationOrder}
+          onClose={() => setShowBookmarks(false)}
+        />
+      )}
       {showPanel && (
         <AnnotationsPanel
           annotations={annot.annotations}
@@ -1042,12 +1120,21 @@ export default function EpubReader({ item, onBack }: Props) {
           onJump={handleJumpToAnnotation}
           onDelete={annot.deleteAnnotation}
           onUpdateNote={annot.updateNote}
+          onMove={annot.swapAnnotationOrder}
           onClose={() => setShowPanel(false)}
         />
       )}
       </div>
 
       {noteEditorModal}
+      {notePopup && (
+        <NotePopover
+          x={notePopup.x}
+          y={notePopup.y}
+          annotation={notePopup.annotation}
+          onClose={() => setNotePopup(null)}
+        />
+      )}
     </div>
   )
 }

@@ -11,6 +11,7 @@ import { usePdfSearch } from '../../hooks/usePdfSearch'
 import { useAnnotations } from '../../hooks/useAnnotations'
 import SearchBar from './SearchBar'
 import AnnotationsPanel from './AnnotationsPanel'
+import BookmarksPanel from './BookmarksPanel'
 import type { Item, ConvertChapter, Annotation } from '../../types'
 import ConvertProgress from './ConvertProgress'
 import '../../styles/epub-reader.css'
@@ -411,7 +412,8 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   const [pageDims,      setPageDims]      = useState<PageDim[]>([])
 
   // Annotations
-  const [showPanel,       setShowPanel]       = useState(false)
+  const [showPanel,     setShowPanel]     = useState(false)
+  const [showBookmarks, setShowBookmarks] = useState(false)
   const [noteEditorState, setNoteEditorState] = useState<{
     existingId?: string
     initialText?: string
@@ -424,8 +426,16 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     chapterIndex: null,       // PDF annotations are page-indexed, no chapter concept
   })
 
-  function handleCreateBookmark() {
-    annot.createBookmark(currentPageRef.current)
+  const pdfBookmarks  = annot.annotations.filter(a => a.type === 'bookmark')
+  const isBookmarked  = pdfBookmarks.some(b => b.position === currentPageRef.current)
+
+  function handleBookmarkToggle() {
+    if (isBookmarked) {
+      const existing = pdfBookmarks.find(b => b.position === currentPageRef.current)
+      if (existing) annot.deleteAnnotation(existing.id)
+    } else {
+      annot.createBookmark(currentPageRef.current)
+    }
   }
 
   function handleAddNote() {
@@ -1210,17 +1220,39 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
           </button>
         )}
 
-        {/* Bookmark current page */}
+        {/* Bookmark toggle */}
         {ready && !showSearch && (
           <button
-            className="epub-top-btn"
+            className={`epub-top-btn${isBookmarked ? ' active' : ''}`}
             style={{ marginLeft: '4px' }}
-            onClick={handleCreateBookmark}
-            title="Bookmark current page"
-            aria-label="Bookmark this page"
+            onClick={handleBookmarkToggle}
+            title={isBookmarked ? 'Remove bookmark' : 'Bookmark this page'}
+            aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark this page'}
           >
             <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-              <path d="M3 2h10v13l-5-3-5 3V2z" stroke="currentColor" strokeWidth="1.5"/>
+              <path
+                d="M3 2h10v13l-5-3-5 3V2z"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                fill={isBookmarked ? 'currentColor' : 'none'}
+              />
+            </svg>
+          </button>
+        )}
+
+        {/* Bookmarks panel toggle */}
+        {ready && !showSearch && (
+          <button
+            className={`epub-top-btn${showBookmarks ? ' active' : ''}`}
+            style={{ marginLeft: '4px' }}
+            onClick={() => { setShowBookmarks(s => !s); setShowPanel(false) }}
+            aria-label="Bookmarks"
+            title="Bookmarks"
+          >
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+              <path d="M2 2h12v12l-4-2.5L6 14V2z" stroke="currentColor" strokeWidth="1.5"/>
+              <line x1="5" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.2"/>
+              <line x1="5" y1="9" x2="9" y2="9" stroke="currentColor" strokeWidth="1.2"/>
             </svg>
           </button>
         )}
@@ -1242,24 +1274,19 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
 
         {/* Annotations panel toggle */}
         {ready && !showSearch && (
-          <div style={{ position: 'relative', marginLeft: '4px' }}>
-            <button
-              className={`epub-top-btn${showPanel ? ' active' : ''}`}
-              onClick={() => setShowPanel(s => !s)}
-              aria-label="Annotations"
-              title="Annotations"
-              style={{ position: 'relative' }}
-            >
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-                <rect x="1" y="3" width="14" height="2" rx="1" fill="currentColor" opacity="0.5"/>
-                <rect x="1" y="7" width="10" height="2" rx="1" fill="currentColor" opacity="0.5"/>
-                <rect x="1" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.5"/>
-              </svg>
-              {annot.annotations.length > 0 && (
-                <span className="annot-badge">{annot.annotations.length}</span>
-              )}
-            </button>
-          </div>
+          <button
+            className={`epub-top-btn${showPanel ? ' active' : ''}`}
+            style={{ marginLeft: '4px' }}
+            onClick={() => { setShowPanel(s => !s); setShowBookmarks(false) }}
+            aria-label="Annotations"
+            title="Annotations"
+          >
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+              <rect x="1" y="3" width="14" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+              <rect x="1" y="7" width="10" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+              <rect x="1" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+            </svg>
+          </button>
         )}
 
         {/* Scroll / Spread mode toggle */}
@@ -1401,6 +1428,16 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
 
       </div>
 
+      {showBookmarks && (
+        <BookmarksPanel
+          bookmarks={annot.annotations.filter(a => a.type === 'bookmark')}
+          contentType={item.content_type}
+          onJump={handleJumpToAnnotation}
+          onDelete={annot.deleteAnnotation}
+          onMove={annot.swapAnnotationOrder}
+          onClose={() => setShowBookmarks(false)}
+        />
+      )}
       {showPanel && (
         <AnnotationsPanel
           annotations={annot.annotations}
@@ -1408,6 +1445,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
           onJump={handleJumpToAnnotation}
           onDelete={annot.deleteAnnotation}
           onUpdateNote={annot.updateNote}
+          onMove={annot.swapAnnotationOrder}
           onClose={() => setShowPanel(false)}
         />
       )}
