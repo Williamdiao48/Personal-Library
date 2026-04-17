@@ -27,7 +27,7 @@ export default function TextSelectionPopup({ containerRef, onHighlight, onNote, 
         return
       }
       const text = sel.toString().trim()
-      if (text.length < 5) {
+      if (text.length < 1) {
         setPopup(null)
         return
       }

@@ -11,12 +11,13 @@ interface UseAnnotationsOptions {
 }
 
 export interface UseAnnotationsReturn {
-  annotations:         Annotation[]
-  createBookmark:      (position: number) => Promise<void>
-  createHighlight:     (range: Range, position: number) => Promise<void>
-  createNote:          (position: number, noteText: string, range?: Range) => Promise<void>
-  updateNote:          (id: string, noteText: string | null) => Promise<void>
-  deleteAnnotation:    (id: string) => Promise<void>
+  annotations:          Annotation[]
+  createBookmark:       (position: number) => Promise<void>
+  createHighlight:      (range: Range, position: number) => Promise<void>
+  createNote:           (position: number, noteText: string, range?: Range) => Promise<void>
+  updateNote:           (id: string, noteText: string | null) => Promise<void>
+  deleteAnnotation:     (id: string) => Promise<void>
+  swapAnnotationOrder:  (id1: string, id2: string) => Promise<void>
   applyHighlightsToDOM: (chapterIndex: number | null) => void
 }
 
@@ -100,12 +101,13 @@ export function clearAnnotationMarks(container: HTMLElement): void {
   })
 }
 
-/** Wrap the given Range in a <mark data-annotation-id="..."> element. */
-function applyMarkToRange(range: Range, annotationId: string): void {
+/** Wrap the given Range in a <mark data-annotation-id="..." data-type="..."> element. */
+function applyMarkToRange(range: Range, annotationId: string, type: AnnotationType): void {
   try {
     const mark = document.createElement('mark')
     mark.className = 'annotation-mark'
     mark.dataset.annotationId = annotationId
+    mark.dataset.type = type
     range.surroundContents(mark)
   } catch {
     // surroundContents throws if range crosses element boundaries;
@@ -114,6 +116,7 @@ function applyMarkToRange(range: Range, annotationId: string): void {
       const mark = document.createElement('mark')
       mark.className = 'annotation-mark'
       mark.dataset.annotationId = annotationId
+      mark.dataset.type = type
       mark.appendChild(range.extractContents())
       range.insertNode(mark)
     } catch {
@@ -183,7 +186,7 @@ function reanchorHighlight(annotation: Annotation, container: HTMLElement): void
   const range = document.createRange()
   range.setStart(startNode, startOffset)
   range.setEnd(endNode, endOffset)
-  applyMarkToRange(range, annotation.id)
+  applyMarkToRange(range, annotation.id, annotation.type)
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────
@@ -213,7 +216,7 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
 
   const createHighlight = useCallback(async (range: Range, position: number) => {
     const text = range.toString().trim()
-    if (text.length < 5) return
+    if (text.length < 1) return
 
     const { contextBefore, contextAfter } = extractContext(range)
     const payload: CreateAnnotationPayload = {
@@ -228,7 +231,7 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
     const created = await annotationsService.create(payload)
     setAnnotations(prev => [...prev, created])
     // Immediately paint the mark so it appears without waiting for applyHighlightsToDOM
-    applyMarkToRange(range, created.id)
+    applyMarkToRange(range, created.id, 'highlight')
   }, [itemId, chapterIndex])
 
   const createNote = useCallback(async (position: number, noteText: string, range?: Range) => {
@@ -258,7 +261,7 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
     const created = await annotationsService.create(payload)
     setAnnotations(prev => [...prev, created])
     // If anchored to text, immediately paint the mark
-    if (range && text) applyMarkToRange(range, created.id)
+    if (range && text) applyMarkToRange(range, created.id, 'note')
   }, [itemId, chapterIndex])
 
   const updateNote = useCallback(async (id: string, noteText: string | null) => {
@@ -281,6 +284,18 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
       }
     }
   }, [contentRef])
+
+  const swapAnnotationOrder = useCallback(async (id1: string, id2: string) => {
+    setAnnotations(prev => {
+      const arr = [...prev]
+      const i = arr.findIndex(a => a.id === id1)
+      const j = arr.findIndex(a => a.id === id2)
+      if (i === -1 || j === -1) return prev
+      ;[arr[i], arr[j]] = [arr[j], arr[i]]
+      return arr
+    })
+    await annotationsService.swapSortOrder(id1, id2)
+  }, [])
 
   const applyHighlightsToDOM = useCallback((targetChapter: number | null) => {
     const container = contentRef.current
@@ -308,6 +323,7 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
     createNote,
     updateNote,
     deleteAnnotation,
+    swapAnnotationOrder,
     applyHighlightsToDOM,
   }
 }
