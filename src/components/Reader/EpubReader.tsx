@@ -1069,7 +1069,7 @@ export default function EpubReader({ item, onBack }: Props) {
         {canPrev && (
           <div
             className="epub-click-prev"
-            onClick={prevPage}
+            onClick={() => { if (window.getSelection()?.toString().trim()) return; prevPage() }}
             aria-label="Previous page"
             role="button"
           />
@@ -1077,7 +1077,7 @@ export default function EpubReader({ item, onBack }: Props) {
         {canNext && (
           <div
             className="epub-click-next"
-            onClick={nextPage}
+            onClick={() => { if (window.getSelection()?.toString().trim()) return; nextPage() }}
             aria-label="Next page"
             role="button"
           />

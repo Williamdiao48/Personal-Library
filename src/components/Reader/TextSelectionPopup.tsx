@@ -43,12 +43,20 @@ export default function TextSelectionPopup({ containerRef, onHighlight, onNote, 
       const rect = range.getBoundingClientRect()
       if (!rect || rect.width === 0) { setPopup(null); return }
 
-      // Position popup above the selection, centered horizontally
+      // Clamp within the container's visible bounds so the popup never
+      // overlaps the toolbar above or a side panel to the right.
+      const contRect = container.getBoundingClientRect()
+      const POPUP_W  = 112
+      const POPUP_H  = 44
+
       const x = Math.min(
-        Math.max(rect.left + rect.width / 2 - 56, 8),
-        window.innerWidth - 120
+        Math.max(rect.left + rect.width / 2 - POPUP_W / 2, contRect.left + 4),
+        contRect.right - POPUP_W - 4
       )
-      const y = Math.max(rect.top - 44, 8)
+      // Prefer above the selection; fall back to below if too close to the top.
+      const yAbove = rect.top - POPUP_H - 4
+      const yBelow = rect.bottom + 4
+      const y = yAbove >= contRect.top + 4 ? yAbove : yBelow
 
       setPopup({ x, y, range })
     })
@@ -65,13 +73,13 @@ export default function TextSelectionPopup({ containerRef, onHighlight, onNote, 
     return () => document.removeEventListener('mousedown', onMouseDown)
   }, [popup])
 
-  // Attach mouseup to the container element
+  // Attach mouseup at document level so click zones inside the container
+  // (e.g. EPUB page-flip hit areas) don't swallow the event before we see it.
+  // The container check inside handleMouseUp still filters foreign selections.
   useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-    container.addEventListener('mouseup', handleMouseUp)
-    return () => container.removeEventListener('mouseup', handleMouseUp)
-  }, [containerRef, handleMouseUp])
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => document.removeEventListener('mouseup', handleMouseUp)
+  }, [handleMouseUp])
 
   // Dismiss when selection is cleared (e.g. user clicks elsewhere in content)
   useEffect(() => {
