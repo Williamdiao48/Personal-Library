@@ -680,33 +680,70 @@
 .annot-save-btn:hover   { background: rgba(255,255,255,0.12); color: #fff; }
 .annot-cancel-btn:hover { background: rgba(255,255,255,0.04); color: #aaa; }
 
-/* Annotation count badge on toolbar button */
-.annot-badge {
-  position: absolute;
-  top: 1px;
-  right: 1px;
-  font-size: 8px;
-  font-weight: 700;
-  background: #f59e0b;
-  color: #000;
-  border-radius: 5px;
-  padding: 0 3px;
-  min-width: 11px;
-  text-align: center;
-  pointer-events: none;
-  line-height: 13px;
+/* Jump-to link on annotation position label */
+.annotation-row-pos-link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  color: inherit;
+  font-size: inherit;
+  font-family: inherit;
 }
+.annotation-row-pos-link:hover { color: #ccc; }
 
 /* Highlight marks injected into reader content */
 .annotation-mark {
-  background-color: rgba(255, 220, 0, 0.28);
-  border-bottom: 2px solid rgba(255, 200, 0, 0.6);
   cursor: pointer;
   border-radius: 1px;
 }
-.annotation-mark:hover {
+.annotation-mark[data-type="highlight"] {
+  background-color: rgba(255, 220, 0, 0.28);
+  border-bottom: 2px solid rgba(255, 200, 0, 0.6);
+}
+.annotation-mark[data-type="highlight"]:hover {
   background-color: rgba(255, 220, 0, 0.45);
 }
+.annotation-mark[data-type="note"] {
+  background-color: rgba(140, 120, 255, 0.2);
+  border-bottom: 2px dashed rgba(140, 100, 255, 0.65);
+}
+.annotation-mark[data-type="note"]:hover {
+  background-color: rgba(140, 120, 255, 0.35);
+}
+
+/* Inline note popover */
+.note-popover {
+  position: fixed;
+  z-index: 200;
+  background: #2a2a2a;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 10px 12px;
+  max-width: 260px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  font-size: 13px;
+  line-height: 1.5;
+  color: #ddd;
+}
+.note-popover-quote {
+  font-style: italic;
+  color: #888;
+  font-size: 11px;
+  border-left: 2px solid rgba(140,100,255,0.5);
+  padding-left: 6px;
+  margin: 0 0 6px;
+}
+.note-popover-text { margin: 0; }
+.note-popover-close {
+  position: absolute;
+  top: 6px; right: 8px;
+  background: none; border: none;
+  color: #777; cursor: pointer; font-size: 14px; line-height: 1;
+}
+.note-popover-close:hover { color: #ccc; }
 
 /* Light theme overrides */
 .epub-theme-light .annotations-panel {
@@ -742,3 +779,15 @@
 .epub-theme-sepia .annotation-row-icon      { color: #b09070; }
 .epub-theme-sepia .annotation-quote         { background: rgba(255,200,0,0.1); color: #7a6040; border-left-color: #d4a017; }
 .epub-theme-sepia .annotation-note-text     { color: #7a6040; }
+
+.epub-theme-light .note-popover { background: #fff; border-color: rgba(0,0,0,0.12); color: #333; box-shadow: 0 4px 16px rgba(0,0,0,0.12); }
+.epub-theme-light .note-popover-quote { color: #888; }
+.epub-theme-light .note-popover-close { color: #bbb; }
+.epub-theme-light .note-popover-close:hover { color: #555; }
+.epub-theme-light .annotation-row-pos-link:hover { color: #444; }
+
+.epub-theme-sepia .note-popover { background: #f5ead0; border-color: rgba(0,0,0,0.1); color: #4a3728; box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
+.epub-theme-sepia .note-popover-quote { color: #8a7060; border-left-color: rgba(140,100,255,0.4); }
+.epub-theme-sepia .note-popover-close { color: #a08060; }
+.epub-theme-sepia .note-popover-close:hover { color: #4a3728; }
+.epub-theme-sepia .annotation-row-pos-link:hover { color: #3b2a1a; }
