@@ -9,6 +9,7 @@ import TextSelectionPopup from './TextSelectionPopup'
 import AnnotationsPanel from './AnnotationsPanel'
 import BookmarksPanel from './BookmarksPanel'
 import NotePopover from './NotePopover'
+import AnnotationContextMenu from './AnnotationContextMenu'
 import type { Item, EpubBook, Annotation } from '../../types'
 import '../../styles/epub-reader.css'
 
@@ -79,7 +80,8 @@ export default function EpubReader({ item, onBack }: Props) {
   const [searchQuery,       setSearchQuery]       = useState('')
   const [showPanel,         setShowPanel]         = useState(false)
   const [showBookmarks,     setShowBookmarks]     = useState(false)
-  const [notePopup, setNotePopup] = useState<{ x: number; y: number; annotation: Annotation } | null>(null)
+  const [notePopup,    setNotePopup]    = useState<{ x: number; y: number; annotation: Annotation } | null>(null)
+  const [contextMenu,  setContextMenu]  = useState<{ x: number; y: number; annotation: Annotation } | null>(null)
   const [chapterPageCounts, setChapterPageCounts] = useState<number[]>([])
   const [noteEditorState, setNoteEditorState] = useState<{
     range:       Range | null
@@ -149,6 +151,13 @@ export default function EpubReader({ item, onBack }: Props) {
     contentRef:   contentRef,
     chapterIndex: chapter,
   })
+
+  // Close all overlays whenever the visible page changes — covers keyboard arrows,
+  // click-zone taps, animated chapter transitions, and programmatic jumps.
+  useEffect(() => {
+    setNotePopup(null)
+    setContextMenu(null)
+  }, [chapter, page])
 
   // Re-apply highlights after chapter content settles (chapter change or annotation change)
   useEffect(() => {
@@ -624,10 +633,11 @@ export default function EpubReader({ item, onBack }: Props) {
     return () => container.removeEventListener('click', handleLinkClick)
   }, [chapter]) // re-attach when chapter HTML is replaced
 
-  // ── Note mark click handler ────────────────────────────────────
+  // ── Note mark click + context menu handlers ───────────────────
   useEffect(() => {
     const container = contentRef.current
     if (!container) return
+
     const handleMarkClick = (e: MouseEvent) => {
       const mark = (e.target as HTMLElement).closest('mark[data-annotation-id]') as HTMLElement | null
       if (!mark || mark.dataset.type !== 'note') return
@@ -636,8 +646,24 @@ export default function EpubReader({ item, onBack }: Props) {
       const rect = mark.getBoundingClientRect()
       setNotePopup({ x: rect.left + rect.width / 2, y: rect.top, annotation })
     }
+
+    const handleContextMenu = (e: MouseEvent) => {
+      const mark = (e.target as HTMLElement).closest('mark[data-annotation-id]') as HTMLElement | null
+      if (!mark) return
+      e.preventDefault()
+      const annotation = annot.annotations.find(a => a.id === mark.dataset.annotationId)
+      if (!annotation) return
+      const rect = mark.getBoundingClientRect()
+      setNotePopup(null)
+      setContextMenu({ x: rect.left + rect.width / 2, y: rect.top, annotation })
+    }
+
     container.addEventListener('click', handleMarkClick)
-    return () => container.removeEventListener('click', handleMarkClick)
+    container.addEventListener('contextmenu', handleContextMenu)
+    return () => {
+      container.removeEventListener('click', handleMarkClick)
+      container.removeEventListener('contextmenu', handleContextMenu)
+    }
   }, [annot.annotations, chapter])
 
   // ── Navigation helpers ─────────────────────────────────────────
@@ -672,7 +698,10 @@ export default function EpubReader({ item, onBack }: Props) {
     if (!bk) return
     const clamped = Math.max(0, Math.min(index, bk.chapters.length - 1))
     recordActivity()
+    window.getSelection()?.removeAllRanges()
     updateXAnim(null)
+    setNotePopup(null)
+    setContextMenu(null)
     chapterRef.current = clamped
     pageRef.current    = targetPage
     setNoTransition(true)
@@ -684,7 +713,9 @@ export default function EpubReader({ item, onBack }: Props) {
 
   function prevPage() {
     if (xAnimRef.current) return
+    window.getSelection()?.removeAllRanges()
     setNotePopup(null)
+    setContextMenu(null)
     recordActivity()
     if (pageRef.current > 0) {
       const prev = pageRef.current - 1
@@ -697,7 +728,9 @@ export default function EpubReader({ item, onBack }: Props) {
 
   function nextPage() {
     if (xAnimRef.current) return
+    window.getSelection()?.removeAllRanges()
     setNotePopup(null)
+    setContextMenu(null)
     recordActivity()
     const bk = bookRef.current
     if (pageRef.current < totalPagesRef.current - 1) {
@@ -1035,7 +1068,26 @@ export default function EpubReader({ item, onBack }: Props) {
 
       {/* ── Page viewport + annotations panel ─────────────────��─ */}
       <div className="reader-with-panel">
-      <div ref={outerRef} className="epub-page-outer" style={{ flex: 1, minWidth: 0 }}>
+      <div
+        ref={outerRef}
+        className="epub-page-outer"
+        style={{ flex: 1, minWidth: 0 }}
+        onClick={(e) => {
+          const target = e.target as HTMLElement
+          if (target.closest('a, button, mark')) return
+          const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
+          const relX = (e.clientX - rect.left) / rect.width
+          if (relX < 0.15 && canPrev) prevPage()
+          else if (relX > 0.85 && canNext) nextPage()
+        }}
+        onMouseMove={(e) => {
+          const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
+          const relX = (e.clientX - rect.left) / rect.width
+          const isEdge = (relX < 0.15 && canPrev) || (relX > 0.85 && canNext)
+          ;(e.currentTarget as HTMLDivElement).style.cursor = isEdge ? 'pointer' : ''
+        }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.cursor = '' }}
+      >
 
         {/* Active (current) chapter */}
         <div
@@ -1066,22 +1118,8 @@ export default function EpubReader({ item, onBack }: Props) {
           />
         )}
 
-        {canPrev && (
-          <div
-            className="epub-click-prev"
-            onClick={() => { if (window.getSelection()?.toString().trim()) return; prevPage() }}
-            aria-label="Previous page"
-            role="button"
-          />
-        )}
-        {canNext && (
-          <div
-            className="epub-click-next"
-            onClick={() => { if (window.getSelection()?.toString().trim()) return; nextPage() }}
-            aria-label="Next page"
-            role="button"
-          />
-        )}
+        {canPrev && <div className="epub-click-prev" aria-hidden="true" />}
+        {canNext && <div className="epub-click-next" aria-hidden="true" />}
 
         {/* Page number overlay — absolute, centred at bottom of reading area */}
         {allMeasured && (
@@ -1098,6 +1136,7 @@ export default function EpubReader({ item, onBack }: Props) {
         {/* TextSelectionPopup — must be outside epub-page-outer (overflow:hidden) */}
         <TextSelectionPopup
           containerRef={contentRef}
+          clearTrigger={`${chapter}-${page}`}
           onHighlight={handleSelectionHighlight}
           onNote={handleSelectionNote}
         />
@@ -1109,7 +1148,6 @@ export default function EpubReader({ item, onBack }: Props) {
           contentType={item.content_type}
           onJump={handleJumpToAnnotation}
           onDelete={annot.deleteAnnotation}
-          onMove={annot.swapAnnotationOrder}
           onClose={() => setShowBookmarks(false)}
         />
       )}
@@ -1133,6 +1171,16 @@ export default function EpubReader({ item, onBack }: Props) {
           y={notePopup.y}
           annotation={notePopup.annotation}
           onClose={() => setNotePopup(null)}
+        />
+      )}
+      {contextMenu && (
+        <AnnotationContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          annotation={contextMenu.annotation}
+          onDelete={id => { annot.deleteAnnotation(id); setContextMenu(null) }}
+          onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
+          onClose={() => setContextMenu(null)}
         />
       )}
     </div>

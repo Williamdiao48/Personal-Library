@@ -9,6 +9,7 @@ import TextSelectionPopup from './TextSelectionPopup'
 import AnnotationsPanel from './AnnotationsPanel'
 import BookmarksPanel from './BookmarksPanel'
 import NotePopover from './NotePopover'
+import AnnotationContextMenu from './AnnotationContextMenu'
 import type { Item, Annotation } from '../../types'
 import '../../styles/reader.css'
 import '../../styles/epub-reader.css'   // reuse settings panel + button styles
@@ -85,7 +86,8 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
   const [showPanel,       setShowPanel]       = useState(false)
   const [showBookmarks,   setShowBookmarks]   = useState(false)
   const [readingProgress, setReadingProgress] = useState(() => Math.round((item.scroll_position ?? 0) * 100))
-  const [notePopup, setNotePopup] = useState<{ x: number; y: number; annotation: Annotation } | null>(null)
+  const [notePopup,    setNotePopup]    = useState<{ x: number; y: number; annotation: Annotation } | null>(null)
+  const [contextMenu,  setContextMenu]  = useState<{ x: number; y: number; annotation: Annotation } | null>(null)
 
   // Note editor state: null = closed
   const [noteEditorState, setNoteEditorState] = useState<{
@@ -167,6 +169,12 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     contentRef:   scrollRef,
     chapterIndex: annotChapterIndex,
   })
+
+  // Close all overlays whenever the visible chapter changes.
+  useEffect(() => {
+    setNotePopup(null)
+    setContextMenu(null)
+  }, [currentChapter])
 
   // Re-apply highlights after content changes (chapter nav, initial load)
   useEffect(() => {
@@ -267,7 +275,7 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     }
   }
 
-  // Click handler for note marks
+  // Click handler for note marks + right-click context menu
   useEffect(() => {
     const container = scrollRef.current
     if (!container) return
@@ -279,8 +287,22 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
       const rect = mark.getBoundingClientRect()
       setNotePopup({ x: rect.left + rect.width / 2, y: rect.top, annotation })
     }
+    const handleContextMenu = (e: MouseEvent) => {
+      const mark = (e.target as HTMLElement).closest('mark[data-annotation-id]') as HTMLElement | null
+      if (!mark) return
+      e.preventDefault()
+      const annotation = annot.annotations.find(a => a.id === mark.dataset.annotationId)
+      if (!annotation) return
+      const rect = mark.getBoundingClientRect()
+      setNotePopup(null)
+      setContextMenu({ x: rect.left + rect.width / 2, y: rect.top, annotation })
+    }
     container.addEventListener('click', handleMarkClick)
-    return () => container.removeEventListener('click', handleMarkClick)
+    container.addEventListener('contextmenu', handleContextMenu)
+    return () => {
+      container.removeEventListener('click', handleMarkClick)
+      container.removeEventListener('contextmenu', handleContextMenu)
+    }
   }, [annot.annotations])
 
   // ── In-content search ────────────────────────────────────────────
@@ -351,6 +373,7 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     const el = scrollRef.current
     if (!el) return
     setNotePopup(null)
+    setContextMenu(null)
     const now = Date.now()
     if (now - activityThrottleRef.current >= 1000) { activityThrottleRef.current = now; recordActivity() }
     const scrollable = el.scrollHeight - el.clientHeight
@@ -451,6 +474,9 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     if (!chapters) return
     const clamped = Math.max(0, Math.min(chapters.length - 1, index))
     recordActivity()
+    window.getSelection()?.removeAllRanges()
+    setNotePopup(null)
+    setContextMenu(null)
     currentChapterRef.current = clamped
     setCurrentChapter(clamped)
 
@@ -560,7 +586,6 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
       contentType={item.content_type}
       onJump={handleJumpToAnnotation}
       onDelete={annot.deleteAnnotation}
-      onMove={annot.swapAnnotationOrder}
       onClose={() => setShowBookmarks(false)}
     />
   )
@@ -839,6 +864,7 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
             ))}
             <TextSelectionPopup
               containerRef={scrollRef}
+              clearTrigger={currentChapter}
               onHighlight={handleSelectionHighlight}
               onNote={handleSelectionNote}
             />
@@ -853,6 +879,16 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
             y={notePopup.y}
             annotation={notePopup.annotation}
             onClose={() => setNotePopup(null)}
+          />
+        )}
+        {contextMenu && (
+          <AnnotationContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            annotation={contextMenu.annotation}
+            onDelete={id => { annot.deleteAnnotation(id); setContextMenu(null) }}
+            onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
+            onClose={() => setContextMenu(null)}
           />
         )}
       </div>
@@ -889,6 +925,7 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
             </nav>
             <TextSelectionPopup
               containerRef={scrollRef}
+              clearTrigger={currentChapter}
               onHighlight={handleSelectionHighlight}
               onNote={handleSelectionNote}
             />
@@ -903,6 +940,16 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
             y={notePopup.y}
             annotation={notePopup.annotation}
             onClose={() => setNotePopup(null)}
+          />
+        )}
+        {contextMenu && (
+          <AnnotationContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            annotation={contextMenu.annotation}
+            onDelete={id => { annot.deleteAnnotation(id); setContextMenu(null) }}
+            onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
+            onClose={() => setContextMenu(null)}
           />
         )}
       </div>
@@ -940,6 +987,16 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
           y={notePopup.y}
           annotation={notePopup.annotation}
           onClose={() => setNotePopup(null)}
+        />
+      )}
+      {contextMenu && (
+        <AnnotationContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          annotation={contextMenu.annotation}
+          onDelete={id => { annot.deleteAnnotation(id); setContextMenu(null) }}
+          onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
+          onClose={() => setContextMenu(null)}
         />
       )}
     </div>

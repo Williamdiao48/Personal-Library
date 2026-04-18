@@ -5,7 +5,6 @@ interface Props {
   contentType: ContentType
   onJump:      (annotation: Annotation) => void
   onDelete:    (id: string) => void
-  onMove:      (id1: string, id2: string) => void
   onClose:     () => void
 }
 
@@ -15,7 +14,18 @@ function formatPosition(annotation: Annotation, contentType: ContentType): strin
   return `${Math.round(annotation.position * 100)}%`
 }
 
-export default function BookmarksPanel({ bookmarks, contentType, onJump, onDelete, onMove, onClose }: Props) {
+function sortByPosition(bookmarks: Annotation[]): Annotation[] {
+  return [...bookmarks].sort((a, b) => {
+    const ca = a.chapter_index ?? -1
+    const cb = b.chapter_index ?? -1
+    if (ca !== cb) return ca - cb
+    return a.position - b.position
+  })
+}
+
+export default function BookmarksPanel({ bookmarks, contentType, onJump, onDelete, onClose }: Props) {
+  const sorted = sortByPosition(bookmarks)
+
   return (
     <div className="annotations-panel">
       <div className="annotations-panel-header">
@@ -29,10 +39,10 @@ export default function BookmarksPanel({ bookmarks, contentType, onJump, onDelet
       </div>
 
       <div className="annotations-panel-list">
-        {bookmarks.length === 0 ? (
+        {sorted.length === 0 ? (
           <p className="annotations-empty">No bookmarks yet.</p>
         ) : (
-          bookmarks.map((bm, i) => (
+          sorted.map(bm => (
             <div key={bm.id} className="annotation-row">
               <div className="annotation-row-header">
                 <button
@@ -43,28 +53,6 @@ export default function BookmarksPanel({ bookmarks, contentType, onJump, onDelet
                   {formatPosition(bm, contentType)}
                 </button>
                 <div className="annotation-row-actions">
-                  <button
-                    className="annot-action-btn"
-                    onClick={() => onMove(bm.id, bookmarks[i - 1].id)}
-                    disabled={i === 0}
-                    title="Move up"
-                    aria-label="Move up"
-                  >
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                      <path d="M8 13V3M3 8l5-5 5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                    </svg>
-                  </button>
-                  <button
-                    className="annot-action-btn"
-                    onClick={() => onMove(bm.id, bookmarks[i + 1].id)}
-                    disabled={i === bookmarks.length - 1}
-                    title="Move down"
-                    aria-label="Move down"
-                  >
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                      <path d="M8 3v10M3 8l5 5 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                    </svg>
-                  </button>
                   <button
                     className="annot-action-btn annot-delete-btn"
                     onClick={() => onDelete(bm.id)}

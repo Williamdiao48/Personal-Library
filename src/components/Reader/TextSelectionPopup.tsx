@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
 interface Props {
-  containerRef: React.RefObject<HTMLElement | null>
-  onHighlight:  (range: Range) => void
-  onNote:       (range: Range) => void
-  disabled?:    boolean
+  containerRef:  React.RefObject<HTMLElement | null>
+  onHighlight:   (range: Range) => void
+  onNote:        (range: Range) => void
+  disabled?:     boolean
+  clearTrigger?: string | number
 }
 
 interface PopupState {
@@ -13,14 +14,23 @@ interface PopupState {
   range: Range
 }
 
-export default function TextSelectionPopup({ containerRef, onHighlight, onNote, disabled }: Props) {
+export default function TextSelectionPopup({ containerRef, onHighlight, onNote, disabled, clearTrigger }: Props) {
   const [popup, setPopup] = useState<PopupState | null>(null)
   const popupRef = useRef<HTMLDivElement | null>(null)
 
-  const handleMouseUp = useCallback(() => {
+  // Clear whenever the parent signals a navigation (page or chapter changed).
+  // This catches all navigation paths: keyboard, click zones, animated transitions.
+  useEffect(() => {
+    setPopup(null)
+    window.getSelection()?.removeAllRanges()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clearTrigger])
+
+  const handleMouseUp = useCallback((e: MouseEvent) => {
     if (disabled) return
-    // Small delay so the selection is settled after the mouseup
-    requestAnimationFrame(() => {
+    // Defer to a macrotask so the click handler (which may clear the selection
+    // or navigate) fires before we decide whether to show the popup.
+    setTimeout(() => {
       const sel = window.getSelection()
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
         setPopup(null)
@@ -34,6 +44,15 @@ export default function TextSelectionPopup({ containerRef, onHighlight, onNote, 
       // Verify the selection is inside our container
       const container = containerRef.current
       if (!container) { setPopup(null); return }
+
+      // If the mouseup landed outside the reading area (e.g. a nav button or
+      // toolbar), dismiss rather than re-showing the popup. This prevents the
+      // popup from flashing back after the user clicks away to flip a page.
+      if (e.target && !container.contains(e.target as Node)) {
+        setPopup(null)
+        return
+      }
+
       const range = sel.getRangeAt(0)
       if (!container.contains(range.commonAncestorContainer)) {
         setPopup(null)
@@ -43,20 +62,21 @@ export default function TextSelectionPopup({ containerRef, onHighlight, onNote, 
       const rect = range.getBoundingClientRect()
       if (!rect || rect.width === 0) { setPopup(null); return }
 
-      // Clamp within the container's visible bounds so the popup never
-      // overlaps the toolbar above or a side panel to the right.
-      const contRect = container.getBoundingClientRect()
-      const POPUP_W  = 112
+      // Clamp to viewport edges (popup is position:fixed so window coords are
+      // always correct, even when the content div has a CSS translateX applied).
+      const POPUP_W  = 120
       const POPUP_H  = 44
+      const MARGIN   = 8
+      const MIN_TOP  = 52   // keep below the reader toolbar
 
       const x = Math.min(
-        Math.max(rect.left + rect.width / 2 - POPUP_W / 2, contRect.left + 4),
-        contRect.right - POPUP_W - 4
+        Math.max(rect.left + rect.width / 2 - POPUP_W / 2, MARGIN),
+        window.innerWidth - POPUP_W - MARGIN
       )
       // Prefer above the selection; fall back to below if too close to the top.
-      const yAbove = rect.top - POPUP_H - 4
-      const yBelow = rect.bottom + 4
-      const y = yAbove >= contRect.top + 4 ? yAbove : yBelow
+      const yAbove = rect.top - POPUP_H - 6
+      const yBelow = rect.bottom + 6
+      const y = yAbove >= MIN_TOP ? yAbove : yBelow
 
       setPopup({ x, y, range })
     })

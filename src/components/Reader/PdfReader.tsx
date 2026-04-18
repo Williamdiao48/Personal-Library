@@ -1434,7 +1434,6 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
           contentType={item.content_type}
           onJump={handleJumpToAnnotation}
           onDelete={annot.deleteAnnotation}
-          onMove={annot.swapAnnotationOrder}
           onClose={() => setShowBookmarks(false)}
         />
       )}
