@@ -427,7 +427,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   })
 
   const pdfBookmarks  = annot.annotations.filter(a => a.type === 'bookmark')
-  const isBookmarked  = pdfBookmarks.some(b => b.position === currentPageRef.current)
+  const isBookmarked  = pdfBookmarks.some(b => b.position === currentPage)
 
   function handleBookmarkToggle() {
     if (isBookmarked) {
@@ -748,6 +748,15 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     }
   }, [viewMode, pageDims, renderKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── 4. Navigation ───────────────────────────────────────────────
+
+  const scheduleSave = useCallback((page: number, total: number) => {
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => {
+      libraryService.updateProgress(item.id, page / total)
+    }, SAVE_DEBOUNCE_MS)
+  }, [item.id])
+
   // ── 3c. Scroll mode: current-page tracking via IntersectionObserver ──
   useEffect(() => {
     if (viewMode !== 'scroll' || pageDims.length === 0) return
@@ -788,15 +797,6 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
         ?.scrollIntoView({ behavior: 'instant', block: 'start' })
     })
   }, [viewMode, pageDims])
-
-  // ── 4. Navigation ───────────────────────────────────────────────
-
-  const scheduleSave = useCallback((page: number, total: number) => {
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => {
-      libraryService.updateProgress(item.id, page / total)
-    }, SAVE_DEBOUNCE_MS)
-  }, [item.id])
 
   // goTo: clamps to valid range. In spread mode, snaps to spread-start (odd page).
   // In scroll mode, goes directly to the exact page and scrolls to its div.

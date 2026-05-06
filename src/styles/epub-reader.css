@@ -212,6 +212,13 @@
   background: linear-gradient(to left, rgba(255, 255, 255, 0.04), transparent);
 }
 
+/* PDF reader has no text to select, so click zones need pointer-events restored */
+.pdf-reader .epub-click-prev,
+.pdf-reader .epub-click-next {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
 /* ── Page indicator + footer ────────────────────────────────────────────── */
 
 .epub-page-footer {
@@ -272,7 +279,7 @@
   flex-shrink: 0;
   transition: color 0.15s;
 }
-.epub-chapter-arrow:hover:not(:disabled) { color: #d4d4d4; }
+.epub-chapter-arrow:hover:not(:disabled) { color: #d4d4d4; background: transparent; }
 .epub-chapter-arrow:disabled { opacity: 0.25; cursor: not-allowed; }
 
 .epub-chapter-dropdown-wrapper {
@@ -296,7 +303,7 @@
   display: block;
   transition: color 0.15s;
 }
-.epub-chapter-btn:hover { color: #fff; }
+.epub-chapter-btn:hover { color: #fff; background: transparent; }
 
 .epub-chapter-list {
   position: absolute;
@@ -343,7 +350,7 @@
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
-.epub-top-btn:hover  { color: #d4d4d4; border-color: #555; }
+.epub-top-btn:hover  { color: #d4d4d4; border-color: #555; background: transparent; }
 .epub-top-btn.active { background: #3a3a3a; border-color: #555; color: #fff; }
 
 /* ── Settings wrapper + overlay (shared by chapter list and settings panel) ─ */
@@ -406,7 +413,7 @@
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 
-.epub-settings-btn:hover  { border-color: #555; color: #ddd; }
+.epub-settings-btn:hover  { border-color: #555; color: #ddd; background: transparent; }
 .epub-settings-btn.active { background: #3a3a3a; border-color: #555; color: #fff; }
 
 .epub-settings-size-display {
@@ -450,14 +457,14 @@
 .epub-theme-light .epub-chapter-item:hover                  { background: #f0f0f0; color: #111; }
 .epub-theme-light .epub-chapter-item.active                 { background: #ebebeb; color: #111; }
 .epub-theme-light .epub-top-btn                             { color: #555; border-color: #ccc; }
-.epub-theme-light .epub-top-btn:hover                       { color: #111; border-color: #999; }
+.epub-theme-light .epub-top-btn:hover                       { color: #111; border-color: #999; background: transparent; }
 .epub-theme-light .epub-top-btn.active                      { background: #e5e5e5; border-color: #bbb; color: #111; }
 .epub-theme-light .epub-page-indicator { color: #999; }
 
 .epub-theme-light .epub-settings-panel          { background: #fff; border-color: #e0e0e0; box-shadow: 0 4px 20px rgba(0,0,0,0.12); }
 .epub-theme-light .epub-settings-label          { color: #999; }
 .epub-theme-light .epub-settings-btn            { border-color: #ddd; color: #555; }
-.epub-theme-light .epub-settings-btn:hover      { border-color: #bbb; color: #111; }
+.epub-theme-light .epub-settings-btn:hover      { border-color: #bbb; color: #111; background: transparent; }
 .epub-theme-light .epub-settings-btn.active     { background: #ebebeb; border-color: #bbb; color: #111; }
 .epub-theme-light .epub-settings-size-display   { color: #1c1c1e; }
 
@@ -494,14 +501,14 @@
 .epub-theme-sepia .epub-chapter-item:hover                   { background: #e8d8c0; color: #3b2a1a; }
 .epub-theme-sepia .epub-chapter-item.active                  { background: #dcc9a0; color: #3b2a1a; }
 .epub-theme-sepia .epub-top-btn                              { color: #7a6040; border-color: #c8b89a; }
-.epub-theme-sepia .epub-top-btn:hover                        { color: #3b2a1a; border-color: #a08060; }
+.epub-theme-sepia .epub-top-btn:hover                        { color: #3b2a1a; border-color: #a08060; background: transparent; }
 .epub-theme-sepia .epub-top-btn.active                       { background: #dcc9a0; border-color: #a08060; color: #3b2a1a; }
 .epub-theme-sepia .epub-page-indicator                       { color: #a08060; }
 
 .epub-theme-sepia .epub-settings-panel          { background: #f2e8d5; border-color: #c8b89a; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
 .epub-theme-sepia .epub-settings-label          { color: #a08060; }
 .epub-theme-sepia .epub-settings-btn            { border-color: #c8b89a; color: #7a6040; }
-.epub-theme-sepia .epub-settings-btn:hover      { border-color: #a08060; color: #3b2a1a; }
+.epub-theme-sepia .epub-settings-btn:hover      { border-color: #a08060; color: #3b2a1a; background: transparent; }
 .epub-theme-sepia .epub-settings-btn.active     { background: #dcc9a0; border-color: #a08060; color: #3b2a1a; }
 .epub-theme-sepia .epub-settings-size-display   { color: #3b2a1a; }
 
@@ -705,6 +712,7 @@
 .annotation-mark {
   cursor: pointer;
   border-radius: 1px;
+  color: inherit;
 }
 .annotation-mark[data-type="highlight"] {
   background-color: rgba(255, 220, 0, 0.28);
@@ -714,11 +722,20 @@
   background-color: rgba(255, 220, 0, 0.45);
 }
 .annotation-mark[data-type="note"] {
-  background-color: rgba(140, 120, 255, 0.2);
+  background-color: transparent;
   border-bottom: 2px dashed rgba(140, 100, 255, 0.65);
 }
+.annotation-mark[data-type="note"]::after {
+  content: "✱";
+  font-size: 0.6em;
+  color: rgba(140, 100, 255, 1);
+  vertical-align: super;
+  line-height: 0;
+  margin-left: 1px;
+  pointer-events: none;
+}
 .annotation-mark[data-type="note"]:hover {
-  background-color: rgba(140, 120, 255, 0.35);
+  background-color: rgba(140, 120, 255, 0.1);
 }
 
 /* Annotation right-click context menu */
@@ -761,7 +778,8 @@
   background: #2a2a2a;
   border: 1px solid rgba(255,255,255,0.1);
   border-radius: 8px;
-  padding: 28px 12px 10px;   /* top reserved for × button */
+  padding: 28px 32px 10px 12px;   /* top reserved for × button; right clears × button */
+  min-width: 160px;
   max-width: 260px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.4);
   font-size: 13px;
@@ -783,9 +801,16 @@
   background: none; border: none;
   color: #777; cursor: pointer; font-size: 14px; line-height: 1;
 }
-.note-popover-close:hover { color: #ccc; }
+.note-popover-close:hover { color: #ccc; background: transparent; }
 
 /* Light theme overrides */
+.epub-theme-light .annotation-mark[data-type="note"] {
+  background-color: transparent;
+  border-bottom: 2px dashed rgba(100, 75, 200, 0.65);
+}
+.epub-theme-light .annotation-mark[data-type="note"]::after { color: rgba(100, 75, 200, 0.9); }
+.epub-theme-light .annotation-mark[data-type="note"]:hover  { background-color: rgba(100, 75, 200, 0.08); }
+
 .epub-theme-light .annotations-panel {
   background: #fafafa;
   border-left-color: rgba(0,0,0,0.1);
@@ -808,6 +833,13 @@
 .epub-theme-light .annot-cancel-btn         { border-color: rgba(0,0,0,0.15); background: rgba(0,0,0,0.04); color: #555; }
 
 /* Sepia theme overrides */
+.epub-theme-sepia .annotation-mark[data-type="note"] {
+  background-color: transparent;
+  border-bottom: 2px dashed rgba(120, 80, 200, 0.6);
+}
+.epub-theme-sepia .annotation-mark[data-type="note"]::after { color: rgba(120, 80, 200, 0.85); }
+.epub-theme-sepia .annotation-mark[data-type="note"]:hover  { background-color: rgba(120, 80, 200, 0.08); }
+
 .epub-theme-sepia .annotations-panel {
   background: #f2e8d5;
   border-left-color: #c8b89a;
@@ -828,7 +860,7 @@
 .epub-theme-light .note-popover { background: #fff; border-color: rgba(0,0,0,0.12); color: #333; box-shadow: 0 4px 16px rgba(0,0,0,0.12); }
 .epub-theme-light .note-popover-quote { color: #888; }
 .epub-theme-light .note-popover-close { color: #bbb; }
-.epub-theme-light .note-popover-close:hover { color: #555; }
+.epub-theme-light .note-popover-close:hover { color: #555; background: transparent; }
 .epub-theme-light .annotation-row-pos-link:hover { color: #555; text-decoration-color: #bbb; background: none; }
 
 .epub-theme-sepia .annot-ctx-btn        { color: #4a3728; }
@@ -839,5 +871,5 @@
 .epub-theme-sepia .note-popover { background: #f5ead0; border-color: rgba(0,0,0,0.1); color: #4a3728; box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
 .epub-theme-sepia .note-popover-quote { color: #8a7060; border-left-color: rgba(140,100,255,0.4); }
 .epub-theme-sepia .note-popover-close { color: #a08060; }
-.epub-theme-sepia .note-popover-close:hover { color: #4a3728; }
+.epub-theme-sepia .note-popover-close:hover { color: #4a3728; background: transparent; }
 .epub-theme-sepia .annotation-row-pos-link:hover { color: #5a4030; text-decoration-color: #b09070; background: none; }
