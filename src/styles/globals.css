@@ -950,15 +950,15 @@ html, body, #root {
   color: #fff;
   transition: filter 0.12s;
 }
-.item-card-tag-pill:hover { filter: brightness(1.15); }
+.item-card-tag-pill:hover { filter: brightness(0.85); }
 
 /* Light themes: blend accent+tag, then lighten for a tinted badge look */
-html[data-theme="light"] .item-card-tag-pill,
-html[data-theme="sepia"] .item-card-tag-pill {
+html[data-theme-mode="light"] .item-card-tag-pill {
   background-color: color-mix(in srgb, color-mix(in srgb, var(--accent) 65%, var(--pill-color)) 20%, white);
   border-color: color-mix(in srgb, var(--accent) 65%, var(--pill-color));
   color: color-mix(in srgb, color-mix(in srgb, var(--accent) 65%, var(--pill-color)) 80%, #000);
 }
+html[data-theme-mode="light"] .item-card-tag-pill:hover { filter: brightness(0.70); }
 
 /* Inline delete confirmation overlay */
 .item-card-confirm {

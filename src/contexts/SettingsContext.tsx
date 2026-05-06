@@ -63,6 +63,8 @@ function loadSettings(): AppSettings {
   }
 }
 
+const LIGHT_THEMES = new Set<string>(['light', 'sepia', 'ivory', 'slate', 'lavender'])
+
 function applyToDOM(settings: AppSettings) {
   const html = document.documentElement
   html.dataset.density = settings.gridDensity
@@ -76,6 +78,7 @@ function applyToDOM(settings: AppSettings) {
   const customTheme = settings.customThemes.find(t => t.id === settings.theme)
   if (customTheme) {
     html.dataset.theme = 'custom'
+    html.dataset.themeMode = customTheme.isLight ? 'light' : 'dark'
     for (const [key, cssVar] of CUSTOM_THEME_VARS) {
       html.style.setProperty(cssVar, customTheme[key] as string)
     }
@@ -84,6 +87,7 @@ function applyToDOM(settings: AppSettings) {
       html.style.removeProperty(cssVar)
     }
     html.dataset.theme = settings.theme
+    html.dataset.themeMode = LIGHT_THEMES.has(settings.theme) ? 'light' : 'dark'
   }
 }
 

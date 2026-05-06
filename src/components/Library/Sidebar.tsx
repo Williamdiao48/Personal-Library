@@ -91,9 +91,29 @@ const Sidebar = memo(function Sidebar({ collectionMgmt, authors, authorItemCount
     return () => document.removeEventListener('mousedown', close)
   }, [contextMenu])
 
+  useEffect(() => { commitCreateRef.current = commitCreate })
+
+  useEffect(() => {
+    if (!showNewInput) return
+    function onMouseDown(e: MouseEvent) {
+      if (newInputFormRef.current && !newInputFormRef.current.contains(e.target as Node)) {
+        commitCreateRef.current?.()
+      }
+    }
+    function onWindowBlur() { commitCreateRef.current?.() }
+    document.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('blur', onWindowBlur)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('blur', onWindowBlur)
+    }
+  }, [showNewInput])
+
   // Tracks whether Escape was pressed so onBlur knows not to commit
-  const editCancelled = useRef(false)
-  const newCancelled  = useRef(false)
+  const editCancelled   = useRef(false)
+  const newCancelled    = useRef(false)
+  const newInputFormRef = useRef<HTMLFormElement>(null)
+  const commitCreateRef = useRef<typeof commitCreate | null>(null)
 
   function startEdit(col: Collection) {
     setConfirmDeleteId(null)
@@ -182,8 +202,6 @@ const Sidebar = memo(function Sidebar({ collectionMgmt, authors, authorItemCount
         </div>
 
         {collections.map(col => {
-          const count = itemCounts[col.id] ?? 0
-
           if (editingId === col.id) {
             return (
               <form
@@ -238,6 +256,7 @@ const Sidebar = memo(function Sidebar({ collectionMgmt, authors, authorItemCount
 
         {showNewInput && (
           <form
+            ref={newInputFormRef}
             className="sidebar-collection-edit-form"
             onSubmit={e => { e.preventDefault(); commitCreate() }}
           >

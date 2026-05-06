@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as pdfjsLib from 'pdfjs-dist'
-import type { PDFDocumentProxy, RenderTask, TextItem } from 'pdfjs-dist'
+import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
+
+// TextItem is not re-exported from pdfjs-dist's main entry in v5
+type TextItem = {
+  str: string; dir: string; transform: number[]
+  width: number; height: number; fontName: string; hasEOL: boolean
+}
 import PdfJsWorker from '../../workers/pdf-worker?worker&inline'
 import { libraryService } from '../../services/library'
 import { readerService } from '../../services/reader'
@@ -504,7 +510,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
         if (cancelled) return
 
         const rawWorker = new PdfJsWorker()
-        pdfWorker = new pdfjsLib.PDFWorker({ port: rawWorker })
+        pdfWorker = pdfjsLib.PDFWorker.create({ port: rawWorker })
 
         const doc = await pdfjsLib.getDocument({
           data,
@@ -579,7 +585,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       const canvas = document.createElement('canvas')
       canvas.width  = Math.round(vp.width)
       canvas.height = Math.round(vp.height)
-      await page.render({ canvasContext: canvas.getContext('2d')!, viewport: vp }).promise
+      await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport: vp }).promise
       if (cancelled) return
       const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/jpeg', 0.82))
       if (!blob || cancelled) return
@@ -648,7 +654,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       const vp       = page.getViewport({ scale })
       canvas.width   = Math.round(vp.width)
       canvas.height  = Math.round(vp.height)
-      const task     = page.render({ canvasContext: canvas.getContext('2d')!, viewport: vp })
+      const task     = page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport: vp })
       setTask(task)
       try {
         await task.promise
@@ -709,7 +715,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       canvas.width   = Math.round(vp.width)
       canvas.height  = Math.round(vp.height)
 
-      const task = page.render({ canvasContext: canvas.getContext('2d')!, viewport: vp })
+      const task = page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport: vp })
       scrollRenderTasks.current.set(pageNum, task)
       try {
         await task.promise
