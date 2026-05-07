@@ -36,3 +36,6 @@ Thumbs.db
 
 # electron-builder cache
 .cache/
+
+# Internal docs — never publish
+ROADMAP.md
