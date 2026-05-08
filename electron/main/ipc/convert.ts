@@ -26,10 +26,11 @@ export function registerConvertHandlers(): void {
     if (!item)                       throw new Error('Item not found.')
     if (item.content_type !== 'pdf') throw new Error('Item is not a PDF.')
 
-    // Extract plain text from chapter HTML for FTS indexing
+    // Extract plain text from chapter HTML for FTS indexing and word count
     const plainText = chapters
       .map(ch => ch.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim())
       .join(' ')
+    const wordCount = plainText.split(/\s+/).filter(Boolean).length
 
     // Build EPUB buffer in memory
     const epubBuffer = await epub(
@@ -51,8 +52,8 @@ export function registerConvertHandlers(): void {
           INSERT INTO items
             (id, title, author, source_url, content_type, file_path,
              cover_path, word_count, description, date_saved, date_modified, derived_from)
-          VALUES (?, ?, ?, NULL, 'epub', ?, ?, NULL, NULL, ?, ?, ?)
-        `).run(newId, item.title, item.author, epubFile, item.cover_path, now, now, itemId)
+          VALUES (?, ?, ?, NULL, 'epub', ?, ?, ?, NULL, ?, ?, ?)
+        `).run(newId, item.title, item.author, epubFile, item.cover_path, wordCount, now, now, itemId)
 
         // Update FTS index with chapter plain text so converted EPUBs appear in search
         db.prepare(`

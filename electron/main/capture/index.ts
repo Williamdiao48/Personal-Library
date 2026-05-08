@@ -16,6 +16,9 @@ import { captureScribbleHub, getScribbleHubChapterCount } from './sites/scribble
 import { captureXenForo, getXenForoChapterCount } from './sites/forums'
 import { captureUniversal } from './sites/universal'
 import { parseEpubMetadata } from './parsers/epub'
+import { extractEpubContent } from './parsers/epub-content'
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = (require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>)
 
 // Fast non-crypto content hash — same algorithm as in library.ts.
 function computeContentHash(text: string): string {
@@ -342,6 +345,19 @@ export async function captureFile(filePath: string): Promise<CaptureResult> {
 function captureEpub(filePath: string): CaptureResult {
   const meta = parseEpubMetadata(filePath)
 
+  // Extract text from all chapters for word count and FTS indexing
+  let wordCount: number | null = null
+  let plainText = ''
+  try {
+    const book = extractEpubContent(filePath)
+    plainText = book.chapters
+      .map(ch => ch.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim())
+      .join(' ')
+    wordCount = plainText.split(/\s+/).filter(Boolean).length
+  } catch {
+    // Content extraction failure is non-fatal — proceed with null word count
+  }
+
   const id = randomUUID()
   const contentDir = getContentDir()
 
@@ -367,13 +383,13 @@ function captureEpub(filePath: string): CaptureResult {
     db.transaction(() => {
       db.prepare(`
         INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, date_saved, date_modified)
-        VALUES (?, ?, ?, NULL, 'epub', ?, ?, NULL, ?, ?)
-      `).run(id, title, author, destFileName, coverPath, now, now)
+        VALUES (?, ?, ?, NULL, 'epub', ?, ?, ?, ?, ?)
+      `).run(id, title, author, destFileName, coverPath, wordCount, now, now)
 
       db.prepare(`
         INSERT INTO items_fts (rowid, title, author, content)
-        SELECT rowid, title, author, '' FROM items WHERE id = ?
-      `).run(id)
+        SELECT rowid, title, author, ? FROM items WHERE id = ?
+      `).run(plainText, id)
     })()
   } catch (err) {
     try { unlinkSync(destPath) } catch {}
@@ -381,10 +397,10 @@ function captureEpub(filePath: string): CaptureResult {
     throw err
   }
 
-  return { id, title, author, wordCount: null }
+  return { id, title, author, wordCount }
 }
 
-function capturePdf(filePath: string): CaptureResult {
+async function capturePdf(filePath: string): Promise<CaptureResult> {
   const id = randomUUID()
   const contentDir = getContentDir()
 
@@ -395,25 +411,37 @@ function capturePdf(filePath: string): CaptureResult {
   const title = basename(filePath, '.pdf')
   const now = Date.now()
 
+  // Extract text for word count and FTS — non-fatal if PDF is image-only or encrypted
+  let wordCount: number | null = null
+  let plainText = ''
+  try {
+    const buffer = readFileSync(filePath)
+    const data = await pdfParse(buffer)
+    plainText = data.text
+    wordCount = plainText.split(/\s+/).filter(Boolean).length
+  } catch {
+    // Proceed with null word count for scanned/encrypted PDFs
+  }
+
   const db = getDb()
   try {
     db.transaction(() => {
       db.prepare(`
         INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, date_saved, date_modified)
-        VALUES (?, ?, NULL, NULL, 'pdf', ?, NULL, NULL, ?, ?)
-      `).run(id, title, destFileName, now, now)
+        VALUES (?, ?, NULL, NULL, 'pdf', ?, NULL, ?, ?, ?)
+      `).run(id, title, destFileName, wordCount, now, now)
 
       db.prepare(`
         INSERT INTO items_fts (rowid, title, author, content)
-        SELECT rowid, title, author, '' FROM items WHERE id = ?
-      `).run(id)
+        SELECT rowid, title, author, ? FROM items WHERE id = ?
+      `).run(plainText, id)
     })()
   } catch (err) {
     try { unlinkSync(destPath) } catch {}
     throw err
   }
 
-  return { id, title, author: null, wordCount: null }
+  return { id, title, author: null, wordCount }
 }
 
 // ── Cover image download ───────────────────────────────────────────────────
