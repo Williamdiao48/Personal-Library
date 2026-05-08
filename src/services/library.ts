@@ -21,9 +21,11 @@ export const libraryService = {
   getAllItemTags:  ()                                           => window.api.library.getAllItemTags(),
   setCover:       (id: string, data: ArrayBuffer, ext: string) => window.api.library.setCover(id, data, ext),
   pickCover:      (id: string)                                 => window.api.library.pickCover(id),
-  setAuthor:      (id: string, author: string | null)          => window.api.library.setAuthor(id, author),
-  setStatus:      (id: string, status: import('../types').ReadingStatus | null) => window.api.library.setStatus(id, status),
-  refresh:        (id: string)                                 => window.api.library.refresh(id),
+  setAuthor:        (id: string, author: string | null)         => window.api.library.setAuthor(id, author),
+  setTitle:         (id: string, title: string)                => window.api.library.setTitle(id, title),
+  setStatus:        (id: string, status: import('../types').ReadingStatus | null) => window.api.library.setStatus(id, status),
+  refresh:          (id: string)                               => window.api.library.refresh(id),
+  findBySourceUrl:  (url: string)                              => window.api.library.findBySourceUrl(url),
 }
 
 export const tagService = {

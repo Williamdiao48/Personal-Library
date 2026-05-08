@@ -206,6 +206,14 @@ export function registerLibraryHandlers(): void {
     run('UPDATE items SET author = ?, date_modified = ? WHERE id = ?', [author, Date.now(), id])
   })
 
+  ipcMain.handle('library:setTitle', (_e, id: string, title: string) => {
+    run('UPDATE items SET title = ?, date_modified = ? WHERE id = ?', [title, Date.now(), id])
+  })
+
+  ipcMain.handle('library:findBySourceUrl', (_e, url: string) => {
+    return get<Item>('SELECT * FROM items WHERE source_url = ? LIMIT 1', [url])
+  })
+
   // Re-fetches a captured article from its source URL and updates the stored content.
   //
   // Strategy:

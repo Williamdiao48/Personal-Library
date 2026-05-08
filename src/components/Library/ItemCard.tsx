@@ -44,6 +44,7 @@ interface Props {
   onEditCollections: () => void
   onCoverChange: (newPath: string) => void
   onAuthorChange: (author: string | null) => void
+  onTitleChange: (title: string) => void
   onStatusChange: (status: ReadingStatus | null) => void
   onTagClick: (tagId: string) => void
   onAuthorClick: (author: string) => void
@@ -51,7 +52,7 @@ interface Props {
   onAppend?: () => void
 }
 
-function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpenSource, onTogglePreferred, onEditTags, onEditCollections, onCoverChange, onAuthorChange, onStatusChange, onTagClick, onAuthorClick, onRefresh, onAppend }: Props) {
+function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpenSource, onTogglePreferred, onEditTags, onEditCollections, onCoverChange, onAuthorChange, onTitleChange, onStatusChange, onTagClick, onAuthorClick, onRefresh, onAppend }: Props) {
   const [confirming, setConfirming]   = useState(false)
   const [deleting, setDeleting]       = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -59,17 +60,39 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
   const [statusMenuOpen, setStatusMenuOpen] = useState(false)
   const [authorEditing, setAuthorEditing] = useState(false)
   const [authorDraft, setAuthorDraft]     = useState('')
+  const [titleEditing, setTitleEditing]   = useState(false)
+  const [titleDraft, setTitleDraft]       = useState('')
   const [refreshing, setRefreshing]       = useState(false)
   const menuRef        = useRef<HTMLDivElement>(null)
   const statusMenuRef  = useRef<HTMLDivElement>(null)
   const tagsRef        = useRef<HTMLDivElement>(null)
   const authorInputRef = useRef<HTMLInputElement>(null)
+  const titleInputRef  = useRef<HTMLInputElement>(null)
   const progress = item.scroll_position ? Math.round(item.scroll_position * 100) : 0
   const effectiveStatus = getEffectiveStatus(item)
 
   function formatWordCount(n: number) {
     if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K words`
     return `${n} words`
+  }
+
+  function startTitleEdit(e?: React.MouseEvent) {
+    e?.stopPropagation()
+    setMenuOpen(false)
+    setTitleDraft(item.title)
+    setTitleEditing(true)
+  }
+
+  async function commitTitleEdit() {
+    setTitleEditing(false)
+    const trimmed = titleDraft.trim()
+    if (!trimmed || trimmed === item.title) return // no change or blank
+    await libraryService.setTitle(item.id, trimmed)
+    onTitleChange(trimmed)
+  }
+
+  function cancelTitleEdit() {
+    setTitleEditing(false)
   }
 
   function startAuthorEdit(e?: React.MouseEvent) {
@@ -197,7 +220,36 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
       </div>
 
       <div className="item-card-meta">
-        <p className="item-card-title" title={item.title}>{item.title}</p>
+        {titleEditing ? (
+          <input
+            ref={titleInputRef}
+            className="item-card-author-input item-card-title-input"
+            value={titleDraft}
+            autoFocus
+            placeholder="Title…"
+            onChange={e => setTitleDraft(e.target.value)}
+            onBlur={commitTitleEdit}
+            onKeyDown={e => {
+              if (e.key === 'Enter')  { e.preventDefault(); commitTitleEdit() }
+              if (e.key === 'Escape') { e.preventDefault(); cancelTitleEdit() }
+            }}
+            onClick={e => e.stopPropagation()}
+          />
+        ) : (
+          <div className="item-card-title-row">
+            <p className="item-card-title" title={item.title}>{item.title}</p>
+            <button
+              className="item-card-author-edit-btn"
+              onClick={startTitleEdit}
+              aria-label="Edit title"
+              title="Edit title"
+            >
+              <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M8.5 1.5l2 2-6 6H2.5v-2l6-6z" />
+              </svg>
+            </button>
+          </div>
+        )}
 
         {authorEditing ? (
           <input

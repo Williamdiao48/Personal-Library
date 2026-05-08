@@ -183,9 +183,11 @@ export interface Api {
     getAllItemTags:  ()                                           => Promise<{ item_id: string; tag_id: string; name: string; color: string }[]>
     setCover:       (id: string, data: ArrayBuffer, ext: string) => Promise<string>
     pickCover:      (id: string)                                 => Promise<string | null>
-    setAuthor:      (id: string, author: string | null)          => Promise<void>
-    setStatus:      (id: string, status: ReadingStatus | null)  => Promise<void>
-    refresh:        (id: string)                                 => Promise<RefreshResult>
+    setAuthor:        (id: string, author: string | null)         => Promise<void>
+    setTitle:         (id: string, title: string)                => Promise<void>
+    setStatus:        (id: string, status: ReadingStatus | null) => Promise<void>
+    refresh:          (id: string)                               => Promise<RefreshResult>
+    findBySourceUrl:  (url: string)                              => Promise<Item | undefined>
   }
   tags: {
     getAll:     ()                                  => Promise<Tag[]>

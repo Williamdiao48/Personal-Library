@@ -19,21 +19,33 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
   const [showRange, setShowRange] = useState(false)
   const [rangeStart, setRangeStart] = useState('')
   const [rangeEnd, setRangeEnd]     = useState('')
+  const [duplicate, setDuplicate]   = useState<{ id: string; title: string } | null>(null)
 
   // URL capture: fire-and-forget — modal closes immediately, job tracked in sidebar
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const trimmed = url.trim()
     if (!trimmed) return
+    setError(null)
     try {
-      const start = showRange && rangeStart ? parseInt(rangeStart) : undefined
-      const end   = showRange && rangeEnd   ? parseInt(rangeEnd)   : undefined
-      const jobId = await captureService.start(trimmed, start, end)
-      onJobStarted(jobId, trimmed)
-      onClose()
+      // Check for an existing item with the same source URL before starting capture
+      const existing = await libraryService.findBySourceUrl(trimmed)
+      if (existing) {
+        setDuplicate({ id: existing.id, title: existing.title })
+        return
+      }
+      await startCapture(trimmed)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start capture.')
     }
+  }
+
+  async function startCapture(trimmed: string) {
+    const start = showRange && rangeStart ? parseInt(rangeStart) : undefined
+    const end   = showRange && rangeEnd   ? parseInt(rangeEnd)   : undefined
+    const jobId = await captureService.start(trimmed, start, end)
+    onJobStarted(jobId, trimmed)
+    onClose()
   }
 
   // File import: blocking — stays open until complete (near-instant, no network)
@@ -84,10 +96,23 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
             </div>
           )}
           {error && <p className="modal-error">{error}</p>}
-          <div className="modal-actions">
-            <button type="button" onClick={onClose}>Cancel</button>
-            <button type="submit">Save</button>
-          </div>
+          {duplicate && (
+            <div className="modal-duplicate-warning">
+              <p>
+                <strong>{duplicate.title}</strong> is already in your library.
+              </p>
+              <div className="modal-actions">
+                <button type="button" onClick={() => setDuplicate(null)}>Back</button>
+                <button type="button" onClick={() => startCapture(url.trim())}>Add anyway</button>
+              </div>
+            </div>
+          )}
+          {!duplicate && (
+            <div className="modal-actions">
+              <button type="button" onClick={onClose}>Cancel</button>
+              <button type="submit">Save</button>
+            </div>
+          )}
         </form>
 
         <div className="modal-divider" />

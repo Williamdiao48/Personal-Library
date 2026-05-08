@@ -882,6 +882,11 @@ export default function LibraryView() {
                               i.id === displayItem.id ? { ...i, author } : i
                             ))
                           }
+                          onTitleChange={(title) =>
+                            setItems(prev => prev.map(i =>
+                              i.id === displayItem.id ? { ...i, title } : i
+                            ))
+                          }
                           onStatusChange={(status) => handleStatusChange(editableItem.id, status)}
                           onRefresh={displayItem.source_url ? async (): Promise<RefreshResult> => {
                             const title   = displayItem.title

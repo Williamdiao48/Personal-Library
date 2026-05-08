@@ -1037,6 +1037,22 @@ html[data-theme-mode="light"] .item-card-tag-pill:hover { filter: brightness(0.7
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.item-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 3px;
+  min-width: 0;
+}
+.item-card-title-row .item-card-title { margin-bottom: 0; flex: 1; }
+
+.item-card-title-input {
+  font-size: 13px !important;
+  font-weight: 500;
+  margin-bottom: 3px;
 }
 
 .item-card-author-row {
@@ -1272,6 +1288,16 @@ html[data-theme-mode="light"] .item-card-tag-pill:hover { filter: brightness(0.7
   color: var(--danger);
   font-size: 13px;
 }
+
+.modal-duplicate-warning {
+  border: 1px solid var(--warning, #f0a500);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--warning, #f0a500) 10%, transparent);
+}
+.modal-duplicate-warning p { margin: 0 0 8px; }
 
 .modal-actions {
   display: flex;

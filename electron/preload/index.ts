@@ -15,9 +15,11 @@ contextBridge.exposeInMainWorld('api', {
     getAllItemTags:  ()                                             => ipcRenderer.invoke('library:getAllItemTags'),
     setCover:       (id: string, data: ArrayBuffer, ext: string)   => ipcRenderer.invoke('library:setCover', id, data, ext),
     pickCover:      (id: string)                                   => ipcRenderer.invoke('library:pickCover', id),
-    setAuthor:      (id: string, author: string | null)            => ipcRenderer.invoke('library:setAuthor', id, author),
-    setStatus:      (id: string, status: string | null)           => ipcRenderer.invoke('library:setStatus', id, status),
-    refresh:        (id: string)                                   => ipcRenderer.invoke('library:refresh', id),
+    setAuthor:        (id: string, author: string | null)          => ipcRenderer.invoke('library:setAuthor', id, author),
+    setTitle:         (id: string, title: string)                  => ipcRenderer.invoke('library:setTitle', id, title),
+    setStatus:        (id: string, status: string | null)          => ipcRenderer.invoke('library:setStatus', id, status),
+    refresh:          (id: string)                                 => ipcRenderer.invoke('library:refresh', id),
+    findBySourceUrl:  (url: string)                                => ipcRenderer.invoke('library:findBySourceUrl', url),
   },
 
   // Tags
