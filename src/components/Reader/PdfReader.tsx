@@ -161,10 +161,22 @@ interface ChapterBoundary {
   startPage: number   // 1-based
 }
 
-/** Return the first n non-empty line texts from a page's text items. */
-function getFirstLines(items: (TextItem | { type: string })[], n = 3): string[] {
+/** Return the first n non-empty line texts from a page's text items, skipping running header/footer lines. */
+function getFirstLines(
+  items: (TextItem | { type: string })[],
+  n = 3,
+  excluded = new Set<string>(),
+  pageHeight = Infinity,
+): string[] {
   const real = items.filter((it): it is TextItem => 'str' in it && it.str.length > 0)
   return buildPdfLines(real)
+    .filter(l => {
+      const norm = l.text.trim().toLowerCase()
+      if (excluded.has(norm)) return false
+      const inZone = l.y > pageHeight * 0.92 || l.y < pageHeight * 0.08
+      if (inZone && /^\d+$/.test(l.text.trim())) return false
+      return true
+    })
     .slice(0, n)
     .map(l => l.text.trim())
     .filter(Boolean)
@@ -301,6 +313,64 @@ async function tryOutlineChapters(doc: PDFDocumentProxy): Promise<ChapterBoundar
 }
 
 /**
+ * Pre-pass: sample evenly-spaced pages and collect text that sits in the
+ * top/bottom 8% of the page (the header/footer zones in PDF Y-coordinates,
+ * where Y=0 is the bottom of the page).  Any string that appears on 3 or more
+ * sampled pages is almost certainly a running header/footer and is returned in
+ * the exclusion set.  Lone numeric strings in those zones (page numbers) are
+ * also added regardless of frequency, because they change every page and will
+ * never accumulate enough hits on their own.
+ *
+ * Returns an empty Set for PDFs shorter than 6 pages — too few pages to
+ * distinguish running text from coincidental repetition.
+ */
+async function detectRunningText(doc: PDFDocumentProxy, numPages: number): Promise<Set<string>> {
+  if (numPages < 6) return new Set()
+
+  const SAMPLE    = 8
+  const HEADER    = 0.92   // top 8%  (Y measured from bottom)
+  const FOOTER    = 0.08   // bottom 8%
+  const MIN_HITS  = 3
+
+  // Spread sample points across the book, skipping the first 3 pages
+  // (cover / title / copyright — unique text that must not be flagged as running).
+  const start = Math.min(4, numPages)
+  const samplePages = [...new Set(
+    Array.from({ length: SAMPLE }, (_, i) =>
+      Math.round(start + (i / (SAMPLE - 1)) * (numPages - start))
+    ).map(p => Math.min(p, numPages))
+  )]
+
+  const freq = new Map<string, number>()
+
+  for (const pageNum of samplePages) {
+    const page   = await doc.getPage(pageNum)
+    const height = page.getViewport({ scale: 1 }).height
+    const tc     = await page.getTextContent()
+
+    for (const it of tc.items) {
+      if (!('str' in it)) continue
+      const norm = (it as TextItem).str.trim()
+      if (!norm) continue
+      const y = (it as TextItem).transform[5]
+      if (y > height * HEADER || y < height * FOOTER) {
+        const key = norm.toLowerCase()
+        freq.set(key, (freq.get(key) ?? 0) + 1)
+      }
+    }
+  }
+
+  const excluded = new Set<string>()
+  for (const [key, count] of freq) {
+    if (count >= MIN_HITS) excluded.add(key)
+    // Page numbers change every page so never reach MIN_HITS — add them anyway.
+    if (/^\d+$/.test(key) || /^page\s+\d+/i.test(key) || /^\d+\s*of\s*\d+$/i.test(key))
+      excluded.add(key)
+  }
+  return excluded
+}
+
+/**
  * Convert pdfjs TextItem[] for one page into HTML paragraphs.
  *
  * Paragraph breaks are detected by three complementary geometric signals:
@@ -313,7 +383,12 @@ async function tryOutlineChapters(doc: PDFDocumentProxy): Promise<ChapterBoundar
  *
  * All three signals are checked together; any one of them triggers a break.
  */
-function textItemsToHtml(items: (TextItem | { type: string })[], pageNum: number): string {
+function textItemsToHtml(
+  items: (TextItem | { type: string })[],
+  pageNum: number,
+  pageHeight: number,
+  excluded: Set<string>,
+): string {
   const textItems = items.filter((item): item is TextItem =>
     'str' in item && (item as TextItem).str.length > 0
   )
@@ -321,7 +396,15 @@ function textItemsToHtml(items: (TextItem | { type: string })[], pageNum: number
     return `<p><em>[Page ${pageNum}: image-only — no text could be extracted]</em></p>`
   }
 
-  const lines = buildPdfLines(textItems)
+  // Strip running headers/footers (identified by detectRunningText pre-pass) and
+  // bare page numbers sitting in the top/bottom 8% zone.
+  const lines = buildPdfLines(textItems).filter(line => {
+    const norm = line.text.trim().toLowerCase()
+    if (excluded.has(norm)) return false
+    const inZone = line.y > pageHeight * 0.92 || line.y < pageHeight * 0.08
+    if (inZone && /^\d+$/.test(line.text.trim())) return false
+    return true
+  })
   if (lines.length === 0) {
     return `<p><em>[Page ${pageNum}: image-only — no text could be extracted]</em></p>`
   }
@@ -955,6 +1038,11 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     try {
       const chapters: ConvertChapter[] = []
 
+      // ── Pre-pass: detect running headers/footers ────────────────
+      setConvertStep('Analyzing page layout…')
+      const excluded = await detectRunningText(doc, numPages)
+      if (convertCancelledRef.current) return
+
       // ── Stage 1: PDF embedded outline (bookmarks / TOC links) ──
       setConvertStep('Reading table of contents…')
       const outlineBoundaries = await tryOutlineChapters(doc)
@@ -980,6 +1068,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
             setConvertPct(Math.round((pageNum / numPages) * 88))
 
             const page    = await doc.getPage(pageNum)
+            const vh      = page.getViewport({ scale: 1 }).height
             const tc      = await page.getTextContent()
             const hasText = tc.items.some(
               (it): it is TextItem => 'str' in it && (it as TextItem).str.trim().length > 0
@@ -991,7 +1080,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
               await new Promise<void>(r => setTimeout(r, 0))
               continue
             }
-            pageHtmls.push(textItemsToHtml(tc.items, pageNum))
+            pageHtmls.push(textItemsToHtml(tc.items, pageNum, vh, excluded))
             await new Promise<void>(r => setTimeout(r, 0))
           }
 
@@ -1016,6 +1105,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
           setConvertPct(Math.round((pageNum / numPages) * 88))
 
           const page = await doc.getPage(pageNum)
+          const vh   = page.getViewport({ scale: 1 }).height
           const [tc, rawAnnotations] = await Promise.all([
             page.getTextContent(),
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1023,9 +1113,9 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
           ])
 
           const textItems  = tc.items.filter((it): it is TextItem => 'str' in it && it.str.length > 0)
-          const html       = textItemsToHtml(tc.items, pageNum)
-          const firstLines = getFirstLines(tc.items)
-          const matched    = firstLines.find(l => CHAPTER_HEADING_RE.test(l)) ?? null
+          const html       = textItemsToHtml(tc.items, pageNum, vh, excluded)
+          const firstLines = getFirstLines(tc.items, 3, excluded, vh)
+          const matched    = firstLines.find(l => CHAPTER_HEADING_RE.test(l) && l.length < 80) ?? null
           const imageOnly  = textItems.length === 0   // true when the page is graphics-only
 
           // Internal nav links: Link annotations that point inside the document

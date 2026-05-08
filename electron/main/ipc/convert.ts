@@ -26,6 +26,11 @@ export function registerConvertHandlers(): void {
     if (!item)                       throw new Error('Item not found.')
     if (item.content_type !== 'pdf') throw new Error('Item is not a PDF.')
 
+    // Extract plain text from chapter HTML for FTS indexing
+    const plainText = chapters
+      .map(ch => ch.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim())
+      .join(' ')
+
     // Build EPUB buffer in memory
     const epubBuffer = await epub(
       { title: item.title, author: item.author ?? undefined, version: 3 },
@@ -49,11 +54,11 @@ export function registerConvertHandlers(): void {
           VALUES (?, ?, ?, NULL, 'epub', ?, ?, NULL, NULL, ?, ?, ?)
         `).run(newId, item.title, item.author, epubFile, item.cover_path, now, now, itemId)
 
-        // Update FTS index
+        // Update FTS index with chapter plain text so converted EPUBs appear in search
         db.prepare(`
           INSERT INTO items_fts (rowid, title, author, content)
-          SELECT rowid, title, author, '' FROM items WHERE id = ?
-        `).run(newId)
+          SELECT rowid, title, author, ? FROM items WHERE id = ?
+        `).run(plainText, newId)
       })()
     } catch (err) {
       try { unlinkSync(epubPath) } catch {}
