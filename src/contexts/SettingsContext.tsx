@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 
-export type Theme       = 'dark' | 'darker' | 'light' | 'sepia' | 'ivory' | 'slate' | 'lavender' | 'ocean' | 'nord' | 'rose' | 'forest' | 'high-contrast'
+export type Theme       = 'dark' | 'darker' | 'light' | 'sepia' | 'ivory' | 'slate' | 'lavender' | 'ocean' | 'nord' | 'rose' | 'forest' | 'high-contrast' | 'dusk' | 'midnight' | 'sand'
 export type GridDensity = 'compact' | 'normal' | 'comfortable'
 export type SortBy      = 'date_saved' | 'last_read' | 'title' | 'word_count' | 'progress'
 

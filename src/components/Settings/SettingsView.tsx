@@ -20,7 +20,7 @@ const BUILTIN_THEMES: {
   { value: 'darker',        label: 'Darker',   bg: '#0d0d0d', surface: '#1a1a1a', accent: '#5b8dee' },
   { value: 'light',         label: 'Light',    bg: '#f0eff5', surface: '#ffffff', accent: '#6253c9' },
   { value: 'sepia',         label: 'Sepia',    bg: '#f5f0e8', surface: '#ede8dc', accent: '#9b6b3e' },
-  { value: 'ivory',         label: 'Ivory',    bg: '#faf7f0', surface: '#f3ede0', accent: '#b5601a' },
+  { value: 'ivory',         label: 'Ivory',    bg: '#fef9e4', surface: '#f7edca', accent: '#c07820' },
   { value: 'slate',         label: 'Slate',    bg: '#f2f4f7', surface: '#ffffff', accent: '#4a6fa5' },
   { value: 'lavender',      label: 'Lavender', bg: '#f4f2fa', surface: '#ece9f5', accent: '#7c5cbf' },
   { value: 'ocean',         label: 'Ocean',    bg: '#0f1923', surface: '#162433', accent: '#38bdf8' },
@@ -28,6 +28,9 @@ const BUILTIN_THEMES: {
   { value: 'rose',          label: 'Rose',     bg: '#1a1015', surface: '#251820', accent: '#f472b6' },
   { value: 'forest',        label: 'Forest',   bg: '#131a12', surface: '#1c2a1b', accent: '#4ade80' },
   { value: 'high-contrast', label: 'Hi-Con',   bg: '#000000', surface: '#0d0d0d', accent: '#03fcf4' },
+  { value: 'dusk',          label: 'Dusk',     bg: '#1a1510', surface: '#252015', accent: '#d4a84b' },
+  { value: 'midnight',      label: 'Midnight', bg: '#0e0f1e', surface: '#151628', accent: '#a78bfa' },
+  { value: 'sand',          label: 'Sand',     bg: '#f5f2ed', surface: '#ffffff', accent: '#8a6a3e' },
 ]
 
 const DENSITY_OPTIONS: { value: GridDensity; label: string }[] = [
