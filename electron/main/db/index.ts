@@ -1,12 +1,13 @@
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
+import { unlinkSync } from 'fs'
 import { SCHEMA } from './schema'
 
 let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
-const CURRENT_VERSION = 14
+const CURRENT_VERSION = 15
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -76,6 +77,7 @@ ALTER TABLE items ADD COLUMN chapter_end INTEGER DEFAULT NULL;`,
     ALTER TABLE annotations ADD COLUMN sort_order INTEGER DEFAULT NULL;
     UPDATE annotations SET sort_order = rowid;
   `,
+  15: `ALTER TABLE items ADD COLUMN deleted_at INTEGER;`,
   13: `
     CREATE TABLE IF NOT EXISTS annotations (
       id             TEXT    PRIMARY KEY,
@@ -107,6 +109,18 @@ export function initDatabase(): void {
   db.pragma('temp_store = MEMORY')  // temp B-trees/indexes stay in RAM
   db.exec(SCHEMA)        // idempotent: creates tables only if they don't exist
   runMigrations()
+
+  // Permanently purge items that have been in trash for 30+ days
+  const userData = app.getPath('userData')
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+  const stale = db.prepare(
+    `SELECT id, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL AND deleted_at < ?`
+  ).all(cutoff) as { id: string; file_path: string; cover_path: string | null }[]
+  for (const row of stale) {
+    try { unlinkSync(join(userData, 'content', row.file_path)) } catch {}
+    if (row.cover_path) { try { unlinkSync(join(userData, row.cover_path)) } catch {} }
+    db.prepare('DELETE FROM items WHERE id = ?').run(row.id)
+  }
 
   // Compact FTS5 segment trees on clean shutdown rather than startup.
   // On large libraries this can take 100–500 ms; deferring it avoids blocking launch.

@@ -21,6 +21,7 @@ export default function LibraryView() {
   const { addToast, updateToast }    = useToast()
 
   const [items, setItems]                   = useState<Item[]>([])
+  const [trashedCount, setTrashedCount]     = useState(0)
   const [loading, setLoading]               = useState(true)
   const [loadError, setLoadError]           = useState<string | null>(null)
   const [allTags, setAllTags]               = useState<Tag[]>([])
@@ -62,8 +63,10 @@ export default function LibraryView() {
       libraryService.getAllItemTags(),
       collectionService.getAll(),
       collectionService.getAllItemCollections(),
-    ]).then(([itemsData, tagsData, rawItemTags, collectionsData, rawItemCols]) => {
+      libraryService.getTrashed(),
+    ]).then(([itemsData, tagsData, rawItemTags, collectionsData, rawItemCols, trashedData]) => {
       setItems(itemsData)
+      setTrashedCount(trashedData.length)
       setAllTags(tagsData)
       setItemTagsMap(buildTagsMap(rawItemTags))
       setAllCollections(collectionsData)
@@ -414,10 +417,12 @@ export default function LibraryView() {
     const ids = [...selectedIds]
     setBulkDeleting(true)
     try {
+      let trashDelta = 0
       for (const id of ids) {
         const companion = companionBySourceId.get(id)
-        if (companion) await libraryService.delete(companion.id)
-        await libraryService.delete(id)
+        if (companion) { await libraryService.softDelete(companion.id); trashDelta++ }
+        await libraryService.softDelete(id)
+        trashDelta++
       }
       setItems(prev => prev.filter(i => {
         if (ids.includes(i.id)) return false
@@ -425,6 +430,7 @@ export default function LibraryView() {
         const src = i.derived_from
         return !src || !ids.includes(src)
       }))
+      setTrashedCount(n => n + trashDelta)
       clearSelection()
     } finally {
       setBulkDeleting(false)
@@ -689,6 +695,7 @@ export default function LibraryView() {
         authorItemCounts={authorItemCounts}
         captureJobs={captureJobs}
         onDismissJob={dismissJob}
+        trashedCount={trashedCount}
       />
       <main className="library-main" ref={mainRef}>
         <header className="library-header">
@@ -864,11 +871,12 @@ export default function LibraryView() {
                           onOpenSource={sourceItem ? () => navigate(`/read/${sourceItem.id}`) : undefined}
                           onTogglePreferred={companion ? () => handleTogglePreferred(item.id) : undefined}
                           onDelete={async () => {
-                            if (companion) await libraryService.delete(companion.id)
-                            await libraryService.delete(item.id)
+                            if (companion) await libraryService.softDelete(companion.id)
+                            await libraryService.softDelete(item.id)
                             setItems(prev =>
                               prev.filter(i => i.id !== item.id && i.id !== companion?.id)
                             )
+                            setTrashedCount(n => n + (companion ? 2 : 1))
                           }}
                           onEditTags={() => setTagModalItem(editableItem)}
                           onEditCollections={() => setColModalItem(editableItem)}

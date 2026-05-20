@@ -16,7 +16,8 @@ export const SCHEMA = `
     cover_path  TEXT,
     description TEXT,
     date_saved  INTEGER NOT NULL,          -- unix timestamp
-    date_modified INTEGER NOT NULL
+    date_modified INTEGER NOT NULL,
+    deleted_at  INTEGER                    -- unix ms; NULL = active; non-null = in trash
   );
 
   CREATE TABLE IF NOT EXISTS progress (

@@ -8,7 +8,11 @@ contextBridge.exposeInMainWorld('api', {
   library: {
     getAll:         ()                                              => ipcRenderer.invoke('library:getAll'),
     getById:        (id: string)                                   => ipcRenderer.invoke('library:getById', id),
-    delete:         (id: string)                                   => ipcRenderer.invoke('library:delete', id),
+    softDelete:        (id: string)  => ipcRenderer.invoke('library:softDelete', id),
+    restore:           (id: string)  => ipcRenderer.invoke('library:restore', id),
+    getTrashed:        ()            => ipcRenderer.invoke('library:getTrashed'),
+    permanentlyDelete: (id: string)  => ipcRenderer.invoke('library:permanentlyDelete', id),
+    emptyTrash:        ()            => ipcRenderer.invoke('library:emptyTrash'),
     updateProgress: (id: string, pos: number)                      => ipcRenderer.invoke('library:updateProgress', id, pos),
     saveScrollPos:  (id: string, chapter: number, scrollY: number) => ipcRenderer.invoke('library:saveScrollPos', id, chapter, scrollY),
     search:         (query: string)                                => ipcRenderer.invoke('library:search', query),

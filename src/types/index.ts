@@ -22,6 +22,7 @@ export interface Item {
   description: string | null
   date_saved: number
   date_modified: number
+  deleted_at?: number | null     // unix ms; null = active; non-null = in trash
   derived_from?: string | null   // UUID of source PDF if this is a converted EPUB
   chapter_start?: number | null
   chapter_end?:   number | null
@@ -176,7 +177,11 @@ export interface Api {
   library: {
     getAll:         ()                              => Promise<Item[]>
     getById:        (id: string)                   => Promise<Item | undefined>
-    delete:         (id: string)                                 => Promise<void>
+    softDelete:        (id: string)  => Promise<void>
+    restore:           (id: string)  => Promise<void>
+    getTrashed:        ()            => Promise<Item[]>
+    permanentlyDelete: (id: string)  => Promise<void>
+    emptyTrash:        ()            => Promise<void>
     updateProgress: (id: string, pos: number)                    => Promise<void>
     saveScrollPos:  (id: string, chapter: number, scrollY: number) => Promise<void>
     search:         (query: string)                              => Promise<Item[]>

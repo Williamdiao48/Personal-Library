@@ -26,6 +26,7 @@ export function registerLibraryHandlers(): void {
       SELECT i.*, p.scroll_position, p.last_read_at, p.scroll_chapter, p.scroll_y, p.status
       FROM items i
       LEFT JOIN progress p ON p.item_id = i.id
+      WHERE i.deleted_at IS NULL
       ORDER BY i.date_saved DESC
     `)
   })
@@ -39,27 +40,50 @@ export function registerLibraryHandlers(): void {
     `, [id])
   })
 
-  ipcMain.handle('library:delete', (_e, id: string) => {
+  ipcMain.handle('library:softDelete', (_e, id: string) => {
+    run('UPDATE items SET deleted_at = ? WHERE id = ?', [Date.now(), id])
+  })
+
+  ipcMain.handle('library:restore', (_e, id: string) => {
+    run('UPDATE items SET deleted_at = NULL WHERE id = ?', [id])
+  })
+
+  ipcMain.handle('library:getTrashed', () => {
+    return all<Item>(`
+      SELECT i.*, p.scroll_position, p.last_read_at, p.scroll_chapter, p.scroll_y, p.status
+      FROM items i
+      LEFT JOIN progress p ON p.item_id = i.id
+      WHERE i.deleted_at IS NOT NULL
+      ORDER BY i.deleted_at DESC
+    `)
+  })
+
+  ipcMain.handle('library:permanentlyDelete', (_e, id: string) => {
     const db = getDb()
     const userData = app.getPath('userData')
-
-    // Read file paths before deleting the row
     const row = db.prepare(
       'SELECT file_path, cover_path FROM items WHERE id = ?'
     ).get(id) as { file_path: string; cover_path: string | null } | undefined
-
-    // NOTE: items_fts uses content='' (contentless FTS5), which does not support
-    // DELETE statements. Orphaned FTS entries are harmless because the search query
-    // JOINs with the items table, so deleted items are naturally excluded.
+    // NOTE: items_fts is contentless FTS5; orphaned entries are excluded by the
+    // JOIN on items. No explicit FTS cleanup needed.
     db.prepare('DELETE FROM items WHERE id = ?').run(id)
-
-    // Delete the content file and cover image from disk (non-fatal)
     if (row) {
       try { unlinkSync(join(userData, 'content', row.file_path)) } catch {}
-      if (row.cover_path) {
-        try { unlinkSync(join(userData, row.cover_path)) } catch {}
-      }
+      if (row.cover_path) { try { unlinkSync(join(userData, row.cover_path)) } catch {} }
     }
+  })
+
+  ipcMain.handle('library:emptyTrash', () => {
+    const db = getDb()
+    const userData = app.getPath('userData')
+    const rows = db.prepare(
+      'SELECT id, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL'
+    ).all() as { id: string; file_path: string; cover_path: string | null }[]
+    for (const row of rows) {
+      try { unlinkSync(join(userData, 'content', row.file_path)) } catch {}
+      if (row.cover_path) { try { unlinkSync(join(userData, row.cover_path)) } catch {} }
+    }
+    db.prepare('DELETE FROM items WHERE deleted_at IS NOT NULL').run()
   })
 
   ipcMain.handle('library:updateProgress', (_e, id: string, position: number) => {
@@ -106,7 +130,7 @@ export function registerLibraryHandlers(): void {
         SELECT i.*
         FROM items_fts f
         JOIN items i ON i.rowid = f.rowid
-        WHERE items_fts MATCH ?
+        WHERE items_fts MATCH ? AND i.deleted_at IS NULL
         ORDER BY rank
       `, [toFtsPrefix(query)])
     } catch {
