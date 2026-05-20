@@ -51,11 +51,14 @@ The installer is unsigned, so SmartScreen may show a warning:
 - **Multi-chapter serials** — fetches all chapters in one go with a live progress bar; lazy-loads in the reader
 - **Three readers** — HTML (articles + serials), EPUB, PDF; all with keyboard navigation and Cmd+F search
 - **Typography controls** — font, size, line height, max width, theme per reader; continuous or paged scroll
-- **12 built-in themes** + unlimited custom themes (pick two seed colors, the rest is derived)
-- **Library management** — tags, collections, reading status (Unread / Reading / Finished / On Hold / Dropped), bulk operations, author view
-- **Full-text search** — FTS5 with partial-word matching as you type
-- **Reading stats** — 1-year activity heatmap, streaks, time/count/reading-list goals with progress rings, per-item breakdown with avg WPM
+- **15 built-in themes** + unlimited custom themes (pick two seed colors, the rest is derived)
+- **Annotations** — highlight any text, attach notes, and drop bookmarks in all three readers. Highlights and notes live in a dedicated Annotations panel; bookmarks in a separate Bookmarks panel. Right-click any mark to delete, copy, or edit inline. Manual reordering via up/down buttons. Clicking a note mark opens a popover with the note and quoted passage.
+- **Library management** — tags, collections, reading status (Unread / Reading / Finished / On Hold / Dropped), bulk operations, author view, inline title editing
+- **Trash & recovery** — deleted items move to Trash and can be restored within 30 days; auto-purged on next launch after that
+- **Full-text search** — FTS5 with partial-word matching as you type; indexes HTML, EPUB, and PDF content
+- **Reading stats** — 1-year activity heatmap, streaks, time/count/reading-list goals with progress rings, per-item breakdown with avg WPM and word count
 - **Export & import** — `.plbackup` ZIP contains the full database + all content files; import relaunches cleanly
+- **Auto-updater** — checks for new releases on launch; download and install from the in-app notification
 
 ---
 
@@ -131,14 +134,16 @@ electron/
       schema.ts       DDL — all CREATE TABLE / FTS5 / index statements
       index.ts        DB init, versioned migrations (v1–v11), query helpers
     ipc/
-      library.ts      Item CRUD, progress, cover, status, refresh
+      library.ts      Item CRUD, progress, cover, status, refresh, soft-delete, trash
       capture.ts      URL/file ingestion (fire-and-forget, streams progress)
       reader.ts       Load HTML/EPUB/PDF content to renderer
       collections.ts  Collection CRUD + item assignments
+      annotations.ts  Highlights, notes, bookmarks CRUD + reorder
       convert.ts      PDF → EPUB conversion
       stats.ts        Reading sessions, summaries, streaks
       goals.ts        Time/count/reading-list goals
       backup.ts       Export/import .plbackup ZIP
+      log.ts          Crash log writes (error boundary → userData/logs/)
     capture/
       index.ts        Orchestrates fetch → parse → sanitize → save → FTS index
       fetch.ts        HTTP fetch with site-specific headers
@@ -148,12 +153,12 @@ electron/
     index.ts          contextBridge — the only surface the renderer can touch
 
 src/
-  App.tsx             Routes: / | /read/:id | /stats | /settings
+  App.tsx             Routes: / | /read/:id | /stats | /settings | /trash
   types/index.ts      Shared TS types + full window.api interface declaration
   services/           One module per IPC namespace; components import these only
   components/
-    Library/          LibraryView, ItemCard, Sidebar, TagsModal, CollectionsModal
-    Reader/           ReaderView, HtmlReader, EpubReader, PdfReader, SearchBar
+    Library/          LibraryView, ItemCard, Sidebar, TagsModal, CollectionsModal, TrashView
+    Reader/           ReaderView, HtmlReader, EpubReader, PdfReader, SearchBar, AnnotationsPanel, BookmarksPanel, AnnotationContextMenu, NotePopover
     Stats/            StatsView (heatmap, streaks, goals, per-item table)
     Settings/         SettingsView, SettingsModal (floating Aa reader panel)
     Capture/          AddItemModal, AppendModal
@@ -187,7 +192,7 @@ LibraryView → libraryService.getAll()
 
 This keeps the IPC surface minimal and makes it easy to see exactly what the renderer can and cannot do.
 
-**API namespaces:** `library`, `tags`, `capture`, `reader`, `collections`, `convert`, `stats`, `goals`, `backup`
+**API namespaces:** `library`, `tags`, `capture`, `reader`, `collections`, `annotations`, `convert`, `stats`, `goals`, `backup`, `log`
 
 Capture is the only async-streamed namespace: `capture:start` returns a `jobId` immediately, then the main process emits `capture:progress`, `capture:complete`, or `capture:error` events as it fetches and parses content.
 
@@ -201,16 +206,17 @@ Two pragmas are set on every open: `PRAGMA foreign_keys = ON` (enforces all FK c
 
 | Table | Purpose |
 |---|---|
-| `items` | Content metadata (title, author, type, file path, word count, etc.) |
+| `items` | Content metadata (title, author, type, file path, word count, `deleted_at` for soft-delete, etc.) |
 | `progress` | Per-item reading state (scroll position, max scroll position, chapter, last read, status) |
 | `tags` / `item_tags` | User-defined labels (M:N) |
 | `collections` / `collection_items` | Curated lists (M:N) |
 | `reading_sessions` | Individual reading sessions for stats (start/end/duration) |
 | `goals` | Reading goals (type: `time` \| `count` \| `list`) |
 | `goal_items` | Items assigned to reading-list goals (M:N) |
+| `annotations` | Highlights, notes, and bookmarks per item (type, range, text, note, sort_order) |
 | `items_fts` | FTS5 virtual table for full-text search (porter + unicode61 tokenizer) |
 
-**Migrations** are versioned integers in `electron/main/db/index.ts`. Bump `CURRENT_VERSION` and add a SQL string to `MIGRATIONS` to add a new migration. Runs automatically on startup inside a transaction. Current version: **v11**.
+**Migrations** are versioned integers in `electron/main/db/index.ts`. Bump `CURRENT_VERSION` and add a SQL string to `MIGRATIONS` to add a new migration. Runs automatically on startup inside a transaction. Current version: **v15**.
 
 **Content files** live in `{userData}/content/` as `{uuid}.html`, `{uuid}.epub`, `{uuid}.pdf`, or `{uuid}-ch0.html … {uuid}-chN.html` for multi-chapter captures.
 
@@ -260,7 +266,7 @@ Reading sessions are recorded via `useReadingSession` hook — idle detection tr
 
 ## Themes
 
-12 built-in themes + unlimited custom themes. Custom themes are defined by two seed colors (background + accent) and a light/dark flag; all derived CSS variables (`--bg-surface`, `--border`, `--text-muted`, etc.) are computed in `src/utils/themeDerive.ts` and applied as inline CSS properties on `<html>`.
+15 built-in themes + unlimited custom themes. Custom themes are defined by two seed colors (background + accent) and a light/dark flag; all derived CSS variables (`--bg-surface`, `--border`, `--text-muted`, etc.) are computed in `src/utils/themeDerive.ts` and applied as inline CSS properties on `<html>`.
 
 ---
 
