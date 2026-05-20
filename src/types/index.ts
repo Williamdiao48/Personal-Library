@@ -260,6 +260,9 @@ export interface Api {
   onCaptureProgress: (callback: (payload: { jobId: string; msg: string }) => void) => () => void
   onCaptureComplete: (callback: (payload: { jobId: string; result: CaptureResult }) => void) => () => void
   onCaptureError:    (callback: (payload: { jobId: string; error: string }) => void) => () => void
+  log: {
+    writeError: (message: string) => Promise<void>
+  }
 }
 
 declare global {

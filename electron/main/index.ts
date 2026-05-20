@@ -12,6 +12,7 @@ import { registerBackupHandlers }  from './ipc/backup'
 import { registerGoalsHandlers }   from './ipc/goals'
 import { registerAnnotationHandlers } from './ipc/annotations'
 import { registerUpdaterHandlers } from './ipc/updater'
+import { registerLogHandlers } from './ipc/log'
 
 // Must be called before app.whenReady()
 protocol.registerSchemesAsPrivileged([
@@ -158,6 +159,7 @@ app.whenReady().then(() => {
   registerAnnotationHandlers()
   registerUpdaterHandlers()
   registerBackupHandlers()
+  registerLogHandlers()
 
   createWindow()
 

@@ -168,4 +168,9 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('capture:error', handler)
   },
 
+  // Crash logging
+  log: {
+    writeError: (message: string) => ipcRenderer.invoke('log:writeError', message),
+  },
+
 })
