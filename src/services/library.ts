@@ -9,6 +9,9 @@ export const collectionService = {
   rename:               (id: string, name: string)      => window.api.collections.rename(id, name),
   getAllItemCollections: ()                              => window.api.collections.getAllItemCollections(),
   setForItem:           (itemId: string, ids: string[]) => window.api.collections.setForItem(itemId, ids),
+  getItems:             (id: string)                    => window.api.collections.getItems(id),
+  reorderItems:         (id: string, ids: string[])     => window.api.collections.reorderItems(id, ids),
+  addItem:              (id: string, itemId: string)    => window.api.collections.addItem(id, itemId),
 }
 
 export const libraryService = {

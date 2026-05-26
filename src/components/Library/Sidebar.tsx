@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, memo } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams, useLocation } from 'react-router-dom'
 import type { Collection, CaptureJob } from '../../types'
 
 interface CollectionMgmt {
@@ -66,13 +66,13 @@ const Sidebar = memo(function Sidebar({ collectionMgmt, authors, authorItemCount
   const { collections, itemCounts, onCreate, onDelete, onRename } = collectionMgmt
 
   const [searchParams] = useSearchParams()
+  const location          = useLocation()
   const currentFilter     = searchParams.get('filter')
   const currentTag        = searchParams.get('tag')
   const currentAuthor     = searchParams.get('author')
-  const currentCollection = searchParams.get('collection')
   const [authorsExpanded, setAuthorsExpanded] = useState(true)
 
-  const isAllActive = !currentFilter && !currentTag && !currentAuthor && !currentCollection
+  const isAllActive = !currentFilter && !currentTag && !currentAuthor && location.pathname === '/'
 
   // ── Collection editing state ────────────────────────────────────
   const [editingId, setEditingId]             = useState<string | null>(null)
@@ -240,13 +240,13 @@ const Sidebar = memo(function Sidebar({ collectionMgmt, authors, authorItemCount
           return (
             <div
               key={col.id}
-              className={`sidebar-collection-row${currentCollection === col.id ? ' active' : ''}`}
+              className={`sidebar-collection-row${location.pathname === `/collection/${col.id}` ? ' active' : ''}`}
               onContextMenu={e => {
                 e.preventDefault()
                 setContextMenu({ id: col.id, x: e.clientX, y: e.clientY })
               }}
             >
-              <Link className="sidebar-collection-link" to={`/?collection=${col.id}`}>
+              <Link className="sidebar-collection-link" to={`/collection/${col.id}`}>
                 <span className="sidebar-collection-name">{col.name}</span>
                 <span className="sidebar-collection-count">{itemCounts[col.id] ?? 0}</span>
               </Link>

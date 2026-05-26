@@ -61,6 +61,9 @@ contextBridge.exposeInMainWorld('api', {
     rename:               (id: string, name: string)      => ipcRenderer.invoke('collections:rename', id, name),
     getAllItemCollections: ()                              => ipcRenderer.invoke('collections:getAllItemCollections'),
     setForItem:           (itemId: string, ids: string[]) => ipcRenderer.invoke('collections:setForItem', itemId, ids),
+    getItems:             (id: string)                    => ipcRenderer.invoke('collections:getItems', id),
+    reorderItems:         (id: string, itemIds: string[]) => ipcRenderer.invoke('collections:reorderItems', id, itemIds),
+    addItem:              (id: string, itemId: string)    => ipcRenderer.invoke('collections:addItem', id, itemId),
   },
 
   // PDF → EPUB conversion

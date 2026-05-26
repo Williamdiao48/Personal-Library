@@ -220,6 +220,9 @@ export interface Api {
     rename:                (id: string, name: string)            => Promise<void>
     getAllItemCollections: ()                                     => Promise<{ item_id: string; collection_id: string; name: string }[]>
     setForItem:            (itemId: string, ids: string[])       => Promise<void>
+    getItems:              (collectionId: string)                    => Promise<Item[]>
+    reorderItems:          (collectionId: string, itemIds: string[]) => Promise<void>
+    addItem:               (collectionId: string, itemId: string)    => Promise<void>
   }
   convert: {
     pdfToEpub: (payload: ConvertPayload) => Promise<ConvertResult>
