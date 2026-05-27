@@ -185,13 +185,10 @@ const Sidebar = memo(function Sidebar({ collectionMgmt, authors, authorItemCount
         <Link className={`sidebar-link${currentFilter === 'finished' ? ' active' : ''}`} to="/?filter=finished">
           Finished
         </Link>
+        <Link className={`sidebar-link${location.pathname === '/tags' ? ' active' : ''}`} to="/tags">
+          Manage Tags
+        </Link>
       </nav>
-
-      {/* ── Tags ────────────────────────────────────── */}
-      <div className="sidebar-section-header">
-        <h2 className="sidebar-section-title">Tags</h2>
-        <Link className="sidebar-tags-manage" to="/tags" title="Manage tags">Manage</Link>
-      </div>
 
       {/* ── Collections ─────────────────────────────── */}
       <section className="sidebar-collections">

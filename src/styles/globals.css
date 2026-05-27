@@ -3240,17 +3240,21 @@ html[data-theme="sepia"] .item-card-refresh-status--error    { background: #fee2
 
 /* ── Sidebar Tags section ─────────────────────────────────────────────────── */
 
-.sidebar-tags-manage {
-  font-size: 11px;
-  color: var(--accent);
+.sidebar-manage-tags {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  margin: 4px 8px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--text-muted);
   text-decoration: none;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  margin-right: 4px;
-  transition: background var(--t-fast);
+  transition: background var(--t-fast), color var(--t-fast);
   -webkit-app-region: no-drag;
 }
-.sidebar-tags-manage:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.sidebar-manage-tags:hover { background: var(--bg-hover); color: var(--text); }
+.sidebar-manage-tags.active { background: var(--bg-active); color: var(--text); }
 
 /* ── TagsView layout ──────────────────────────────────────────────────────── */
 
