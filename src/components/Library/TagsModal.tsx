@@ -1,11 +1,9 @@
 import { useState } from 'react'
 import { tagService } from '../../services/library'
+import ColorInput from '../ui/ColorInput'
 import type { Tag } from '../../types'
 
-const PRESET_COLORS = [
-  '#e05252', '#e08c52', '#d4c244', '#52c05a',
-  '#5289e0', '#7c6aff', '#c052e0', '#888888',
-]
+const DEFAULT_COLOR = '#7c6aff'
 
 interface Props {
   itemId: string
@@ -16,12 +14,12 @@ interface Props {
 }
 
 export default function TagsModal({ itemId, itemTitle, allTags: initialAllTags, itemTagIds: initialItemTagIds, onClose }: Props) {
-  const [allTags, setAllTags]       = useState(initialAllTags)
-  const [selectedIds, setSelectedIds] = useState(new Set(initialItemTagIds))
-  const [newName, setNewName]       = useState('')
-  const [newColor, setNewColor]     = useState(PRESET_COLORS[5])
-  const [creating, setCreating]     = useState(false)
-  const [saving, setSaving]         = useState(false)
+  const [allTags, setAllTags]           = useState(initialAllTags)
+  const [selectedIds, setSelectedIds]   = useState(new Set(initialItemTagIds))
+  const [newName, setNewName]           = useState('')
+  const [newColor, setNewColor]         = useState(DEFAULT_COLOR)
+  const [creating, setCreating]         = useState(false)
+  const [saving, setSaving]             = useState(false)
 
   function toggleTag(id: string) {
     setSelectedIds(prev => {
@@ -44,16 +42,6 @@ export default function TagsModal({ itemId, itemTitle, allTags: initialAllTags, 
     } finally {
       setCreating(false)
     }
-  }
-
-  async function deleteTag(id: string) {
-    await tagService.delete(id)
-    setAllTags(prev => prev.filter(t => t.id !== id))
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      next.delete(id)
-      return next
-    })
   }
 
   async function save() {
@@ -89,14 +77,6 @@ export default function TagsModal({ itemId, itemTitle, allTags: initialAllTags, 
                   <span className="tags-modal-dot" style={{ backgroundColor: tag.color }} />
                   <span className="tags-modal-name">{tag.name}</span>
                 </label>
-                <button
-                  className="tags-modal-delete-tag"
-                  onClick={() => deleteTag(tag.id)}
-                  title="Delete tag from library"
-                  aria-label={`Delete ${tag.name}`}
-                >
-                  ✕
-                </button>
               </div>
             ))
           )}
@@ -117,17 +97,9 @@ export default function TagsModal({ itemId, itemTitle, allTags: initialAllTags, 
               {creating ? 'Adding…' : '+ Add'}
             </button>
           </div>
-          <div className="tags-modal-colors">
-            {PRESET_COLORS.map(c => (
-              <button
-                key={c}
-                type="button"
-                className={`tags-modal-swatch${newColor === c ? ' selected' : ''}`}
-                style={{ backgroundColor: c }}
-                onClick={() => setNewColor(c)}
-                aria-label={`Color ${c}`}
-              />
-            ))}
+          <div className="tags-modal-color-row">
+            <ColorInput value={newColor} onChange={setNewColor} size={24} />
+            <span className="tags-modal-color-hint">Pick color</span>
           </div>
         </form>
 

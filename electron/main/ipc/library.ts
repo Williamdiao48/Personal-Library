@@ -182,6 +182,20 @@ export function registerLibraryHandlers(): void {
     })()
   })
 
+  ipcMain.handle('tags:rename', (_e, id: string, name: string) => {
+    run('UPDATE tags SET name = ? WHERE id = ?', [name, id])
+  })
+
+  ipcMain.handle('tags:setColor', (_e, id: string, color: string) => {
+    run('UPDATE tags SET color = ? WHERE id = ?', [color, id])
+  })
+
+  ipcMain.handle('tags:getItemCounts', () => {
+    return all<{ tag_id: string; count: number }>(
+      'SELECT tag_id, COUNT(*) AS count FROM item_tags GROUP BY tag_id'
+    )
+  })
+
   // ── Cover image management ─────────────────────────────────────
 
   // Save raw image bytes as cover (called by PdfReader after rendering page 1).

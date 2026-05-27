@@ -36,9 +36,12 @@ export const libraryService = {
 }
 
 export const tagService = {
-  getAll:     ()                                  => window.api.tags.getAll(),
-  getForItem: (itemId: string)                   => window.api.tags.getForItem(itemId),
-  setForItem: (itemId: string, tagIds: string[]) => window.api.tags.setForItem(itemId, tagIds),
-  create:     (name: string, color: string)      => window.api.tags.create(name, color),
-  delete:     (id: string)                       => window.api.tags.delete(id),
+  getAll:        ()                                  => window.api.tags.getAll(),
+  getForItem:    (itemId: string)                   => window.api.tags.getForItem(itemId),
+  setForItem:    (itemId: string, tagIds: string[]) => window.api.tags.setForItem(itemId, tagIds),
+  create:        (name: string, color: string)      => window.api.tags.create(name, color),
+  delete:        (id: string)                       => window.api.tags.delete(id),
+  rename:        (id: string, name: string)         => window.api.tags.rename(id, name),
+  setColor:      (id: string, color: string)        => window.api.tags.setColor(id, color),
+  getItemCounts: ()                                 => window.api.tags.getItemCounts(),
 }

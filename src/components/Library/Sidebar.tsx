@@ -187,6 +187,12 @@ const Sidebar = memo(function Sidebar({ collectionMgmt, authors, authorItemCount
         </Link>
       </nav>
 
+      {/* ── Tags ────────────────────────────────────── */}
+      <div className="sidebar-section-header">
+        <h2 className="sidebar-section-title">Tags</h2>
+        <Link className="sidebar-tags-manage" to="/tags" title="Manage tags">Manage</Link>
+      </div>
+
       {/* ── Collections ─────────────────────────────── */}
       <section className="sidebar-collections">
         <div className="sidebar-section-header">

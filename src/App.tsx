@@ -8,6 +8,7 @@ import StatsView from './components/Stats/StatsView'
 import SettingsView from './components/Settings/SettingsView'
 import TrashView from './components/Library/TrashView'
 import CollectionView from './components/Library/CollectionView'
+import TagsView from './components/Library/TagsView'
 import ErrorBoundary from './components/ErrorBoundary'
 
 /** Subscribes to auto-updater events and surfaces them as Toast notifications.
@@ -78,6 +79,7 @@ export default function App() {
             <Route path="/settings" element={<SettingsView />} />
             <Route path="/trash" element={<TrashView />} />
             <Route path="/collection/:id" element={<CollectionView />} />
+            <Route path="/tags" element={<TagsView />} />
           </Routes>
         </ToastProvider>
       </SettingsProvider>

@@ -195,11 +195,14 @@ export interface Api {
     findBySourceUrl:  (url: string)                              => Promise<Item | undefined>
   }
   tags: {
-    getAll:     ()                                  => Promise<Tag[]>
-    getForItem: (itemId: string)                   => Promise<Tag[]>
-    setForItem: (itemId: string, tagIds: string[]) => Promise<void>
-    create:     (name: string, color: string)      => Promise<Tag>
-    delete:     (id: string)                       => Promise<void>
+    getAll:        ()                                  => Promise<Tag[]>
+    getForItem:    (itemId: string)                   => Promise<Tag[]>
+    setForItem:    (itemId: string, tagIds: string[]) => Promise<void>
+    create:        (name: string, color: string)      => Promise<Tag>
+    delete:        (id: string)                       => Promise<void>
+    rename:        (id: string, name: string)         => Promise<void>
+    setColor:      (id: string, color: string)        => Promise<void>
+    getItemCounts: ()                                 => Promise<{ tag_id: string; count: number }[]>
   }
   capture: {
     start:    (url: string, start?: number, end?: number) => Promise<string>  // returns jobId immediately

@@ -28,11 +28,14 @@ contextBridge.exposeInMainWorld('api', {
 
   // Tags
   tags: {
-    getAll:     ()                                  => ipcRenderer.invoke('tags:getAll'),
-    getForItem: (itemId: string)                   => ipcRenderer.invoke('tags:getForItem', itemId),
-    setForItem: (itemId: string, tagIds: string[]) => ipcRenderer.invoke('tags:setForItem', itemId, tagIds),
-    create:     (name: string, color: string)      => ipcRenderer.invoke('tags:create', name, color),
-    delete:     (id: string)                       => ipcRenderer.invoke('tags:delete', id),
+    getAll:        ()                                  => ipcRenderer.invoke('tags:getAll'),
+    getForItem:    (itemId: string)                   => ipcRenderer.invoke('tags:getForItem', itemId),
+    setForItem:    (itemId: string, tagIds: string[]) => ipcRenderer.invoke('tags:setForItem', itemId, tagIds),
+    create:        (name: string, color: string)      => ipcRenderer.invoke('tags:create', name, color),
+    delete:        (id: string)                       => ipcRenderer.invoke('tags:delete', id),
+    rename:        (id: string, name: string)         => ipcRenderer.invoke('tags:rename', id, name),
+    setColor:      (id: string, color: string)        => ipcRenderer.invoke('tags:setColor', id, color),
+    getItemCounts: ()                                 => ipcRenderer.invoke('tags:getItemCounts'),
   },
 
   // Capture
