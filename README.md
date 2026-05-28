@@ -101,20 +101,20 @@ npm run typecheck  # Type-check without emitting
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    Renderer Process                  │
+│                    Renderer Process                 │
 │   React + TypeScript (HashRouter, Vite dev server)  │
-│                                                      │
+│                                                     │
 │   src/components/   →  src/services/                │
-│   (UI components)       (IPC abstraction layer)      │
+│   (UI components)       (IPC abstraction layer)     │
 └────────────────────────┬────────────────────────────┘
                          │  contextBridge (window.api)
 ┌────────────────────────▼────────────────────────────┐
-│                    Main Process                      │
-│          Node.js + Electron + better-sqlite3         │
-│                                                      │
+│                    Main Process                     │
+│          Node.js + Electron + better-sqlite3        │
+│                                                     │
 │   electron/main/ipc/   ←→   electron/main/db/       │
-│   (IPC handlers)              (SQLite + migrations)  │
-│                                                      │
+│   (IPC handlers)              (SQLite + migrations) │
+│                                                     │
 │   electron/main/capture/                            │
 │   (URL fetch → parse → sanitize → store)            │
 └─────────────────────────────────────────────────────┘
