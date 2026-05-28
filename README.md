@@ -53,7 +53,7 @@ The installer is unsigned, so SmartScreen may show a warning:
 - **Typography controls** — font, size, line height, max width, theme per reader; continuous or paged scroll
 - **15 built-in themes** + unlimited custom themes (pick two seed colors, the rest is derived)
 - **Annotations** — highlight any text, attach notes, and drop bookmarks in all three readers. Highlights and notes live in a dedicated Annotations panel; bookmarks in a separate Bookmarks panel. Right-click any mark to delete, copy, or edit inline. Manual reordering via up/down buttons. Clicking a note mark opens a popover with the note and quoted passage.
-- **Library management** — tags, collections, reading status (Unread / Reading / Finished / On Hold / Dropped), bulk operations, author view, inline title editing
+- **Library management** — tags (with rename, recolor, delete, item counts), collections (dedicated shelf with drag-to-reorder), reading status (Unread / Reading / Finished / On Hold / Dropped), bulk operations, author view, inline title editing
 - **Trash & recovery** — deleted items move to Trash and can be restored within 30 days; auto-purged on next launch after that
 - **Full-text search** — FTS5 with partial-word matching as you type; indexes HTML, EPUB, and PDF content
 - **Reading stats** — 1-year activity heatmap, streaks, time/count/reading-list goals with progress rings, per-item breakdown with avg WPM and word count
@@ -153,11 +153,11 @@ electron/
     index.ts          contextBridge — the only surface the renderer can touch
 
 src/
-  App.tsx             Routes: / | /read/:id | /stats | /settings | /trash
+  App.tsx             Routes: / | /read/:id | /stats | /settings | /trash | /tags | /collection/:id
   types/index.ts      Shared TS types + full window.api interface declaration
   services/           One module per IPC namespace; components import these only
   components/
-    Library/          LibraryView, ItemCard, Sidebar, TagsModal, CollectionsModal, TrashView
+    Library/          LibraryView, ItemCard, Sidebar, TagsModal, CollectionsModal, TrashView, TagsView, CollectionView
     Reader/           ReaderView, HtmlReader, EpubReader, PdfReader, SearchBar, AnnotationsPanel, BookmarksPanel, AnnotationContextMenu, NotePopover
     Stats/            StatsView (heatmap, streaks, goals, per-item table)
     Settings/         SettingsView, SettingsModal (floating Aa reader panel)
@@ -216,7 +216,7 @@ Two pragmas are set on every open: `PRAGMA foreign_keys = ON` (enforces all FK c
 | `annotations` | Highlights, notes, and bookmarks per item (type, range, text, note, sort_order) |
 | `items_fts` | FTS5 virtual table for full-text search (porter + unicode61 tokenizer) |
 
-**Migrations** are versioned integers in `electron/main/db/index.ts`. Bump `CURRENT_VERSION` and add a SQL string to `MIGRATIONS` to add a new migration. Runs automatically on startup inside a transaction. Current version: **v15**.
+**Migrations** are versioned integers in `electron/main/db/index.ts`. Bump `CURRENT_VERSION` and add a SQL string to `MIGRATIONS` to add a new migration. Runs automatically on startup inside a transaction. Current version: **v16**.
 
 **Content files** live in `{userData}/content/` as `{uuid}.html`, `{uuid}.epub`, `{uuid}.pdf`, or `{uuid}-ch0.html … {uuid}-chN.html` for multi-chapter captures.
 
