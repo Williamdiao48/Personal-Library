@@ -241,21 +241,23 @@ export default function TagsView() {
           <div className="tags-create-section">
             <h2 className="tags-create-title">New tag</h2>
             <form className="tags-create-form" onSubmit={handleCreate}>
-              <input
-                className="tags-create-input"
-                type="text"
-                placeholder="Tag name"
-                value={newName}
-                onChange={e => setNewName(e.target.value)}
-                maxLength={40}
-              />
               <div className="tags-create-color-row">
                 <ColorInput value={newColor} onChange={setNewColor} size={24} />
                 <span className="tags-modal-color-hint">Pick color</span>
               </div>
-              <button type="submit" className="btn-primary" disabled={creating || !newName.trim()}>
-                {creating ? 'Creating…' : '+ Create'}
-              </button>
+              <div className="tags-create-name-row">
+                <input
+                  className="tags-create-input"
+                  type="text"
+                  placeholder="Tag name"
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  maxLength={40}
+                />
+                <button type="submit" className="btn-primary" disabled={creating || !newName.trim()}>
+                  {creating ? 'Creating…' : '+ Create'}
+                </button>
+              </div>
             </form>
           </div>
         </div>

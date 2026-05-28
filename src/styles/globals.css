@@ -3450,6 +3450,12 @@ html[data-theme="sepia"] .item-card-refresh-status--error    { background: #fee2
   gap: 8px;
 }
 
+.tags-create-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .tags-create-input {
   background: var(--bg-hover);
   border: 1px solid var(--border);
@@ -3461,5 +3467,7 @@ html[data-theme="sepia"] .item-card-refresh-status--error    { background: #fee2
   width: 240px;
   transition: border-color var(--t-fast);
 }
+
 .tags-create-input:focus { border-color: var(--accent); }
+
 

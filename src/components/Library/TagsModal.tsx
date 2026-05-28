@@ -84,6 +84,10 @@ export default function TagsModal({ itemId, itemTitle, allTags: initialAllTags, 
 
         <form className="tags-modal-new" onSubmit={createTag}>
           <p className="tags-modal-section-label">New tag</p>
+          <div className="tags-modal-color-row">
+            <ColorInput value={newColor} onChange={setNewColor} size={24} />
+            <span className="tags-modal-color-hint">Pick color</span>
+          </div>
           <div className="tags-modal-new-row">
             <input
               type="text"
@@ -96,10 +100,6 @@ export default function TagsModal({ itemId, itemTitle, allTags: initialAllTags, 
             <button type="submit" className="btn-primary" disabled={creating || !newName.trim()}>
               {creating ? 'Adding…' : '+ Add'}
             </button>
-          </div>
-          <div className="tags-modal-color-row">
-            <ColorInput value={newColor} onChange={setNewColor} size={24} />
-            <span className="tags-modal-color-hint">Pick color</span>
           </div>
         </form>
 
