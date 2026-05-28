@@ -132,12 +132,12 @@ electron/
     index.ts          App entry, window creation, IPC registration
     db/
       schema.ts       DDL — all CREATE TABLE / FTS5 / index statements
-      index.ts        DB init, versioned migrations (v1–v11), query helpers
+      index.ts        DB init, versioned migrations (v1–v16), query helpers
     ipc/
       library.ts      Item CRUD, progress, cover, status, refresh, soft-delete, trash
       capture.ts      URL/file ingestion (fire-and-forget, streams progress)
       reader.ts       Load HTML/EPUB/PDF content to renderer
-      collections.ts  Collection CRUD + item assignments
+      collections.ts  Collection CRUD, item assignments, per-collection item ordering
       annotations.ts  Highlights, notes, bookmarks CRUD + reorder
       convert.ts      PDF → EPUB conversion
       stats.ts        Reading sessions, summaries, streaks
@@ -164,7 +164,7 @@ src/
     Capture/          AddItemModal, AppendModal
     Toast/            ToastContainer
   contexts/
-    SettingsContext   Reader prefs (font, theme, line-height) + defaultSort
+    SettingsContext   App-level settings (theme, grid density, sort, custom themes)
     ToastContext      Global toast notifications
   hooks/
     useReadingSession Track reading time per session for stats
