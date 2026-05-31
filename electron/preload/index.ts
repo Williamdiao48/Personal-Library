@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('api', {
     setAuthor:        (id: string, author: string | null)          => ipcRenderer.invoke('library:setAuthor', id, author),
     setTitle:         (id: string, title: string)                  => ipcRenderer.invoke('library:setTitle', id, title),
     setStatus:        (id: string, status: string | null)          => ipcRenderer.invoke('library:setStatus', id, status),
+    setRating:        (id: string, rating: number | null)          => ipcRenderer.invoke('library:setRating', id, rating),
+    setReview:        (id: string, review: string | null)          => ipcRenderer.invoke('library:setReview', id, review),
     refresh:          (id: string)                                 => ipcRenderer.invoke('library:refresh', id),
     findBySourceUrl:  (url: string)                                => ipcRenderer.invoke('library:findBySourceUrl', url),
   },

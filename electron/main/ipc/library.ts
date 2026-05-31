@@ -248,6 +248,14 @@ export function registerLibraryHandlers(): void {
     run('UPDATE items SET title = ?, date_modified = ? WHERE id = ?', [title, Date.now(), id])
   })
 
+  ipcMain.handle('library:setRating', (_e, id: string, rating: number | null) => {
+    run('UPDATE items SET rating = ? WHERE id = ?', [rating, id])
+  })
+
+  ipcMain.handle('library:setReview', (_e, id: string, review: string | null) => {
+    run('UPDATE items SET review = ? WHERE id = ?', [review, id])
+  })
+
   ipcMain.handle('library:findBySourceUrl', (_e, url: string) => {
     return get<Item>('SELECT * FROM items WHERE source_url = ? LIMIT 1', [url])
   })

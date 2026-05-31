@@ -32,6 +32,8 @@ export interface Item {
   scroll_chapter?: number | null
   scroll_y?: number | null
   status?: ReadingStatus | null  // null / undefined = infer from scroll_position
+  rating?: number | null
+  review?: string | null
 }
 
 export interface Tag {
@@ -191,6 +193,8 @@ export interface Api {
     setAuthor:        (id: string, author: string | null)         => Promise<void>
     setTitle:         (id: string, title: string)                => Promise<void>
     setStatus:        (id: string, status: ReadingStatus | null) => Promise<void>
+    setRating:        (id: string, rating: number | null)        => Promise<void>
+    setReview:        (id: string, review: string | null)        => Promise<void>
     refresh:          (id: string)                               => Promise<RefreshResult>
     findBySourceUrl:  (url: string)                              => Promise<Item | undefined>
   }

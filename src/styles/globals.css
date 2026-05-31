@@ -1262,6 +1262,43 @@ html[data-theme-mode="light"] .item-card-tag-pill:hover { filter: brightness(0.7
   transition: width 600ms ease;
 }
 
+.item-card-rating {
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity var(--t-fast);
+}
+.item-card:hover .item-card-rating { opacity: 1; }
+.item-card-rating--rated { opacity: 1; }
+
+.item-card-review {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  max-height: 0;
+  opacity: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  font-style: italic;
+  cursor: pointer;
+  word-break: break-word;
+  -webkit-appearance: none;
+  transition: max-height var(--t-fast), opacity var(--t-fast), padding var(--t-fast);
+}
+.item-card:hover .item-card-review {
+  max-height: 44px;
+  opacity: 1;
+  padding: 4px 0 2px;
+}
+.item-card-review:hover { color: var(--text); }
+
 /* ── Modal ──────────────────────────────────────── */
 
 .modal-overlay {
@@ -3470,4 +3507,39 @@ html[data-theme="sepia"] .item-card-refresh-status--error    { background: #fee2
 
 .tags-create-input:focus { border-color: var(--accent); }
 
+/* ── Star rating ─────────────────────────────────── */
+.star-rating { display: flex; gap: 2px; align-items: center; }
+.star-item   { position: relative; display: inline-block; flex-shrink: 0; }
+.star-half {
+  position: absolute; top: 0; bottom: 0; width: 50%;
+  background: transparent; border: none; padding: 0; margin: 0;
+  cursor: pointer; outline: none; box-shadow: none;
+  -webkit-appearance: none; appearance: none;
+}
+.star-half:hover, .star-half:focus, .star-half:active { background: transparent; outline: none; box-shadow: none; }
+.star-half--left  { left: 0; }
+.star-half--right { right: 0; }
+.star-path-empty  { fill: color-mix(in srgb, var(--text) 20%, transparent); }
+.star-path-filled { fill: #f5c518; }
+
+/* ── Review modal ────────────────────────────────── */
+.review-modal { width: 520px; max-width: 95vw; display: flex; flex-direction: column; gap: 16px; }
+.review-modal-header { display: flex; flex-direction: column; gap: 4px; }
+.review-modal-subtitle { font-size: 13px; color: var(--text-muted); margin: 0; }
+.review-modal-textarea {
+  width: 100%;
+  min-height: 160px;
+  max-height: 400px;
+  resize: vertical;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+.review-modal-textarea:focus { outline: none; border-color: var(--accent); }
 

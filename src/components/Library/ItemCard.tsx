@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, memo } from 'react'
 import type { Item, Tag, RefreshResult, ReadingStatus } from '../../types'
 import { getEffectiveStatus } from '../../types'
 import { libraryService } from '../../services/library'
+import StarRating from '../ui/StarRating'
 
 const STATUS_LABELS: Record<ReadingStatus, string> = {
   unread:    'Unread',
@@ -50,9 +51,11 @@ interface Props {
   onAuthorClick: (author: string) => void
   onRefresh?: () => Promise<RefreshResult>
   onAppend?: () => void
+  onRatingChange: (rating: number | null) => void
+  onWriteReview: () => void
 }
 
-function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpenSource, onTogglePreferred, onEditTags, onEditCollections, onCoverChange, onAuthorChange, onTitleChange, onStatusChange, onTagClick, onAuthorClick, onRefresh, onAppend }: Props) {
+function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpenSource, onTogglePreferred, onEditTags, onEditCollections, onCoverChange, onAuthorChange, onTitleChange, onStatusChange, onTagClick, onAuthorClick, onRefresh, onAppend, onRatingChange, onWriteReview }: Props) {
   const [confirming, setConfirming]   = useState(false)
   const [deleting, setDeleting]       = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -332,6 +335,16 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
         <div className="item-card-progress">
           <div className="item-card-progress-bar" style={{ width: `${progress}%` }} />
         </div>
+
+        <div className={`item-card-rating${item.rating != null ? ' item-card-rating--rated' : ''}`} onClick={e => e.stopPropagation()}>
+          <StarRating value={item.rating ?? null} onChange={onRatingChange} size={14} />
+        </div>
+
+        {item.review && (
+          <button className="item-card-review" onClick={e => { e.stopPropagation(); onWriteReview() }}>
+            {item.review}
+          </button>
+        )}
       </div>
 
       {/* ⋯ menu — hidden until card is hovered */}
@@ -361,6 +374,9 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
               </button>
               <button className="item-card-dropdown-item" onClick={e => { e.stopPropagation(); setMenuOpen(false); onEditTags() }}>
                 Edit tags
+              </button>
+              <button className="item-card-dropdown-item" onClick={e => { e.stopPropagation(); setMenuOpen(false); onWriteReview() }}>
+                {item.review ? 'Edit review' : 'Write review'}
               </button>
               <button className="item-card-dropdown-item" onClick={handlePickCover}>
                 Change cover
@@ -428,6 +444,8 @@ export default memo(ItemCard, (prev, next) => {
     pi.chapter_end   === ni.chapter_end   &&
     pi.scroll_position === ni.scroll_position &&
     pi.status        === ni.status        &&
+    pi.rating        === ni.rating        &&
+    pi.review        === ni.review        &&
     pi.date_modified === ni.date_modified &&
     prev.tags        === next.tags        &&
     prev.isSelected  === next.isSelected  &&

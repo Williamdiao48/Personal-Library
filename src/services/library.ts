@@ -31,6 +31,8 @@ export const libraryService = {
   setAuthor:        (id: string, author: string | null)         => window.api.library.setAuthor(id, author),
   setTitle:         (id: string, title: string)                => window.api.library.setTitle(id, title),
   setStatus:        (id: string, status: import('../types').ReadingStatus | null) => window.api.library.setStatus(id, status),
+  setRating:        (id: string, rating: number | null)        => window.api.library.setRating(id, rating),
+  setReview:        (id: string, review: string | null)        => window.api.library.setReview(id, review),
   refresh:          (id: string)                               => window.api.library.refresh(id),
   findBySourceUrl:  (url: string)                              => window.api.library.findBySourceUrl(url),
 }

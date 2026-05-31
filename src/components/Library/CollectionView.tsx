@@ -14,6 +14,7 @@ import ItemCard from './ItemCard'
 import Sidebar from './Sidebar'
 import TagsModal from './TagsModal'
 import CollectionsModal from './CollectionsModal'
+import ReviewModal from './ReviewModal'
 import AddToCollectionModal from './AddToCollectionModal'
 import CustomSelect from '../ui/CustomSelect'
 import MultiSelect from '../ui/MultiSelect'
@@ -52,6 +53,8 @@ interface SortableCardProps {
   onCoverChange: (path: string) => void
   onTagClick: (tagId: string) => void
   onAuthorClick: (author: string) => void
+  onRatingChange: (rating: number | null) => void
+  onWriteReview: () => void
 }
 
 function SortableItemCard({ item, dragEnabled, ...cardProps }: SortableCardProps) {
@@ -126,8 +129,9 @@ export default function CollectionView() {
 
   // ── Modals ───────────────────────────────────────────────────────
   const [showAddModal, setShowAddModal]               = useState(false)
-  const [tagsModalItem, setTagsModalItem]             = useState<Item | null>(null)
+  const [tagsModalItem, setTagsModalItem]               = useState<Item | null>(null)
   const [collectionsModalItem, setCollectionsModalItem] = useState<Item | null>(null)
+  const [reviewModalItem, setReviewModalItem]           = useState<Item | null>(null)
 
   // ── Debounce search ─────────────────────────────────────────────
   useEffect(() => {
@@ -436,6 +440,11 @@ export default function CollectionView() {
                     onCoverChange={(cover_path) => updateItem(item.id, { cover_path })}
                     onTagClick={(tagId) => navigate(`/?tag=${tagId}`)}
                     onAuthorClick={(author) => navigate(`/?author=${encodeURIComponent(author)}`)}
+                    onRatingChange={(rating) => {
+                      libraryService.setRating(item.id, rating)
+                      updateItem(item.id, { rating })
+                    }}
+                    onWriteReview={() => setReviewModalItem(item)}
                   />
                 ))}
               </div>
@@ -450,6 +459,7 @@ export default function CollectionView() {
                     onClick={() => {}} onDelete={async () => {}} onEditTags={() => {}}
                     onEditCollections={() => {}} onTitleChange={() => {}} onAuthorChange={() => {}}
                     onStatusChange={() => {}} onCoverChange={() => {}} onTagClick={() => {}} onAuthorClick={() => {}}
+                    onRatingChange={() => {}} onWriteReview={() => {}}
                   />
                 </div>
               ) : null}
@@ -485,6 +495,17 @@ export default function CollectionView() {
           allCollections={allCollections}
           itemCollectionIds={itemCollectionIdsMap[collectionsModalItem.id] ?? new Set()}
           onClose={() => setCollectionsModalItem(null)}
+        />
+      )}
+
+      {reviewModalItem && (
+        <ReviewModal
+          item={reviewModalItem}
+          onClose={() => setReviewModalItem(null)}
+          onSave={(review) => {
+            updateItem(reviewModalItem.id, { review })
+            setReviewModalItem(null)
+          }}
         />
       )}
     </div>

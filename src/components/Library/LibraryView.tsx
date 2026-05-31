@@ -13,6 +13,7 @@ import AddItemModal from '../Capture/AddItemModal'
 import AppendModal from '../Capture/AppendModal'
 import TagsModal from './TagsModal'
 import CollectionsModal from './CollectionsModal'
+import ReviewModal from './ReviewModal'
 import CustomSelect from '../ui/CustomSelect'
 import MultiSelect from '../ui/MultiSelect'
 
@@ -30,8 +31,9 @@ export default function LibraryView() {
   const [itemCollectionsMap, setItemCollectionsMap] = useState<Record<string, Collection[]>>({})
   const [showAddModal, setShowAddModal]     = useState(false)
   const [pendingUrl, setPendingUrl]         = useState<string | undefined>(undefined)
-  const [tagModalItem, setTagModalItem]     = useState<Item | null>(null)
-  const [colModalItem, setColModalItem]     = useState<Item | null>(null)
+  const [tagModalItem, setTagModalItem]       = useState<Item | null>(null)
+  const [colModalItem, setColModalItem]       = useState<Item | null>(null)
+  const [reviewModalItem, setReviewModalItem] = useState<Item | null>(null)
   const [formatPrefs, setFormatPrefs]       = useState<Record<string, 'epub' | 'pdf'>>({})
   const [searchQuery, setSearchQuery]       = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
@@ -637,6 +639,16 @@ export default function LibraryView() {
         const bP = resolveDisplay(b).scroll_position ?? 0
         return bP - aP
       })
+    } else if (sortBy === 'rating_high' || sortBy === 'rating_low') {
+      const dir = sortBy === 'rating_high' ? -1 : 1
+      result.sort((a, b) => {
+        const aR = resolveDisplay(a).rating ?? null
+        const bR = resolveDisplay(b).rating ?? null
+        if (aR === null && bR === null) return 0
+        if (aR === null) return 1   // unrated always last
+        if (bR === null) return -1
+        return dir * (aR - bR)
+      })
     }
     // default: date_saved — items arrive from the DB already sorted DESC, so no-op
 
@@ -732,11 +744,13 @@ export default function LibraryView() {
               value={sortBy}
               onChange={val => updateSettings({ defaultSort: val as SortBy })}
               options={[
-                { value: 'date_saved', label: 'Date saved'   },
-                { value: 'last_read',  label: 'Last read'    },
-                { value: 'title',      label: 'Title'        },
-                { value: 'word_count', label: 'Word count'   },
-                { value: 'progress',   label: 'Progress'     },
+                { value: 'date_saved',   label: 'Date saved'     },
+                { value: 'last_read',    label: 'Last read'      },
+                { value: 'title',        label: 'Title'          },
+                { value: 'word_count',   label: 'Word count'     },
+                { value: 'progress',     label: 'Progress'       },
+                { value: 'rating_high',  label: 'Highest rated'  },
+                { value: 'rating_low',   label: 'Lowest rated'   },
               ]}
             />
             <button className="btn-primary" onClick={() => setShowAddModal(true)}>+ Add</button>
@@ -896,6 +910,11 @@ export default function LibraryView() {
                             ))
                           }
                           onStatusChange={(status) => handleStatusChange(editableItem.id, status)}
+                          onRatingChange={(rating) => {
+                            libraryService.setRating(editableItem.id, rating)
+                            setItems(prev => prev.map(i => i.id === editableItem.id ? { ...i, rating } : i))
+                          }}
+                          onWriteReview={() => setReviewModalItem(editableItem)}
                           onRefresh={displayItem.source_url ? async (): Promise<RefreshResult> => {
                             const title   = displayItem.title
                             const toastId = addToast(`Refreshing "${title}"…`, 'info')
@@ -1087,6 +1106,17 @@ export default function LibraryView() {
           onClose={() => {
             setColModalItem(null)
             refreshCollectionData()
+          }}
+        />
+      )}
+
+      {reviewModalItem && (
+        <ReviewModal
+          item={reviewModalItem}
+          onClose={() => setReviewModalItem(null)}
+          onSave={(review) => {
+            setItems(prev => prev.map(i => i.id === reviewModalItem.id ? { ...i, review } : i))
+            setReviewModalItem(null)
           }}
         />
       )}
