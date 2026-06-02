@@ -59,7 +59,7 @@
       "out/**/*"
     ],
     "mac": {
-      "target": "dmg",
+      "target": ["dmg", "zip"],
       "category": "public.app-category.books",
       "icon": "build/icon.icns",
       "entitlementsInherit": "build/entitlements.mac.plist"
