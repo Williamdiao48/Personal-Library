@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, memo } from 'react'
 import { Link, useSearchParams, useLocation } from 'react-router-dom'
 import type { Collection, CaptureJob } from '../../types'
+import { useUpdater } from '../../contexts/UpdaterContext'
 
 interface CollectionMgmt {
   collections: Collection[]
@@ -63,6 +64,7 @@ function LiveEta({ job }: { job: CaptureJob }) {
 }
 
 const Sidebar = memo(function Sidebar({ collectionMgmt, authors, authorItemCounts, captureJobs, onDismissJob, trashedCount }: Props) {
+  const { pendingVersion } = useUpdater()
   const { collections, itemCounts, onCreate, onDelete, onRename } = collectionMgmt
 
   const [searchParams] = useSearchParams()
@@ -421,6 +423,36 @@ const Sidebar = memo(function Sidebar({ collectionMgmt, authors, authorItemCount
 
       {/* ── Footer ──────────────────────────────────── */}
       <div className="sidebar-footer">
+        {pendingVersion && (
+          <button
+            className="sidebar-update-btn"
+            onClick={() => window.api.updater.downloadUpdate()}
+            title={`Download v${pendingVersion}`}
+          >
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 2v14M5 9l7 7 7-7" />
+              <path d="M3 20h18" />
+            </svg>
+            Update to v{pendingVersion}
+          </button>
+        )}
+        <Link
+          className="sidebar-settings-btn sidebar-trash-btn"
+          to="/trash"
+          aria-label="Trash"
+          title="Trash"
+        >
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            <path d="M10 11v6M14 11v6" />
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+          </svg>
+          Trash
+          {trashedCount > 0 && (
+            <span className="sidebar-trash-count">{trashedCount}</span>
+          )}
+        </Link>
         <Link
           className="sidebar-settings-btn"
           to="/stats"
@@ -445,23 +477,6 @@ const Sidebar = memo(function Sidebar({ collectionMgmt, authors, authorItemCount
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
           Settings
-        </Link>
-        <Link
-          className="sidebar-settings-btn sidebar-trash-btn"
-          to="/trash"
-          aria-label="Trash"
-          title="Trash"
-        >
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <polyline points="3 6 5 6 21 6" />
-            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-            <path d="M10 11v6M14 11v6" />
-            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-          </svg>
-          Trash
-          {trashedCount > 0 && (
-            <span className="sidebar-trash-count">{trashedCount}</span>
-          )}
         </Link>
       </div>
     </aside>

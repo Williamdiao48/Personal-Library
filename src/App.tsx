@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import { SettingsProvider } from './contexts/SettingsContext'
 import { ToastProvider, useToast } from './contexts/ToastContext'
+import { UpdaterProvider, useUpdater } from './contexts/UpdaterContext'
 import LibraryView from './components/Library/LibraryView'
 import ReaderView from './components/Reader/ReaderView'
 import StatsView from './components/Stats/StatsView'
@@ -12,15 +13,17 @@ import TagsView from './components/Library/TagsView'
 import ErrorBoundary from './components/ErrorBoundary'
 
 /** Subscribes to auto-updater events and surfaces them as Toast notifications.
- *  Must live inside ToastProvider so it can call useToast(). */
+ *  Must live inside ToastProvider and UpdaterProvider. */
 function UpdaterListener() {
   const { addToast, updateToast, removeToast } = useToast()
+  const { setPendingVersion } = useUpdater()
   const downloadToastId = useRef<string | null>(null)
 
   useEffect(() => {
     if (!window.api?.updater) return
 
     const unsubAvailable = window.api.updater.onUpdateAvailable(({ version }) => {
+      setPendingVersion(version)
       downloadToastId.current = addToast(
         `v${version} available — click to download`,
         'info',
@@ -30,7 +33,9 @@ function UpdaterListener() {
     })
 
     const unsubProgress = window.api.updater.onDownloadProgress(({ percent }) => {
-      if (downloadToastId.current) {
+      if (!downloadToastId.current) {
+        downloadToastId.current = addToast(`Downloading update… ${percent}%`, 'info')
+      } else {
         updateToast(downloadToastId.current, `Downloading update… ${percent}%`, 'info')
       }
     })
@@ -38,6 +43,7 @@ function UpdaterListener() {
     const unsubDownloaded = window.api.updater.onUpdateDownloaded(() => {
       if (downloadToastId.current) removeToast(downloadToastId.current)
       downloadToastId.current = null
+      setPendingVersion(null)
       addToast(
         'Update ready — click to restart',
         'success',
@@ -49,7 +55,6 @@ function UpdaterListener() {
     const unsubError = window.api.updater.onError(({ message }) => {
       if (downloadToastId.current) removeToast(downloadToastId.current)
       downloadToastId.current = null
-      // Suppress generic network errors — they're noisy and expected offline
       if (!message.includes('net::ERR_')) {
         addToast('Update check failed', 'error')
       }
@@ -70,6 +75,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <SettingsProvider>
+        <UpdaterProvider>
         <ToastProvider>
           <UpdaterListener />
           <Routes>
@@ -82,6 +88,7 @@ export default function App() {
             <Route path="/tags" element={<TagsView />} />
           </Routes>
         </ToastProvider>
+        </UpdaterProvider>
       </SettingsProvider>
     </ErrorBoundary>
   )

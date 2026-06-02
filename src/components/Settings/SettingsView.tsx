@@ -1,6 +1,7 @@
 import { useState, useId } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSettings } from '../../contexts/SettingsContext'
+import { useUpdater } from '../../contexts/UpdaterContext'
 import type { Theme, GridDensity, SortBy, CustomTheme } from '../../contexts/SettingsContext'
 import CustomSelect from '../ui/CustomSelect'
 import { backupService } from '../../services/backup'
@@ -207,6 +208,7 @@ const NEW_EDITOR: EditorState = { id: null, name: '', bg: '#1a1a1a', accent: '#7
 export default function SettingsView() {
   const navigate = useNavigate()
   const { settings, updateSettings } = useSettings()
+  const { pendingVersion, setPendingVersion } = useUpdater()
 
   const [exportState,   setExportState]   = useState<ExportState>('idle')
   const [exportMessage, setExportMessage] = useState('')
@@ -462,6 +464,27 @@ export default function SettingsView() {
             )}
           </div>
         </section>
+
+        {import.meta.env.DEV && (
+          <section className="settings-section">
+            <h2 className="settings-section-title">Developer</h2>
+            <div className="settings-row">
+              <div className="settings-row-stack">
+                <span className="settings-label">Simulate update notification</span>
+                <span className="settings-hint">Tests the sidebar update button and toast flow.</span>
+              </div>
+              {pendingVersion ? (
+                <button className="settings-action-btn settings-action-btn--ghost" onClick={() => setPendingVersion(null)}>
+                  Clear (v{pendingVersion})
+                </button>
+              ) : (
+                <button className="settings-action-btn" onClick={() => setPendingVersion('99.9.9')}>
+                  Simulate
+                </button>
+              )}
+            </div>
+          </section>
+        )}
 
       </div>
     </div>
