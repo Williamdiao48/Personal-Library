@@ -73,14 +73,6 @@ ALTER TABLE items ADD COLUMN chapter_end INTEGER DEFAULT NULL;`,
   `,
   11: `ALTER TABLE progress ADD COLUMN max_scroll_position REAL DEFAULT NULL;`,
   12: `CREATE INDEX IF NOT EXISTS idx_item_tags_item_id ON item_tags(item_id);`,
-  14: `
-    ALTER TABLE annotations ADD COLUMN sort_order INTEGER DEFAULT NULL;
-    UPDATE annotations SET sort_order = rowid;
-  `,
-  15: `ALTER TABLE items ADD COLUMN deleted_at INTEGER;`,
-  16: `ALTER TABLE collection_items ADD COLUMN sort_order INTEGER DEFAULT NULL;`,
-  17: `ALTER TABLE items ADD COLUMN rating REAL DEFAULT NULL;
-ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   13: `
     CREATE TABLE IF NOT EXISTS annotations (
       id             TEXT    PRIMARY KEY,
@@ -98,6 +90,14 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
     CREATE INDEX IF NOT EXISTS idx_annotations_item_id
       ON annotations(item_id, chapter_index, position);
   `,
+  14: `
+    ALTER TABLE annotations ADD COLUMN sort_order INTEGER DEFAULT NULL;
+    UPDATE annotations SET sort_order = rowid;
+  `,
+  15: `ALTER TABLE items ADD COLUMN deleted_at INTEGER;`,
+  16: `ALTER TABLE collection_items ADD COLUMN sort_order INTEGER DEFAULT NULL;`,
+  17: `ALTER TABLE items ADD COLUMN rating REAL DEFAULT NULL;
+ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
 }
 
 export function initDatabase(): void {

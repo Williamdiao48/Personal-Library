@@ -143,6 +143,8 @@ export function registerLibraryHandlers(): void {
       SELECT it.item_id, it.tag_id, t.name, t.color
       FROM item_tags it
       JOIN tags t ON t.id = it.tag_id
+      JOIN items i ON i.id = it.item_id
+      WHERE i.deleted_at IS NULL
     `)
   })
 
@@ -191,9 +193,13 @@ export function registerLibraryHandlers(): void {
   })
 
   ipcMain.handle('tags:getItemCounts', () => {
-    return all<{ tag_id: string; count: number }>(
-      'SELECT tag_id, COUNT(*) AS count FROM item_tags GROUP BY tag_id'
-    )
+    return all<{ tag_id: string; count: number }>(`
+      SELECT it.tag_id, COUNT(*) AS count
+      FROM item_tags it
+      JOIN items i ON i.id = it.item_id
+      WHERE i.deleted_at IS NULL
+      GROUP BY it.tag_id
+    `)
   })
 
   // ── Cover image management ─────────────────────────────────────
@@ -249,11 +255,11 @@ export function registerLibraryHandlers(): void {
   })
 
   ipcMain.handle('library:setRating', (_e, id: string, rating: number | null) => {
-    run('UPDATE items SET rating = ? WHERE id = ?', [rating, id])
+    run('UPDATE items SET rating = ?, date_modified = ? WHERE id = ?', [rating, Date.now(), id])
   })
 
   ipcMain.handle('library:setReview', (_e, id: string, review: string | null) => {
-    run('UPDATE items SET review = ? WHERE id = ?', [review, id])
+    run('UPDATE items SET review = ?, date_modified = ? WHERE id = ?', [review, Date.now(), id])
   })
 
   ipcMain.handle('library:findBySourceUrl', (_e, url: string) => {

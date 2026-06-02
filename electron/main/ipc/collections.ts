@@ -30,14 +30,17 @@ export function registerCollectionHandlers(): void {
       SELECT ci.item_id, ci.collection_id, c.name
       FROM collection_items ci
       JOIN collections c ON c.id = ci.collection_id
+      JOIN items i ON i.id = ci.item_id
+      WHERE i.deleted_at IS NULL
     `)
   })
 
   ipcMain.handle('collections:getItems', (_e, collectionId: string) => {
     return all<Item>(`
-      SELECT i.*
+      SELECT i.*, p.scroll_position, p.last_read_at, p.scroll_chapter, p.scroll_y, p.status
       FROM items i
       JOIN collection_items ci ON ci.item_id = i.id
+      LEFT JOIN progress p ON p.item_id = i.id
       WHERE ci.collection_id = ? AND i.deleted_at IS NULL
       ORDER BY ci.sort_order ASC NULLS LAST, ci.rowid ASC
     `, [collectionId])
@@ -67,11 +70,18 @@ export function registerCollectionHandlers(): void {
 
   ipcMain.handle('collections:setForItem', (_e, itemId: string, collectionIds: string[]) => {
     const db = getDb()
+    const existing = db.prepare(
+      'SELECT collection_id, sort_order FROM collection_items WHERE item_id = ?'
+    ).all([itemId]) as { collection_id: string; sort_order: number | null }[]
+    const savedOrders = new Map(existing.map(r => [r.collection_id, r.sort_order]))
+
     const deleteExisting = db.prepare('DELETE FROM collection_items WHERE item_id = ?')
-    const insert = db.prepare('INSERT OR IGNORE INTO collection_items (collection_id, item_id) VALUES (?, ?)')
+    const insert = db.prepare(
+      'INSERT OR IGNORE INTO collection_items (collection_id, item_id, sort_order) VALUES (?, ?, ?)'
+    )
     db.transaction(() => {
       deleteExisting.run(itemId)
-      for (const cid of collectionIds) insert.run(cid, itemId)
+      for (const cid of collectionIds) insert.run(cid, itemId, savedOrders.get(cid) ?? null)
     })()
   })
 }

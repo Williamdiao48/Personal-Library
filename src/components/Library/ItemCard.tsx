@@ -189,7 +189,7 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
 
   const card = (
     <div
-      className={`item-card${confirming ? ' item-card--confirming' : ''}${isSelected ? ' item-card--selected' : ''}`}
+      className={`item-card${confirming ? ' item-card--confirming' : ''}${isSelected ? ' item-card--selected' : ''}${(menuOpen || statusMenuOpen) ? ' item-card--has-dropdown' : ''}`}
       onClick={confirming ? undefined : e => onClick(e)}
     >
       <div

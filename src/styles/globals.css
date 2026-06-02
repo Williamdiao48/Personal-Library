@@ -815,7 +815,7 @@ html, body, #root {
   text-align: left;
   transition: border-color var(--t-fast), transform var(--t-mid);
   will-change: transform;
-  contain: layout style paint;
+  contain: layout style;
   user-select: none;
 }
 
@@ -841,6 +841,10 @@ html, body, #root {
 
 .item-card:hover::after {
   opacity: 1;
+}
+
+.item-card--has-dropdown {
+  z-index: 10;
 }
 
 .item-card--confirming {

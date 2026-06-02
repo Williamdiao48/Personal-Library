@@ -95,6 +95,7 @@ export default function CollectionView() {
   const [trashedCount, setTrashedCount]   = useState(0)
   const [allLibraryItems, setAllLibraryItems] = useState<Item[]>([])
   const [loading, setLoading]             = useState(true)
+  const [loadError, setLoadError]         = useState<string | null>(null)
 
   // ── Filter / search / sort ───────────────────────────────────────
   const [searchQuery, setSearchQuery]     = useState('')
@@ -180,8 +181,45 @@ export default function CollectionView() {
       setCollectionItemCounts(counts)
 
       if (its.length > 0) collectionService.reorderItems(id, its.map(i => i.id))
+    }).catch(err => {
+      setLoadError(err instanceof Error ? err.message : 'Failed to load collection.')
     }).finally(() => setLoading(false))
   }, [id])
+
+  async function refreshTagData() {
+    const [tags, itemTags] = await Promise.all([
+      tagService.getAll(),
+      libraryService.getAllItemTags(),
+    ])
+    const tagById = Object.fromEntries(tags.map(t => [t.id, t]))
+    const tagsMap: Record<string, Tag[]> = {}
+    const tagIdsMap: Record<string, Set<string>> = {}
+    for (const { item_id, tag_id } of itemTags) {
+      if (!tagsMap[item_id]) { tagsMap[item_id] = []; tagIdsMap[item_id] = new Set() }
+      if (tagById[tag_id]) tagsMap[item_id].push(tagById[tag_id])
+      tagIdsMap[item_id].add(tag_id)
+    }
+    setAllTags(tags)
+    setItemTagsMap(tagsMap)
+    setItemTagIdsMap(tagIdsMap)
+  }
+
+  async function refreshCollectionData() {
+    const [cols, itemCols] = await Promise.all([
+      collectionService.getAll(),
+      collectionService.getAllItemCollections(),
+    ])
+    const colIdsMap: Record<string, Set<string>> = {}
+    const counts: Record<string, number> = {}
+    for (const { item_id, collection_id } of itemCols) {
+      if (!colIdsMap[item_id]) colIdsMap[item_id] = new Set()
+      colIdsMap[item_id].add(collection_id)
+      counts[collection_id] = (counts[collection_id] ?? 0) + 1
+    }
+    setAllCollections(cols)
+    setItemCollectionIdsMap(colIdsMap)
+    setCollectionItemCounts(counts)
+  }
 
   // ── Sidebar collection handlers ──────────────────────────────────
   const handleCollectionCreate = useCallback(async (name: string) => {
@@ -397,6 +435,8 @@ export default function CollectionView() {
 
         {loading ? (
           <div className="library-state-center"><p className="state-text">Loading…</p></div>
+        ) : loadError ? (
+          <div className="library-state-center"><p className="state-text">Failed to load collection: {loadError}</p></div>
         ) : items.length === 0 ? (
           <div className="library-state-center">
             <div className="empty-state">
@@ -436,7 +476,10 @@ export default function CollectionView() {
                       libraryService.setAuthor(item.id, author)
                       updateItem(item.id, { author: author ?? undefined })
                     }}
-                    onStatusChange={() => {}}
+                    onStatusChange={async (status) => {
+                      await libraryService.setStatus(item.id, status)
+                      updateItem(item.id, { status })
+                    }}
                     onCoverChange={(cover_path) => updateItem(item.id, { cover_path })}
                     onTagClick={(tagId) => navigate(`/?tag=${tagId}`)}
                     onAuthorClick={(author) => navigate(`/?author=${encodeURIComponent(author)}`)}
@@ -484,7 +527,7 @@ export default function CollectionView() {
           itemTitle={tagsModalItem.title}
           allTags={allTags}
           itemTagIds={itemTagIdsMap[tagsModalItem.id] ?? new Set()}
-          onClose={() => setTagsModalItem(null)}
+          onClose={() => { setTagsModalItem(null); refreshTagData() }}
         />
       )}
 
@@ -494,7 +537,7 @@ export default function CollectionView() {
           itemTitle={collectionsModalItem.title}
           allCollections={allCollections}
           itemCollectionIds={itemCollectionIdsMap[collectionsModalItem.id] ?? new Set()}
-          onClose={() => setCollectionsModalItem(null)}
+          onClose={() => { setCollectionsModalItem(null); refreshCollectionData() }}
         />
       )}
 
