@@ -502,8 +502,8 @@ export default function CollectionView() {
         <ReviewModal
           item={reviewModalItem}
           onClose={() => setReviewModalItem(null)}
-          onSave={(review) => {
-            updateItem(reviewModalItem.id, { review })
+          onSave={(review, rating) => {
+            updateItem(reviewModalItem.id, { review, rating })
             setReviewModalItem(null)
           }}
         />

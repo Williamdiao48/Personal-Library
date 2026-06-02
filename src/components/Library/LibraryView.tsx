@@ -1114,8 +1114,8 @@ export default function LibraryView() {
         <ReviewModal
           item={reviewModalItem}
           onClose={() => setReviewModalItem(null)}
-          onSave={(review) => {
-            setItems(prev => prev.map(i => i.id === reviewModalItem.id ? { ...i, review } : i))
+          onSave={(review, rating) => {
+            setItems(prev => prev.map(i => i.id === reviewModalItem.id ? { ...i, review, rating } : i))
             setReviewModalItem(null)
           }}
         />
