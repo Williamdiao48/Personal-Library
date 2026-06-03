@@ -12,6 +12,7 @@ export const collectionService = {
   getItems:             (id: string)                    => window.api.collections.getItems(id),
   reorderItems:         (id: string, ids: string[])     => window.api.collections.reorderItems(id, ids),
   addItem:              (id: string, itemId: string)    => window.api.collections.addItem(id, itemId),
+  removeItem:           (id: string, itemId: string)   => window.api.collections.removeItem(id, itemId),
 }
 
 export const libraryService = {

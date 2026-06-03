@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld('api', {
     getItems:             (id: string)                    => ipcRenderer.invoke('collections:getItems', id),
     reorderItems:         (id: string, itemIds: string[]) => ipcRenderer.invoke('collections:reorderItems', id, itemIds),
     addItem:              (id: string, itemId: string)    => ipcRenderer.invoke('collections:addItem', id, itemId),
+    removeItem:           (id: string, itemId: string)    => ipcRenderer.invoke('collections:removeItem', id, itemId),
   },
 
   // PDF → EPUB conversion

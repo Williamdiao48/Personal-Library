@@ -53,9 +53,10 @@ interface Props {
   onAppend?: () => void
   onRatingChange: (rating: number | null) => void
   onWriteReview: () => void
+  onRemoveFromCollection?: () => void
 }
 
-function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpenSource, onTogglePreferred, onEditTags, onEditCollections, onCoverChange, onAuthorChange, onTitleChange, onStatusChange, onTagClick, onAuthorClick, onRefresh, onAppend, onRatingChange, onWriteReview }: Props) {
+function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpenSource, onTogglePreferred, onEditTags, onEditCollections, onCoverChange, onAuthorChange, onTitleChange, onStatusChange, onTagClick, onAuthorClick, onRefresh, onAppend, onRatingChange, onWriteReview, onRemoveFromCollection }: Props) {
   const [confirming, setConfirming]   = useState(false)
   const [deleting, setDeleting]       = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -369,9 +370,15 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
                   </button>
                 </>
               )}
-              <button className="item-card-dropdown-item" onClick={e => { e.stopPropagation(); setMenuOpen(false); onEditCollections() }}>
-                Add to collection
-              </button>
+              {onRemoveFromCollection ? (
+                <button className="item-card-dropdown-item" onClick={e => { e.stopPropagation(); setMenuOpen(false); onRemoveFromCollection() }}>
+                  Remove from collection
+                </button>
+              ) : (
+                <button className="item-card-dropdown-item" onClick={e => { e.stopPropagation(); setMenuOpen(false); onEditCollections() }}>
+                  Add to collection
+                </button>
+              )}
               <button className="item-card-dropdown-item" onClick={e => { e.stopPropagation(); setMenuOpen(false); onEditTags() }}>
                 Edit tags
               </button>

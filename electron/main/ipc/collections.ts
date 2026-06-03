@@ -58,6 +58,10 @@ export function registerCollectionHandlers(): void {
     })()
   })
 
+  ipcMain.handle('collections:removeItem', (_e, collectionId: string, itemId: string) => {
+    run('DELETE FROM collection_items WHERE collection_id = ? AND item_id = ?', [collectionId, itemId])
+  })
+
   ipcMain.handle('collections:reorderItems', (_e, collectionId: string, itemIds: string[]) => {
     const db = getDb()
     const stmt = db.prepare(

@@ -13,7 +13,6 @@ import { tagService } from '../../services/library'
 import ItemCard from './ItemCard'
 import Sidebar from './Sidebar'
 import TagsModal from './TagsModal'
-import CollectionsModal from './CollectionsModal'
 import ReviewModal from './ReviewModal'
 import AddToCollectionModal from './AddToCollectionModal'
 import CustomSelect from '../ui/CustomSelect'
@@ -46,7 +45,7 @@ interface SortableCardProps {
   onClick: (e: React.MouseEvent) => void
   onDelete: () => Promise<void>
   onEditTags: () => void
-  onEditCollections: () => void
+  onRemoveFromCollection: () => void
   onTitleChange: (title: string) => void
   onAuthorChange: (author: string | null) => void
   onStatusChange: (status: ReadingStatus | null) => void
@@ -90,7 +89,6 @@ export default function CollectionView() {
   const [itemTagsMap, setItemTagsMap]     = useState<Record<string, Tag[]>>({})
   const [itemTagIdsMap, setItemTagIdsMap] = useState<Record<string, Set<string>>>({})
   const [allCollections, setAllCollections]             = useState<Collection[]>([])
-  const [itemCollectionIdsMap, setItemCollectionIdsMap] = useState<Record<string, Set<string>>>({})
   const [collectionItemCounts, setCollectionItemCounts] = useState<Record<string, number>>({})
   const [trashedCount, setTrashedCount]   = useState(0)
   const [allLibraryItems, setAllLibraryItems] = useState<Item[]>([])
@@ -130,9 +128,8 @@ export default function CollectionView() {
 
   // ── Modals ───────────────────────────────────────────────────────
   const [showAddModal, setShowAddModal]               = useState(false)
-  const [tagsModalItem, setTagsModalItem]               = useState<Item | null>(null)
-  const [collectionsModalItem, setCollectionsModalItem] = useState<Item | null>(null)
-  const [reviewModalItem, setReviewModalItem]           = useState<Item | null>(null)
+  const [tagsModalItem, setTagsModalItem]   = useState<Item | null>(null)
+  const [reviewModalItem, setReviewModalItem] = useState<Item | null>(null)
 
   // ── Debounce search ─────────────────────────────────────────────
   useEffect(() => {
@@ -170,14 +167,10 @@ export default function CollectionView() {
       setItemTagsMap(tagsMap)
       setItemTagIdsMap(tagIdsMap)
 
-      const colIdsMap: Record<string, Set<string>> = {}
       const counts: Record<string, number> = {}
-      for (const { item_id, collection_id } of itemCols) {
-        if (!colIdsMap[item_id]) colIdsMap[item_id] = new Set()
-        colIdsMap[item_id].add(collection_id)
+      for (const { collection_id } of itemCols) {
         counts[collection_id] = (counts[collection_id] ?? 0) + 1
       }
-      setItemCollectionIdsMap(colIdsMap)
       setCollectionItemCounts(counts)
 
       if (its.length > 0) collectionService.reorderItems(id, its.map(i => i.id))
@@ -204,22 +197,6 @@ export default function CollectionView() {
     setItemTagIdsMap(tagIdsMap)
   }
 
-  async function refreshCollectionData() {
-    const [cols, itemCols] = await Promise.all([
-      collectionService.getAll(),
-      collectionService.getAllItemCollections(),
-    ])
-    const colIdsMap: Record<string, Set<string>> = {}
-    const counts: Record<string, number> = {}
-    for (const { item_id, collection_id } of itemCols) {
-      if (!colIdsMap[item_id]) colIdsMap[item_id] = new Set()
-      colIdsMap[item_id].add(collection_id)
-      counts[collection_id] = (counts[collection_id] ?? 0) + 1
-    }
-    setAllCollections(cols)
-    setItemCollectionIdsMap(colIdsMap)
-    setCollectionItemCounts(counts)
-  }
 
   // ── Sidebar collection handlers ──────────────────────────────────
   const handleCollectionCreate = useCallback(async (name: string) => {
@@ -467,7 +444,10 @@ export default function CollectionView() {
                       setItems(prev => prev.filter(i => i.id !== item.id))
                     }}
                     onEditTags={() => setTagsModalItem(item)}
-                    onEditCollections={() => setCollectionsModalItem(item)}
+                    onRemoveFromCollection={async () => {
+                      await collectionService.removeItem(id!, item.id)
+                      setItems(prev => prev.filter(i => i.id !== item.id))
+                    }}
                     onTitleChange={(title) => {
                       libraryService.setTitle(item.id, title)
                       updateItem(item.id, { title })
@@ -500,7 +480,7 @@ export default function CollectionView() {
                     item={activeItem}
                     tags={itemTagsMap[activeItem.id] ?? []}
                     onClick={() => {}} onDelete={async () => {}} onEditTags={() => {}}
-                    onEditCollections={() => {}} onTitleChange={() => {}} onAuthorChange={() => {}}
+                    onTitleChange={() => {}} onAuthorChange={() => {}}
                     onStatusChange={() => {}} onCoverChange={() => {}} onTagClick={() => {}} onAuthorClick={() => {}}
                     onRatingChange={() => {}} onWriteReview={() => {}}
                   />
@@ -531,15 +511,6 @@ export default function CollectionView() {
         />
       )}
 
-      {collectionsModalItem && (
-        <CollectionsModal
-          itemId={collectionsModalItem.id}
-          itemTitle={collectionsModalItem.title}
-          allCollections={allCollections}
-          itemCollectionIds={itemCollectionIdsMap[collectionsModalItem.id] ?? new Set()}
-          onClose={() => { setCollectionsModalItem(null); refreshCollectionData() }}
-        />
-      )}
 
       {reviewModalItem && (
         <ReviewModal
