@@ -3,7 +3,22 @@
 .html-reader {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 48px 24px 96px;
+  overflow-wrap: break-word;
+}
+
+.html-reader table {
+  max-width: 100%;
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.html-reader td,
+.html-reader th {
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .html-reader > * {

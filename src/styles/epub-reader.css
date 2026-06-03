@@ -55,9 +55,11 @@
 
 /* ── Column-break control ───────────────────────────────────────────────── */
 
-/* Keep these block elements on one page whenever possible */
-.epub-page-content p,
-.epub-page-content blockquote,
+/* Prevent media and structured data from splitting mid-element.
+   Paragraphs and blockquotes are intentionally omitted — they can be
+   very tall in Calibre-converted EPUBs (e.g. a full TOC as one blockquote)
+   and break-inside: avoid on a too-tall element causes Chromium to overflow
+   it past the column boundary, displacing all subsequent pages. */
 .epub-page-content figure,
 .epub-page-content pre,
 .epub-page-content table,

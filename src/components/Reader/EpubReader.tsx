@@ -65,6 +65,7 @@ export default function EpubReader({ item, onBack }: Props) {
   const [page,         setPage]         = useState(0)
   const [totalPages,   setTotalPages]   = useState(1)
   const [outerWidth,   setOuterWidth]   = useState(0)
+  const [outerHeight,  setOuterHeight]  = useState(0)
   const [noTransition, setNoTransition] = useState(false)
   const [loading,      setLoading]      = useState(true)
   const [error,        setError]        = useState<string | null>(null)
@@ -335,12 +336,15 @@ export default function EpubReader({ item, onBack }: Props) {
     const w = el.clientWidth
     outerWidthRef.current = w
     setOuterWidth(w)
+    setOuterHeight(el.clientHeight)
 
     const ro = new ResizeObserver(([entry]) => {
       setNoTransition(true)
       const newW = Math.round(entry.contentRect.width)
+      const newH = Math.round(entry.contentRect.height)
       outerWidthRef.current = newW
       setOuterWidth(newW)
+      setOuterHeight(newH)
     })
     ro.observe(el)
     return () => ro.disconnect()
@@ -378,7 +382,7 @@ export default function EpubReader({ item, onBack }: Props) {
     })
 
     return () => cancelAnimationFrame(rafId)
-  }, [chapter, book, outerWidth, fontSize, fontFamily])
+  }, [chapter, book, outerWidth, outerHeight, fontSize, fontFamily])
 
   // ── 3c. Persist within-chapter page to localStorage ─────────────
   // The DB only stores the chapter fraction; localStorage adds page granularity.
@@ -454,7 +458,7 @@ export default function EpubReader({ item, onBack }: Props) {
       cancelAnimationFrame(rafId)
       if (document.body.contains(el)) document.body.removeChild(el)
     }
-  }, [book, outerWidth, fontSize, fontFamily, lineHeight, colPadding])
+  }, [book, outerWidth, outerHeight, fontSize, fontFamily, lineHeight, colPadding])
 
   // ── 4. xAnim state machine ─────────────────────────────────────
 

@@ -247,7 +247,9 @@ html, body, #root {
 
 .library-main {
   flex: 1;
+  min-width: 0;        /* allow flex item to shrink below content width */
   overflow-y: auto;
+  overflow-x: hidden;  /* clip instead of creating a horizontal scrollbar */
   padding: 32px;
   /* Top padding makes room for macOS traffic lights (hiddenInset titlebar) */
   padding-top: 48px;
