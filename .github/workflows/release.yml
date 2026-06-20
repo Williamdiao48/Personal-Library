@@ -34,13 +34,25 @@ jobs:
         run: npm ci
 
       - name: Rebuild native modules
-        run: npx electron-rebuild -f -w better-sqlite3
+        run: |
+          if [ "${{ matrix.platform }}" = "mac" ]; then
+            npx electron-rebuild -f -w better-sqlite3 --arch universal
+          else
+            npx electron-rebuild -f -w better-sqlite3
+          fi
+        shell: bash
 
       - name: Build
         run: npm run build
 
       - name: Package & Publish (${{ matrix.platform }})
-        run: npx electron-builder --${{ matrix.platform }} --publish always
+        run: |
+          if [ "${{ matrix.platform }}" = "mac" ]; then
+            npx electron-builder --mac --arch universal --publish always
+          else
+            npx electron-builder --${{ matrix.platform }} --publish always
+          fi
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # To enable code signing, add secrets to GitHub and uncomment:

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, net } from 'electron'
+import { app, BrowserWindow, protocol, net, dialog } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { join, resolve, sep } from 'path'
 import { initDatabase } from './db'
@@ -148,18 +148,27 @@ app.whenReady().then(() => {
     })
   })
 
-  initDatabase()
-  registerLibraryHandlers()
-  registerCaptureHandlers()
-  registerReaderHandlers()
-  registerCollectionHandlers()
-  registerConvertHandlers()
-  registerStatsHandlers()
-  registerGoalsHandlers()
-  registerAnnotationHandlers()
-  registerUpdaterHandlers()
-  registerBackupHandlers()
-  registerLogHandlers()
+  try {
+    initDatabase()
+    registerLibraryHandlers()
+    registerCaptureHandlers()
+    registerReaderHandlers()
+    registerCollectionHandlers()
+    registerConvertHandlers()
+    registerStatsHandlers()
+    registerGoalsHandlers()
+    registerAnnotationHandlers()
+    registerUpdaterHandlers()
+    registerBackupHandlers()
+    registerLogHandlers()
+  } catch (err) {
+    dialog.showErrorBox(
+      'Personal Library failed to start',
+      `Startup error: ${err instanceof Error ? err.message : String(err)}\n\nIf this keeps happening, delete ~/Library/Application Support/personal-library/library.db and relaunch.`
+    )
+    app.quit()
+    return
+  }
 
   createWindow()
 
