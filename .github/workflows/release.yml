@@ -33,6 +33,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Python setuptools (node-gyp needs distutils, removed in Python 3.12)
+        if: matrix.platform == 'mac'
+        run: pip3 install setuptools
+
       - name: Rebuild native modules
         run: |
           if [ "${{ matrix.platform }}" = "mac" ]; then
