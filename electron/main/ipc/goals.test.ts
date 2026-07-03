@@ -69,8 +69,8 @@ describe('goals IPC — progress computation', () => {
   })
 
   it('list goal reports finished/total and groups a PDF with its derived EPUB', async () => {
-    const pdf = seedItem(db, { id: 'pdf', title: 'Book' })
-    const epub = seedItem(db, { id: 'epub', title: 'Book (EPUB)' })
+    seedItem(db, { id: 'pdf', title: 'Book' })
+    seedItem(db, { id: 'epub', title: 'Book (EPUB)' })
     db.prepare('UPDATE items SET derived_from = ? WHERE id = ?').run('pdf', 'epub')
     setProgress('epub', { scroll: 1 }) // finished via the derived member
 
