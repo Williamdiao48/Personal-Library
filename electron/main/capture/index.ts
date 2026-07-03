@@ -17,8 +17,9 @@ import { captureXenForo, getXenForoChapterCount } from './sites/forums'
 import { captureUniversal } from './sites/universal'
 import { parseEpubMetadata } from './parsers/epub'
 import { extractEpubContent } from './parsers/epub-content'
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = (require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>)
+import { safeContentPath } from '../security/paths'
+import { assertImportFile } from '../security/validation'
+import { PDFParse } from 'pdf-parse'
 
 // Fast non-crypto content hash — same algorithm as in library.ts.
 function computeContentHash(text: string): string {
@@ -218,7 +219,7 @@ export async function appendChapters(
   onProgress?: (msg: string) => void,
 ): Promise<CaptureResult> {
   const db = getDb()
-  const contentDir = getContentDir()
+  getContentDir() // ensure <userData>/content exists; paths resolved via safeContentPath
 
   type Row = {
     rowid:         number
@@ -260,7 +261,7 @@ export async function appendChapters(
     let chCount = 0
     while (true) {
       try {
-        readFileSync(join(contentDir, `${uuidBase}-ch${chCount}.html`), 'utf8')
+        readFileSync(safeContentPath(`${uuidBase}-ch${chCount}.html`), 'utf8')
         chCount++
       } catch { break }
     }
@@ -268,7 +269,7 @@ export async function appendChapters(
     // Read existing text from all chapter files for FTS update
     for (let i = 0; i < chCount; i++) {
       try {
-        const chHtml = readFileSync(join(contentDir, `${uuidBase}-ch${chCount - 1 - i}.html`), 'utf8')
+        const chHtml = readFileSync(safeContentPath(`${uuidBase}-ch${chCount - 1 - i}.html`), 'utf8')
         existingText += new JSDOM(chHtml).window.document.body?.textContent ?? ''
         existingText += ' '
       } catch {}
@@ -278,11 +279,11 @@ export async function appendChapters(
     const newChapterDivs = extractChapterDivs(newContent.html)
     if (newChapterDivs.length > 0) {
       for (let i = 0; i < newChapterDivs.length; i++) {
-        writeFileSync(join(contentDir, `${uuidBase}-ch${chCount + i}.html`), newChapterDivs[i], 'utf8')
+        writeFileSync(safeContentPath(`${uuidBase}-ch${chCount + i}.html`), newChapterDivs[i], 'utf8')
       }
     } else {
       // Fallback: treat entire new HTML as a single additional chapter
-      writeFileSync(join(contentDir, `${uuidBase}-ch${chCount}.html`), newContent.html, 'utf8')
+      writeFileSync(safeContentPath(`${uuidBase}-ch${chCount}.html`), newContent.html, 'utf8')
     }
 
     const combinedText = existingText + ' ' + newContent.textContent
@@ -306,14 +307,14 @@ export async function appendChapters(
     return { id: itemId, title: item.title, author: item.author, wordCount: newWordCount }
   }
 
-  const existingHtml = readFileSync(join(contentDir, item.file_path), 'utf8')
+  const existingHtml = readFileSync(safeContentPath(item.file_path), 'utf8')
   existingText = new JSDOM(existingHtml).window.document.body?.textContent ?? ''
 
   const combinedHtml = existingHtml + '\n' + newContent.html
   const combinedText = existingText + ' ' + newContent.textContent
   newWordCount = combinedText.split(/\s+/).filter(Boolean).length
 
-  writeFileSync(join(contentDir, item.file_path), combinedHtml, 'utf8')
+  writeFileSync(safeContentPath(item.file_path), combinedHtml, 'utf8')
 
   const now = Date.now()
   db.transaction(() => {
@@ -342,7 +343,10 @@ export async function captureFile(filePath: string): Promise<CaptureResult> {
   throw new Error(`Unsupported file type: .${ext}`)
 }
 
-function captureEpub(filePath: string): CaptureResult {
+async function captureEpub(filePath: string): Promise<CaptureResult> {
+  // Import-time gate: size cap + ZIP magic before any parse or copy (F2).
+  await assertImportFile(filePath, 'epub')
+
   const meta = parseEpubMetadata(filePath)
 
   // Extract text from all chapters for word count and FTS indexing
@@ -401,6 +405,9 @@ function captureEpub(filePath: string): CaptureResult {
 }
 
 async function capturePdf(filePath: string): Promise<CaptureResult> {
+  // Import-time gate: size cap + %PDF- magic before any parse or copy (F2).
+  await assertImportFile(filePath, 'pdf')
+
   const id = randomUUID()
   const contentDir = getContentDir()
 
@@ -416,9 +423,22 @@ async function capturePdf(filePath: string): Promise<CaptureResult> {
   let plainText = ''
   try {
     const buffer = readFileSync(filePath)
-    const data = await pdfParse(buffer)
-    plainText = data.text
-    wordCount = plainText.split(/\s+/).filter(Boolean).length
+    // pdf-parse v2 is class-based; harden the pdf.js sandbox it drives (F3).
+    // (The audited CVE-2024-4367 is already fixed in the bundled pdfjs 5.4.x;
+    // these flags are defense-in-depth against future font/eval/XFA issues.)
+    const parser = new PDFParse({
+      data:            buffer,
+      isEvalSupported: false,  // no eval() in the pdf.js worker
+      disableFontFace: true,   // no external font fetching
+      enableXfa:       false,  // no XFA form scripting
+    })
+    try {
+      const { text } = await parser.getText()
+      plainText = text
+      wordCount = plainText.split(/\s+/).filter(Boolean).length
+    } finally {
+      await parser.destroy()
+    }
   } catch {
     // Proceed with null word count for scanned/encrypted PDFs
   }

@@ -1,5 +1,6 @@
 import AdmZip from 'adm-zip'
 import { extname } from 'path'
+import { readEntryTextCapped, assertEntryInflateOk } from '../../security/validation'
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -18,12 +19,12 @@ export function parseEpubMetadata(filePath: string): EpubMetadata {
     const zip = new AdmZip(filePath)
 
     // Find the OPF file path via META-INF/container.xml
-    const containerXml = zip.readAsText('META-INF/container.xml')
+    const containerXml = readEntryTextCapped(zip, 'META-INF/container.xml') ?? ''
     const opfPathMatch = /full-path="([^"]+\.opf)"/i.exec(containerXml)
     if (!opfPathMatch) return empty
 
     const opfPath = opfPathMatch[1]
-    const opfContent = zip.readAsText(opfPath)
+    const opfContent = readEntryTextCapped(zip, opfPath) ?? ''
 
     // Extract title and author from Dublin Core elements
     const title  = /<dc:title[^>]*>([^<]+)<\/dc:title>/i.exec(opfContent)?.[1]?.trim() ?? null
@@ -57,6 +58,7 @@ export function parseEpubMetadata(filePath: string): EpubMetadata {
       const coverZipPath = coverHref.startsWith('/') ? coverHref.slice(1) : opfDir + coverHref
       const entry = zip.getEntry(coverZipPath)
       if (entry) {
+        assertEntryInflateOk(entry)
         coverBuffer = entry.getData()
         const rawExt = extname(coverHref).slice(1).toLowerCase()
         const allowed = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp'])

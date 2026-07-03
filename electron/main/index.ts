@@ -1,7 +1,8 @@
 import { app, BrowserWindow, protocol, net, dialog } from 'electron'
 import { autoUpdater } from 'electron-updater'
-import { join, resolve, sep } from 'path'
+import { join } from 'path'
 import { initDatabase } from './db'
+import { safeUserDataPath } from './security/paths'
 import { registerLibraryHandlers } from './ipc/library'
 import { registerCaptureHandlers } from './ipc/capture'
 import { registerReaderHandlers } from './ipc/reader'
@@ -132,13 +133,14 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(() => {
   // Serve userData/* via library:// so the renderer can display cover images.
-  // Guard against path traversal: resolve the full path and ensure it stays
-  // inside userData (the same pattern used by reader.ts / safeFullPath).
-  const userData = app.getPath('userData')
+  // Guard against path traversal via the shared F1 helper (security/paths.ts),
+  // which resolves the path and refuses anything escaping userData.
   protocol.handle('library', (request) => {
     const relative = request.url.slice('library://'.length)
-    const filePath = resolve(join(userData, relative))
-    if (!filePath.startsWith(userData + sep)) {
+    let filePath: string
+    try {
+      filePath = safeUserDataPath(relative)
+    } catch {
       return new Response('Forbidden', { status: 403 })
     }
     return net.fetch(`file://${filePath}`).then(res => {

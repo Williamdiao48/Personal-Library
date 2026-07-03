@@ -1,5 +1,10 @@
 import AdmZip from 'adm-zip'
 import sanitizeHtml from 'sanitize-html'
+import {
+  readEntryTextCapped,
+  assertEntryInflateOk,
+  ZIP_TOTAL_MAX_BYTES,
+} from '../../security/validation'
 
 export interface EpubChapter { title: string; html: string }
 export interface EpubBook    { chapters: EpubChapter[] }
@@ -248,8 +253,9 @@ function buildTitleMap(
   for (const [, item] of manifest) {
     if (!item.mediaType.includes('xhtml')) continue
     const navZipPath = resolveZipPath(opfDir, item.href)
-    let navText: string
-    try { navText = zip.readAsText(navZipPath) } catch { continue }
+    let navText: string | null
+    try { navText = readEntryTextCapped(zip, navZipPath) } catch { continue }
+    if (!navText) continue
     if (!navText.includes('epub:type="toc"') && !navText.includes("epub:type='toc'")) continue
 
     // Extract <a href="...">Title</a> pairs from the toc nav (double or single quotes)
@@ -267,8 +273,9 @@ function buildTitleMap(
   for (const [, item] of manifest) {
     if (!item.mediaType.includes('ncx')) continue
     const ncxZipPath = resolveZipPath(opfDir, item.href)
-    let ncxText: string
-    try { ncxText = zip.readAsText(ncxZipPath) } catch { continue }
+    let ncxText: string | null
+    try { ncxText = readEntryTextCapped(zip, ncxZipPath) } catch { continue }
+    if (!ncxText) continue
 
     // Match <navPoint> blocks: extract content src and navLabel text
     const pointRegex = /<navPoint\b[\s\S]*?<\/navPoint>/gi
@@ -328,6 +335,10 @@ function inlineImages(xhtml: string, xhtmlDir: string, zip: AdmZip): string {
     const entry = zip.getEntry(zipPath)
     if (!entry) return `<img${stripSrc(attrs)}>`
 
+    // Reject a decompression-bomb image before materializing it. On any failure
+    // strip the src rather than aborting the whole book — consistent with how
+    // every other image error is handled here.
+    try { assertEntryInflateOk(entry) } catch { return `<img${stripSrc(attrs)}>` }
     const data = entry.getData()
     if (data.length > IMAGE_MAX_BYTES) return `<img${stripSrc(attrs)}>`
 
@@ -420,7 +431,7 @@ export function extractEpubContent(filePath: string): EpubBook {
   const zip = new AdmZip(filePath)
 
   // 1. Locate OPF via container.xml
-  const containerXml = zip.readAsText('META-INF/container.xml')
+  const containerXml = readEntryTextCapped(zip, 'META-INF/container.xml') ?? ''
   const opfPath = /full-path="([^"]+\.opf)"/i.exec(containerXml)?.[1]
   if (!opfPath) throw new Error('Invalid EPUB: cannot find OPF file in container.xml')
 
@@ -428,7 +439,7 @@ export function extractEpubContent(filePath: string): EpubBook {
     ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1)
     : ''
 
-  const opfContent = zip.readAsText(opfPath)
+  const opfContent = readEntryTextCapped(zip, opfPath) ?? ''
 
   // 2. Parse manifest and spine
   const manifest   = parseManifest(opfContent)
@@ -446,14 +457,15 @@ export function extractEpubContent(filePath: string): EpubBook {
   const spineHrefToIndex = new Map<string, number>()
   let outIdxPre = 0
   for (const href of spineHrefs) {
+    // Existence probe only (no decompression) — mirrors the main loop's
+    // "skip if missing" so output-chapter indices line up.
     const zp = resolveZipPath(opfDir, href)
-    if (zp) {
-      try { zip.readAsText(zp); spineHrefToIndex.set(zp, outIdxPre++) } catch { /* skip missing entries */ }
-    }
+    if (zp && zip.getEntry(zp)) spineHrefToIndex.set(zp, outIdxPre++)
   }
 
   // 5. Extract each chapter
   const chapters: EpubChapter[] = []
+  let totalInflated = 0
 
   for (let i = 0; i < spineHrefs.length; i++) {
     const href       = spineHrefs[i]
@@ -462,13 +474,19 @@ export function extractEpubContent(filePath: string): EpubBook {
       ? zipPath.slice(0, zipPath.lastIndexOf('/') + 1)
       : ''
 
-    let xhtml: string
-    try {
-      xhtml = zip.readAsText(zipPath)
-    } catch {
+    const entry = zip.getEntry(zipPath)
+    if (!entry) {
       console.warn(`[epub-content] Missing spine entry: ${zipPath} — skipping`)
       continue
     }
+    // Cap per-entry and aggregate decompressed size before materializing text.
+    // A bomb here throws and aborts the whole EPUB (rejected, not silently skipped).
+    assertEntryInflateOk(entry)
+    totalInflated += entry.header.size
+    if (totalInflated > ZIP_TOTAL_MAX_BYTES) {
+      throw new Error('EPUB total decompressed size exceeds the allowed maximum.')
+    }
+    const xhtml = entry.getData().toString('utf8')
 
     // Determine chapter title
     const fn    = filename(href)
