@@ -17,7 +17,12 @@ function extractChapter(doc: Document, chapterNum: number): { html: string; text
   const rawTitle = selectedOption?.textContent?.trim() ?? ''
   const chapterTitle = /^\d+\.\s+(.+)$/.exec(rawTitle)?.[1]?.trim() ?? `Chapter ${chapterNum}`
 
-  const content = doc.querySelector('#storytext')?.innerHTML ?? ''
+  // Sanitize the untrusted chapter body before wrapping it in the trusted
+  // div.chapter marker — sanitizing after wrapping would strip the class
+  // attribute (sanitizer.ts omits class/id to prevent clickjacking) and break
+  // multi-chapter file splitting (extractChapterDivs in capture/index.ts
+  // depends on div.chapter surviving to the saved HTML).
+  const content = sanitize(doc.querySelector('#storytext')?.innerHTML ?? '')
   const text    = doc.querySelector('#storytext')?.textContent ?? ''
 
   const html = `<div class="chapter">
@@ -134,7 +139,7 @@ export async function captureFfnet(
   return {
     title,
     author,
-    html: sanitize(chapterHtmlParts.join('\n')),
+    html: chapterHtmlParts.join('\n'), // each chapter's content already sanitized in extractChapter
     textContent: chapterTextParts.join(' '),
     coverUrl,
   }

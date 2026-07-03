@@ -336,9 +336,13 @@ function buildChapterBlock(chapter: ChapterData): string {
   )
 }
 
+// chapter.html is already sanitized per-chapter in readChapterPage — do not
+// re-sanitize the assembled string, since sanitizer.ts omits class/id (to
+// prevent clickjacking) and would strip the div.chapter marker that
+// extractChapterDivs (capture/index.ts) depends on to split chapter files.
 function assembleChapters(chapters: ChapterData[]): Pick<SiteContent, 'html' | 'textContent'> {
   return {
-    html:        sanitize(chapters.map(buildChapterBlock).join('\n')),
+    html:        chapters.map(buildChapterBlock).join('\n'),
     textContent: chapters.map(c => c.text).join(' '),
   }
 }

@@ -103,11 +103,16 @@ export async function captureAo3(
   // ── Slice to range and assemble ───────────────────────────────────────────
   const rangedEls = range ? allChapterEls.slice(range.start - 1, range.end) : allChapterEls
 
+  // Sanitize each chapter's untrusted content individually, then wrap it in
+  // the trusted div.chapter marker AFTER sanitizing — sanitizing the fully
+  // assembled string would strip the class attribute (sanitizer.ts omits
+  // class/id to prevent clickjacking) and break multi-chapter file splitting
+  // (extractChapterDivs in capture/index.ts depends on div.chapter surviving).
   let assembled: string
   if (rangedEls.length > 1) {
     assembled = rangedEls.map((el, i) => {
       const chapterTitle = el.querySelector('h3.title')?.textContent?.trim() ?? `Chapter ${(range?.start ?? 1) + i}`
-      const content      = el.querySelector('.userstuff')?.innerHTML ?? ''
+      const content      = sanitize(el.querySelector('.userstuff')?.innerHTML ?? '')
       return `<div class="chapter">
 <h2 class="chapter-title">${escHtml(chapterTitle)}</h2>
 <div class="chapter-content">${content}</div>
@@ -115,13 +120,13 @@ export async function captureAo3(
     }).join('\n')
   } else {
     const userstuff = page1Doc.querySelector('#chapters .userstuff, .userstuff[role="article"]')
-    assembled = userstuff?.innerHTML ?? ''
+    assembled = sanitize(userstuff?.innerHTML ?? '')
   }
 
   return {
     title,
     author,
-    html:        sanitize(assembled),
+    html:        assembled,
     textContent: textParts.join(' '),
     coverUrl,
   }

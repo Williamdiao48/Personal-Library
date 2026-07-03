@@ -125,9 +125,15 @@ export async function captureWattpad(
     const cdoc = new JSDOM(rawHtml, { url: textUrls[i] }).window.document
     const text = cdoc.body?.textContent?.trim() ?? ''
     if (!text) continue
+    // Sanitize the untrusted chapter body here, before it's wrapped in the
+    // trusted div.chapter marker — sanitizing the fully assembled string
+    // would strip the class attribute (sanitizer.ts omits class/id to
+    // prevent clickjacking) and break multi-chapter file splitting
+    // (extractChapterDivs in capture/index.ts depends on div.chapter
+    // surviving to the saved HTML).
     chapters.push({
       title: rangedParts[i].title,
-      html:  cdoc.body?.innerHTML ?? rawHtml,
+      html:  sanitize(cdoc.body?.innerHTML ?? rawHtml),
       text,
     })
   }
@@ -143,7 +149,7 @@ export async function captureWattpad(
   return {
     title,
     author,
-    html:        sanitize(assembled),
+    html:        assembled,
     textContent: chapters.map(c => c.text).join(' '),
     coverUrl,
   }

@@ -77,7 +77,13 @@ export async function captureRoyalRoad(
       ?? `Chapter ${i + 1}`
     const content = cdoc.querySelector('.chapter-content')
     if (!content) continue
-    chapters.push({ title: chTitle, html: content.innerHTML, text: content.textContent ?? '' })
+    // Sanitize the untrusted chapter body here, before it's wrapped in the
+    // trusted div.chapter marker — sanitizing the fully assembled string
+    // would strip the class attribute (sanitizer.ts omits class/id to
+    // prevent clickjacking) and break multi-chapter file splitting
+    // (extractChapterDivs in capture/index.ts depends on div.chapter
+    // surviving to the saved HTML).
+    chapters.push({ title: chTitle, html: sanitize(content.innerHTML), text: content.textContent ?? '' })
   }
   if (chapters.length === 0) throw new Error('Could not extract Royal Road chapter content.')
 
@@ -91,7 +97,7 @@ export async function captureRoyalRoad(
   return {
     title,
     author,
-    html:        sanitize(assembled),
+    html:        assembled,
     textContent: chapters.map(c => c.text).join(' '),
     coverUrl,
   }

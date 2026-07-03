@@ -106,7 +106,13 @@ export async function captureScribbleHub(
       ?.textContent?.trim() ?? `Chapter ${i + 1}`
     const content = cdoc.querySelector('.chp-raw, .wi_fic_field')
     if (!content) continue
-    chapters.push({ title: chTitle, html: content.innerHTML, text: content.textContent ?? '' })
+    // Sanitize the untrusted chapter body here, before it's wrapped in the
+    // trusted div.chapter marker — sanitizing the fully assembled string
+    // would strip the class attribute (sanitizer.ts omits class/id to
+    // prevent clickjacking) and break multi-chapter file splitting
+    // (extractChapterDivs in capture/index.ts depends on div.chapter
+    // surviving to the saved HTML).
+    chapters.push({ title: chTitle, html: sanitize(content.innerHTML), text: content.textContent ?? '' })
   }
   if (chapters.length === 0) throw new Error('Could not extract Scribble Hub chapter content.')
 
@@ -120,7 +126,7 @@ export async function captureScribbleHub(
   return {
     title,
     author,
-    html:        sanitize(assembled),
+    html:        assembled,
     textContent: chapters.map(c => c.text).join(' '),
     coverUrl,
   }
