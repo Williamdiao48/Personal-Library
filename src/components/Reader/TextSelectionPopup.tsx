@@ -23,7 +23,7 @@ export default function TextSelectionPopup({ containerRef, onHighlight, onNote, 
   useEffect(() => {
     setPopup(null)
     window.getSelection()?.removeAllRanges()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [clearTrigger])
 
   const handleMouseUp = useCallback((e: MouseEvent) => {

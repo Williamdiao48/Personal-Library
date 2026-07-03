@@ -171,7 +171,7 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     const arr = new Array<Chapter | null>(lazyChapterCount!).fill(null)
     arr[0] = parseSingleChapter(content, 0)
     setLazyChapters(arr)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [content, isLazy, lazyChapterCount])
 
   const chapters = useMemo<Chapter[] | null>(() => {

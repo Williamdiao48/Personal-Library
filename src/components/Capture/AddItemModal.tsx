@@ -132,7 +132,6 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
           <p className="modal-bookmarklet-hint">
             Drag this to your bookmarks bar. Click it on any page to send it here instantly.
           </p>
-          {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
           <a
             href={BOOKMARKLET}
             className="bookmarklet-btn"

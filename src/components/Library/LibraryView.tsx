@@ -154,7 +154,7 @@ export default function LibraryView() {
     })
 
     return () => { offProgress(); offComplete(); offError() }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])  
 
   // ── Map builders ──────────────────────────────────────────────
 
@@ -609,7 +609,7 @@ export default function LibraryView() {
     }
 
     return result
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, filter, collectionFilter, tagFiltersKey, authorFiltersKey, typeFiltersKey, debouncedQuery, itemTagsMap, itemCollectionsMap, groupedEpubIds, companionBySourceId])
 
