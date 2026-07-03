@@ -1,5 +1,6 @@
 import AdmZip from 'adm-zip'
 import sanitizeHtml from 'sanitize-html'
+import { JSDOM } from 'jsdom'
 import {
   readEntryTextCapped,
   assertEntryInflateOk,
@@ -36,11 +37,6 @@ const SAFE_IMG_DATA_PREFIXES = [
 
 function isSafeImgDataUri(src: string): boolean {
   return SAFE_IMG_DATA_PREFIXES.some(p => src.startsWith(p))
-}
-
-/** Strip the src="…" attribute from an img attribute string. */
-function stripSrc(attrs: string): string {
-  return attrs.replace(/\bsrc="[^"]*"\s*/g, '')
 }
 
 /** Clamp a colspan/rowspan attribute string to [1, 20]. */
@@ -149,35 +145,38 @@ function normaliseText(s: string): string {
   return decodeEntities(s).replace(/\s+/g, ' ').trim().toLowerCase()
 }
 
+const TITLE_HEADER_TAGS = new Set(['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'])
+
 /**
  * Many EPUB publishers insert the book title as a running header at the very
- * top of every chapter XHTML file.  Strip any leading content (bare text node
- * or block element) whose plain-text content is exactly the book title.
+ * top of every chapter XHTML file.  Remove leading nodes (a bare text node or a
+ * P/DIV/Hn block) whose plain text is exactly the book title, stopping at the
+ * first node that is real chapter content.
+ *
+ * Operates on the parsed DOM *before* sanitization so `sanitize-html` remains
+ * the final transformation (F9: no string surgery after the sanitizer runs).
  */
-function stripLeadingTitleElements(html: string, bookTitle: string): string {
-  if (!bookTitle) return html
+function stripLeadingTitleNodes(body: HTMLElement, bookTitle: string): void {
+  if (!bookTitle) return
   const target = normaliseText(bookTitle)
-  let result = html
 
-  // Case 1: title is a bare text node before the first tag (e.g. calibre cover pages)
-  const firstTagIdx = result.indexOf('<')
-  if (firstTagIdx > 0) {
-    const leadingText = normaliseText(result.slice(0, firstTagIdx))
-    if (leadingText === target) result = result.slice(firstTagIdx)
-  }
-
-  // Case 2: title is wrapped in a block element
-  const blockRe = /^(\s*<(p|div|h[1-6])[^>]*>([\s\S]*?)<\/\2>)/i
-  let m: RegExpExecArray | null
-  while ((m = blockRe.exec(result)) !== null) {
-    const innerText = normaliseText(m[3].replace(/<[^>]+>/g, ''))
-    if (innerText === target) {
-      result = result.slice(m[0].length)
-    } else {
-      break
+  let node: ChildNode | null = body.firstChild
+  while (node) {
+    if (node.nodeType === 3 /* TEXT_NODE */) {
+      const text = node.textContent ?? ''
+      if (text.trim() === '') { node = node.nextSibling; continue }  // skip layout whitespace
+      if (normaliseText(text) === target) { const next = node.nextSibling; node.remove(); node = next; continue }
+      return  // leading text that isn't the title → real content, stop
     }
+    if (node.nodeType === 1 /* ELEMENT_NODE */) {
+      const el = node as Element
+      if (TITLE_HEADER_TAGS.has(el.tagName) && normaliseText(el.textContent ?? '') === target) {
+        const next = node.nextSibling; el.remove(); node = next; continue
+      }
+      return  // leading element that isn't a title header → real content, stop
+    }
+    node = node.nextSibling  // comments / other nodes — skip over
   }
-  return result
 }
 
 // ── Path utilities ─────────────────────────────────────────────────────────
@@ -310,46 +309,41 @@ function extractTitleFromXhtml(xhtml: string, index: number): string {
 
 // ── Image inlining ─────────────────────────────────────────────────────────
 
-/** Inline all <img src="..."> references as base64 data URIs. */
-function inlineImages(xhtml: string, xhtmlDir: string, zip: AdmZip): string {
-  return xhtml.replace(/<img\b([^>]*)>/gi, (tag, attrs: string) => {
-    const srcMatch = /\bsrc="([^"]+)"/.exec(attrs)
-    if (!srcMatch) return tag
+/**
+ * Inline every <img> reference as a base64 data URI, editing nodes on the parsed
+ * DOM (no regex over raw markup). Unresolvable, oversized, or unsafe sources have
+ * their `src` removed rather than the whole book aborting — the same failure
+ * policy as before, now expressed as node operations.
+ */
+function inlineImageNodes(doc: Document, xhtmlDir: string, zip: AdmZip): void {
+  for (const img of doc.querySelectorAll('img')) {
+    const src = img.getAttribute('src')
+    if (src === null) continue
 
-    const srcValue = srcMatch[1]
-
-    // Pre-existing data: URI — pass through only safe image MIME types.
-    // data:text/html, data:application/javascript, etc. are stripped here
-    // before they ever reach sanitize-html (which provides a second check).
-    if (srcValue.startsWith('data:')) {
-      return isSafeImgDataUri(srcValue) ? tag : `<img${stripSrc(attrs)}>`
+    // Pre-existing data: URI — keep only safe image MIME types; drop
+    // data:text/html, data:application/javascript, etc. before the sanitizer.
+    if (src.startsWith('data:')) {
+      if (!isSafeImgDataUri(src)) img.removeAttribute('src')
+      continue
     }
 
-    // External/relative URL — attempt to inline from the ZIP.
-    // On any failure, strip the src entirely rather than returning the
-    // original tag (which may carry an http:// tracking URL). sanitize-html
-    // would also strip non-data schemes, but defence-in-depth is free here.
-    const zipPath = resolveZipPath(xhtmlDir, srcValue)
-    if (!zipPath) return `<img${stripSrc(attrs)}>`
+    // External/relative URL — attempt to inline from the ZIP. On any failure,
+    // strip src entirely (defence-in-depth: never leave an http:// tracking URL).
+    const zipPath = resolveZipPath(xhtmlDir, src)
+    const entry = zipPath ? zip.getEntry(zipPath) : null
+    if (!zipPath || !entry) { img.removeAttribute('src'); continue }
 
-    const entry = zip.getEntry(zipPath)
-    if (!entry) return `<img${stripSrc(attrs)}>`
-
-    // Reject a decompression-bomb image before materializing it. On any failure
-    // strip the src rather than aborting the whole book — consistent with how
-    // every other image error is handled here.
-    try { assertEntryInflateOk(entry) } catch { return `<img${stripSrc(attrs)}>` }
+    // Reject a decompression-bomb image before materializing it.
+    try { assertEntryInflateOk(entry) } catch { img.removeAttribute('src'); continue }
     const data = entry.getData()
-    if (data.length > IMAGE_MAX_BYTES) return `<img${stripSrc(attrs)}>`
+    if (data.length > IMAGE_MAX_BYTES) { img.removeAttribute('src'); continue }
 
-    const ext = zipPath.split('.').pop()?.toLowerCase() ?? ''
+    const ext  = zipPath.split('.').pop()?.toLowerCase() ?? ''
     const mime = MIME_BY_EXT[ext]
-    if (!mime) return `<img${stripSrc(attrs)}>`
+    if (!mime) { img.removeAttribute('src'); continue }
 
-    const dataUri = `data:${mime};base64,${data.toString('base64')}`
-    const newAttrs = attrs.replace(/\bsrc="[^"]+"/, `src="${dataUri}"`)
-    return `<img${newAttrs}>`
-  })
+    img.setAttribute('src', `data:${mime};base64,${data.toString('base64')}`)
+  }
 }
 
 // ── Internal link rewriting ────────────────────────────────────────────────
@@ -357,72 +351,80 @@ function inlineImages(xhtml: string, xhtmlDir: string, zip: AdmZip): string {
 /**
  * Rewrite EPUB-internal <a href="..."> links into data-epub-* attributes so
  * they survive sanitization and can be intercepted by the renderer at runtime.
+ * Node-based — attribute values are escaped by the DOM serializer, so no manual
+ * HTML-encoding is needed (and no regex can mis-parse a malformed tag).
  *
  * - Cross-chapter:  href → data-epub-chapter="N" [data-epub-fragment="..."]
  * - Same-chapter:   #anchor → data-epub-fragment="..."
  * - External:       http/https hrefs pass through unchanged
  * - Non-spine:      href stripped, no data attrs (renders as non-clickable text)
- * - No-href anchors (<a id="...">): returned untouched (section markers)
+ * - No-href anchors (<a id="...">): left untouched (section markers)
  *
- * Security notes:
- *   1. Pre-existing data-epub-* attributes from the EPUB source are stripped
- *      before we write ours, preventing a malicious EPUB from spoofing chapter
- *      navigation (the sanitizer must allow these attrs to survive our rewrite,
- *      so we cannot rely on it to remove attacker-supplied values).
- *   2. Fragment values are HTML-encoded before attribute injection.
- *      The href regex [^"'] already excludes raw quotes, but encoding is
- *      defence-in-depth against entity edge cases.
- *   3. chapterIdx is a Map-derived integer — no encoding needed.
+ * Security note: pre-existing data-epub-* attributes from the EPUB source are
+ * removed before we set ours, so a malicious EPUB can't spoof chapter navigation
+ * (the sanitizer allows these attrs to survive our rewrite, so it can't be relied
+ * on to strip attacker-supplied values).
  */
-function rewriteEpubLinks(
-  xhtml:            string,
-  xhtmlDir:         string,
-  spineHrefToIndex: Map<string, number>,
-): string {
-  function encodeAttr(v: string): string {
-    return v
-      .replace(/&/g, '&amp;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-  }
+function rewriteLinkNodes(doc: Document, xhtmlDir: string, spineHrefToIndex: Map<string, number>): void {
+  for (const a of doc.querySelectorAll('a')) {
+    const href = a.getAttribute('href')
+    if (href === null) continue  // <a id="..."> section marker — leave untouched
 
-  return xhtml.replace(/<a\b([^>]*)>/gi, (fullTag, attrs: string) => {
-    const hrefMatch = /\bhref=(["'])([^"']*)\1/.exec(attrs)
-    if (!hrefMatch) return fullTag  // <a id="..."> section marker — leave untouched
-
-    const href     = hrefMatch[2]
     const hashIdx  = href.indexOf('#')
     const pathPart = hashIdx >= 0 ? href.slice(0, hashIdx) : href
     const fragment = hashIdx >= 0 ? href.slice(hashIdx + 1) : ''
 
     // External links — sanitizer keeps http/https hrefs as-is
-    if (/^https?:\/\//i.test(pathPart)) return fullTag
+    if (/^https?:\/\//i.test(pathPart)) continue
 
     // Strip href + any pre-existing data-epub-* (spoofing prevention)
-    const stripped = attrs
-      .replace(/\s*\bhref=(["'])[^"']*\1/, '')
-      .replace(/\s*\bdata-epub-chapter=(["'])[^"']*\1/g, '')
-      .replace(/\s*\bdata-epub-fragment=(["'])[^"']*\1/g, '')
+    a.removeAttribute('href')
+    a.removeAttribute('data-epub-chapter')
+    a.removeAttribute('data-epub-fragment')
 
     if (!pathPart) {
-      // Pure same-chapter fragment: <a href="#fn-1">
-      return `<a${stripped} data-epub-fragment="${encodeAttr(fragment)}">`
+      a.setAttribute('data-epub-fragment', fragment)  // pure same-chapter fragment
+      continue
     }
 
-    // Cross-chapter relative path
-    const resolved  = resolveZipPath(xhtmlDir, pathPart)
+    const resolved   = resolveZipPath(xhtmlDir, pathPart)
     const chapterIdx = resolved ? spineHrefToIndex.get(resolved) : undefined
+    if (chapterIdx === undefined) continue  // non-spine dead link — href already stripped
 
-    if (chapterIdx === undefined) {
-      // Non-spine resource — strip href, no data attrs (dead link)
-      return `<a${stripped}>`
-    }
+    a.setAttribute('data-epub-chapter', String(chapterIdx))
+    if (fragment) a.setAttribute('data-epub-fragment', fragment)
+  }
+}
 
-    const fragAttr = fragment ? ` data-epub-fragment="${encodeAttr(fragment)}"` : ''
-    return `<a${stripped} data-epub-chapter="${chapterIdx}"${fragAttr}>`
-  })
+// ── Chapter transform (DOM-based, sanitize last) ────────────────────────────
+
+export interface ChapterContext {
+  xhtmlDir:         string
+  zip:              AdmZip
+  spineHrefToIndex: Map<string, number>
+  bookTitle:        string
+}
+
+/**
+ * Turn one untrusted chapter's XHTML into safe, render-ready HTML.
+ *
+ * The chapter is parsed once with jsdom — the same lenient HTML parsing the
+ * renderer will use — and all rewrites happen as node edits, so no regex ever
+ * touches raw attacker markup (F9). jsdom is inert here: default options mean no
+ * script execution and no subresource loading. `sanitize-html` runs last, with
+ * nothing mutating its output afterward.
+ */
+export function transformChapterHtml(xhtml: string, ctx: ChapterContext): string {
+  const dom = new JSDOM(xhtml)
+  try {
+    const doc = dom.window.document
+    inlineImageNodes(doc, ctx.xhtmlDir, ctx.zip)
+    rewriteLinkNodes(doc, ctx.xhtmlDir, ctx.spineHrefToIndex)
+    stripLeadingTitleNodes(doc.body, ctx.bookTitle)
+    return sanitizeHtml(doc.body.innerHTML, SANITIZE_OPTIONS)
+  } finally {
+    dom.window.close()
+  }
 }
 
 // ── Main export ────────────────────────────────────────────────────────────
@@ -492,17 +494,9 @@ export function extractEpubContent(filePath: string): EpubBook {
     const fn    = filename(href)
     const title = titleMap.get(fn) ?? extractTitleFromXhtml(xhtml, i)
 
-    // Inline images before sanitization (data URIs are in the allowed scheme list)
-    const withImages = inlineImages(xhtml, xhtmlDir, zip)
-
-    // Rewrite internal EPUB links to data-epub-* attributes before sanitization
-    const withRewritten = rewriteEpubLinks(withImages, xhtmlDir, spineHrefToIndex)
-
-    // Sanitize — strips <style>, <script>, <iframe>, and all non-allow-listed content
-    const sanitized = sanitizeHtml(withRewritten, SANITIZE_OPTIONS)
-
-    // Remove any leading elements that are just the book title (running headers)
-    const html = stripLeadingTitleElements(sanitized, bookTitle)
+    // Parse once, rewrite images + internal links on the DOM, strip running-header
+    // titles, then sanitize as the final step (see transformChapterHtml / F9).
+    const html = transformChapterHtml(xhtml, { xhtmlDir, zip, spineHrefToIndex, bookTitle })
 
     chapters.push({ title, html })
   }

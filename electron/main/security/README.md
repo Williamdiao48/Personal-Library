@@ -17,7 +17,7 @@ re-implementing (or omitting) their own checks.
 | **F6** — capture `BrowserWindow`s lack explicit `webPreferences` | LOW | `../capture/fetch.ts` | ✅ implemented |
 | **F7** — untrusted parsing runs in the main process | LOW / arch | `../workers/parse-worker.ts` + `parse-host.ts` | ✅ implemented |
 | **F8** — `sandbox: false` on the main window | LOW | `../index.ts` | ✅ implemented |
-| **F9** — regex-based pre-sanitization HTML rewriting | LOW | `../capture/parsers/` | ⬜ roadmap |
+| **F9** — regex-based pre-sanitization HTML rewriting | LOW | `../capture/parsers/epub-content.ts` | ✅ implemented |
 | **F10** — capture URL scheme not validated on direct path | INFO | `../capture/index.ts` | ✅ implemented |
 
 ## Implemented: F1 — `paths.ts`
@@ -140,8 +140,42 @@ memory-safety surface) behind a process boundary.
   `BrowserWindow` cannot exist in a `utilityProcess`. jsdom is already used safely
   there (no `runScripts`, no subresource loading).
 
-## Suggested implementation order for the rest
+## Implemented: P5 (F9) — `../capture/parsers/epub-content.ts`
 
-Remaining: **F9** (move pre-sanitize HTML rewriting in `capture/parsers/`'s EPUB
-path onto a parsed DOM; add malformed-EPUB fixtures) — the last defense-in-depth
-pass.
+The per-chapter EPUB transform used to rewrite untrusted XHTML with regex
+(`<img>` inlining, `<a>` rewriting, entity decoding, leading-title stripping)
+*before* handing it to `sanitize-html`. Regex over raw markup is where
+parser-differential / mutation-XSS bugs hide — a malformed tag mis-parsed by the
+rewriter could smuggle an attribute past it that the sanitizer then normalises
+into something live. The final `sanitize-html` pass was the backstop, so this was
+defense-in-depth, not a known break.
+
+- **`transformChapterHtml(xhtml, ctx)`** now parses each chapter **once** with
+  jsdom — the same lenient HTML parsing the renderer uses, so our edits and the
+  sanitizer see one identical tree — and does image inlining, internal-link
+  rewriting, and running-header title stripping as **node operations**. No regex
+  touches raw markup. jsdom is inert here (default options: no script execution,
+  no subresource loading), consistent with its existing safe use in capture.
+- Attribute values are written with `setAttribute`, so the DOM serializer escapes
+  them — the old hand-rolled `encodeAttr` and its edge cases are gone. A crafted
+  `href="#..."` fragment can no longer smuggle a live `<img onerror>` (covered by
+  a fixture).
+- **`sanitize-html` is now the last transformation** — `stripLeadingTitleElements`
+  moved *before* it (onto the DOM), so nothing mutates the string after the
+  sanitizer runs (addresses the audit's "post-sanitize string surgery is a smell").
+- **`epub-content.test.ts`** adds 16 malformed/hostile fixtures: nested/unclosed
+  tags, unquoted `onerror`, `data:text/html` in odd casings, fragment-injection
+  attempts, spoofed `data-epub-*`, plus the link/image/title rewriting behaviour.
+
+**Scope:** the OPF/nav/ncx parsing (`parseManifest`, `parseSpine`, `buildTitleMap`,
+`extractBookTitle`) is deliberately left on regex. It extracts XML *data* (hrefs,
+ids, titles) — not HTML injected into the renderer — and its output reaches the UI
+only as React-escaped chapter titles. Strict XML DOM parsing would also *reduce*
+robustness against the many real-world EPUBs with slightly malformed OPFs. The
+mutation-XSS surface F9 targets is the chapter HTML, which is fully DOM-based now.
+
+## Remaining
+
+No open audit findings. Optional hardening still available: route
+`reader:loadEpub` through the F7 worker so EPUBs are parsed in the sandbox at read
+time too (currently only the *import* path is sandboxed).
