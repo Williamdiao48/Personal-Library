@@ -19,6 +19,7 @@ import { parseEpubMetadata } from './parsers/epub'
 import { extractEpubContent } from './parsers/epub-content'
 import { safeContentPath } from '../security/paths'
 import { assertImportFile } from '../security/validation'
+import { assertHttpUrl, safeFetch } from '../security/net-guard'
 import { PDFParse } from 'pdf-parse'
 
 // Fast non-crypto content hash — same algorithm as in library.ts.
@@ -55,6 +56,10 @@ async function dispatchCapture(
   onProgress?: (msg: string) => void,
   range?: ChapterRange,
 ): Promise<SiteContent> {
+  // Scheme allow-list at the single capture chokepoint (F10) — covers
+  // capture:start, refresh, and append. Host is intentionally NOT restricted
+  // here: the target is user-chosen, so localhost/LAN capture stays allowed.
+  assertHttpUrl(url)
   const { hostname } = new URL(url)
 
   if (hostname.includes('archiveofourown.org')) {
@@ -476,7 +481,10 @@ async function downloadCover(
     const absoluteUrl = new URL(ogImageUrl, pageUrl).href
     if (absoluteUrl.startsWith('data:')) return null
 
-    const res = await fetch(absoluteUrl, {
+    // og:image is page-controlled — SSRF-guard it (F4). safeFetch rejects
+    // private/internal hosts and re-validates on redirects; the surrounding
+    // try/catch turns any rejection into "no cover" (non-fatal).
+    const res = await safeFetch(absoluteUrl, {
       signal: AbortSignal.timeout(6000),
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PersonalLibrary/1.0; personal-use)' }
     })

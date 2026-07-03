@@ -9,6 +9,20 @@ export interface SiteContent {
   coverUrl?: string | null  // absolute URL of a cover image to download (optional)
 }
 
+// Explicit hardened prefs for the hidden capture windows (F6). These load
+// attacker-controlled pages and run their JS to solve CF challenges, so they're
+// locked down: no preload (no bridge into the app), Chromium sandbox on,
+// contextIsolation on, nodeIntegration off. The DEFAULT session is kept on
+// purpose — fetchPagesWithSession reuses the cf_clearance cookies established
+// here, so isolating these windows to a separate partition would break
+// multi-chapter capture.
+const CAPTURE_WINDOW_PREFS: Electron.WebPreferences = {
+  nodeIntegration: false,
+  contextIsolation: true,
+  sandbox: true,
+  webSecurity: true,
+}
+
 export const BROWSER_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -36,7 +50,7 @@ export async function fetchPage(url: string): Promise<string> {
 // to accommodate the extra round-trip.
 export function fetchPageWithBrowser(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const win = new BrowserWindow({ show: false })
+    const win = new BrowserWindow({ show: false, webPreferences: CAPTURE_WINDOW_PREFS })
     let settled = false
 
     const timeoutId = setTimeout(() => {
@@ -108,7 +122,7 @@ export function fetchPagesSequential(
   if (!urls.length) return Promise.resolve([])
 
   return new Promise((resolve, reject) => {
-    const win = new BrowserWindow({ show: false })
+    const win = new BrowserWindow({ show: false, webPreferences: CAPTURE_WINDOW_PREFS })
     const results: string[] = []
     let loadTimer: ReturnType<typeof setTimeout>
     let settled = false

@@ -12,13 +12,13 @@ re-implementing (or omitting) their own checks.
 | **F1** — arbitrary file deletion via unvalidated `file_path`/`cover_path` | HIGH | `paths.ts` | ✅ implemented |
 | **F2** — no decompressed-size cap (EPUB zip bomb) + no import-time gate | MEDIUM | `validation.ts` | ✅ implemented |
 | **F3** — `pdf-parse` pdf.js hardening (CVE-2024-4367 class) | MEDIUM | `validation.ts` + `../capture/index.ts` | ✅ implemented¹ |
-| **F4** — SSRF via cover / subresource fetch | MEDIUM | `net-guard.ts` | ⬜ stub / roadmap |
+| **F4** — SSRF via cover / subresource fetch | MEDIUM | `net-guard.ts` | ✅ implemented² |
 | **F5** — `zip.extractAllTo` on untrusted backup (Zip Slip) | MEDIUM | `zip.ts` | ✅ implemented |
-| **F6** — capture `BrowserWindow`s lack explicit `webPreferences` | LOW | `../capture/fetch.ts` | ⬜ roadmap |
+| **F6** — capture `BrowserWindow`s lack explicit `webPreferences` | LOW | `../capture/fetch.ts` | ✅ implemented |
 | **F7** — untrusted parsing runs in the main process | LOW / arch | (new `utilityProcess`) | ⬜ roadmap |
-| **F8** — `sandbox: false` on the main window | LOW | `../index.ts` | ⬜ roadmap |
+| **F8** — `sandbox: false` on the main window | LOW | `../index.ts` | ✅ implemented |
 | **F9** — regex-based pre-sanitization HTML rewriting | LOW | `../capture/parsers/` | ⬜ roadmap |
-| **F10** — capture URL scheme not validated on direct path | INFO | `../ipc/capture.ts` | ⬜ roadmap |
+| **F10** — capture URL scheme not validated on direct path | INFO | `../capture/index.ts` | ✅ implemented |
 
 ## Implemented: F1 — `paths.ts`
 
@@ -65,10 +65,41 @@ Theme: validate and bound every untrusted import before it reaches a parser.
 ¹ F3: the version-level CVE was already mitigated; P2 adds pdf.js sandbox
 hardening + fixes the silently-broken extraction call.
 
+## Implemented: P3 (F4 / F6 / F8 / F10) — `net-guard.ts` + Electron prefs
+
+Theme: lock down the outbound-network and renderer trust boundaries.
+
+- **`net-guard.ts`** — dependency-free (`node:net` + `node:dns` only):
+  - `assertHttpUrl(url)` — scheme allow-list (http/https).
+  - `isPrivateAddress(ip)` — pure classifier for loopback/private/link-local/ULA/
+    multicast + IPv4-mapped IPv6; unit-tested without network.
+  - `assertPublicHttpUrl(url)` — scheme + `dns.lookup(all)` → reject if the host
+    is, or resolves to, any private/internal address.
+  - `safeFetch(url, init)` — validates the host on the URL and re-validates on
+    every redirect hop (manual redirect, depth cap).
+- **F4 (SSRF)** — the page-controlled `og:image` fetch in `downloadCover`
+  (`capture/index.ts`) now goes through `safeFetch`; the website-controlled
+  `personallibrary://save?url=…` target is gated with `assertPublicHttpUrl` in
+  `handleProtocolUrl` (`index.ts`). The user-*typed* capture target is
+  intentionally **not** host-blocked (only scheme-checked) so deliberate
+  localhost/LAN capture still works.
+- **F10** — `assertHttpUrl` at the top of `dispatchCapture` (`capture/index.ts`),
+  the single chokepoint for capture / refresh / append target fetches; errors
+  surface through the existing `capture:error` channel.
+- **F6** — both hidden capture windows (`capture/fetch.ts`) get an explicit
+  hardened `CAPTURE_WINDOW_PREFS` (`sandbox:true`, `contextIsolation:true`,
+  `nodeIntegration:false`, no preload). The **default session is kept** on
+  purpose — `fetchPagesWithSession` reuses the `cf_clearance` cookies set there.
+- **F8** — main window flipped to `sandbox: true` (`index.ts`). Verified safe:
+  the preload imports only `contextBridge`/`ipcRenderer`, no Node APIs.
+
+² F4: closes the blind-SSRF vectors; a residual resolve→connect DNS-rebind TOCTOU
+window remains (full IP-pinning via a custom undici dispatcher is deferred, LOW
+impact). Capture paths that use `BrowserWindow.loadURL` are not host-pre-validated
+(Chromium does its own DNS and returns no cross-origin response body).
+
 ## Suggested implementation order for the rest
 
-Remaining: **F4** (SSRF guard, `net-guard.ts`) → **F6 / F8** (Electron
-`webPreferences` / `sandbox:true`) → **F9 / F10** (DOM-based pre-sanitize
-rewriting; capture-IPC scheme allow-list) → **F7** (move parsing into a
-sandboxed `utilityProcess`; largest — greenfield, no existing
+Remaining: **F9** (move pre-sanitize HTML rewriting onto a DOM) and **F7** (move
+parsing into a sandboxed `utilityProcess`; largest — greenfield, no existing
 `child_process`/`utilityProcess` precedent — do last).
