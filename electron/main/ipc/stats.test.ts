@@ -12,7 +12,6 @@ beforeEach(() => {
 })
 afterEach(() => closeTestDb())
 
-const DAY = 86_400_000
 // Local-noon timestamp N days before today (avoids midnight/tz boundary flakiness).
 function daysAgoNoon(n: number): number {
   const d = new Date()
