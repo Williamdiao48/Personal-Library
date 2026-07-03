@@ -6,6 +6,15 @@ out/
 dist/
 dist-electron/
 
+# Test / coverage artifacts
+coverage/
+test-results/
+playwright-report/
+*.tsbuildinfo
+
+# Local node-gyp venv (setuptools shim for Python 3.12+; see docs/testing.md)
+.gyp-venv/
+
 # SQLite database files (user data — never commit)
 *.db
 *.db-journal
