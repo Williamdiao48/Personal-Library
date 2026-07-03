@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-typecheck:
+    name: Lint & typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # --ignore-scripts skips the postinstall electron-rebuild: eslint/tsc never
+      # load the native better-sqlite3 binary, so building it here is wasted time.
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      - run: npm run typecheck
+
+  test:
+    name: Unit & integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Python 3.12+ dropped distutils, which node-gyp needs to compile
+      # better-sqlite3 from source; setuptools provides the shim.
+      - run: python -m pip install setuptools
+      - run: npm ci --ignore-scripts
+      # Vitest runs under plain Node, so better-sqlite3 must be built for the Node
+      # ABI (the app normally builds it for Electron's ABI via postinstall).
+      - run: npm run rebuild:node
+      - run: npm run test:coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14
+
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # electron-vite bundles and externalizes native deps, so a compile-only
+      # sanity check needs no native rebuild — hence --ignore-scripts.
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+
+  e2e:
+    name: E2E (Playwright-Electron)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install setuptools # node-gyp needs distutils (see test job)
+      # Full install so postinstall builds better-sqlite3 for the Electron ABI that
+      # the launched app loads.
+      - run: npm ci
+      - run: npm run build
+      # _electron uses the app's own Electron binary — no browser download needed.
+      # xvfb provides the display the Electron window requires on a headless runner.
+      - run: xvfb-run -a npm run test:e2e
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
