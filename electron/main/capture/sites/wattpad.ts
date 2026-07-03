@@ -102,7 +102,7 @@ export async function captureWattpad(
   // The storytext API returns the raw chapter HTML without requiring JS rendering.
   const textUrls = rangedParts.map(p => `https://www.wattpad.com/apiv2/storytext?id=${p.id}`)
 
-  let rawPages = await fetchPagesWithSession(textUrls, 300, (i) => {
+  const rawPages = await fetchPagesWithSession(textUrls, 300, (i) => {
     onProgress?.(`Fetching chapter ${i + 1} of ${rangedParts.length}…`)
   })
 
