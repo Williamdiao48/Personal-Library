@@ -3,6 +3,7 @@ import { autoUpdater } from 'electron-updater'
 import { join } from 'path'
 import { initDatabase } from './db'
 import { safeUserDataPath } from './security/paths'
+import { assertPublicHttpUrl } from './security/net-guard'
 import { registerLibraryHandlers } from './ipc/library'
 import { registerCaptureHandlers } from './ipc/capture'
 import { registerReaderHandlers } from './ipc/reader'
@@ -27,16 +28,18 @@ if (!gotLock) app.quit()
 // Holds a URL received before the window exists
 let pendingCaptureUrl: string | null = null
 
-function handleProtocolUrl(raw: string): void {
+async function handleProtocolUrl(raw: string): Promise<void> {
   try {
     const parsed = new URL(raw)
     if (parsed.hostname !== 'save') return
     const pageUrl = parsed.searchParams.get('url')
     if (!pageUrl) return
 
-    // Only allow http(s) URLs — reject file://, javascript:, etc.
-    const scheme = new URL(pageUrl).protocol
-    if (scheme !== 'http:' && scheme !== 'https:') return
+    // Scheme + host guard (F4). A website triggers this URL, so the capture
+    // destination is attacker-controlled: reject non-http(s) schemes AND
+    // private/internal hosts (localhost, LAN, cloud metadata) before we induce
+    // a capture of it. Any rejection is swallowed by the catch below.
+    await assertPublicHttpUrl(pageUrl)
 
     const win = BrowserWindow.getAllWindows()[0]
     if (win) {
@@ -55,13 +58,13 @@ function handleProtocolUrl(raw: string): void {
 // macOS: fired when a personallibrary:// link is opened
 app.on('open-url', (event, url) => {
   event.preventDefault()
-  handleProtocolUrl(url)
+  void handleProtocolUrl(url)
 })
 
 // Windows/Linux: new instance launched with protocol URL in argv
 app.on('second-instance', (_event, argv) => {
   const url = argv.find(arg => arg.startsWith('personallibrary://'))
-  if (url) handleProtocolUrl(url)
+  if (url) void handleProtocolUrl(url)
 
   const win = BrowserWindow.getAllWindows()[0]
   if (win) {
@@ -84,7 +87,7 @@ function createWindow(): BrowserWindow {
     backgroundColor: '#1a1a1a',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true
