@@ -82,9 +82,15 @@ export async function captureXenForo(
     // (the post page doesn't always show it). Fall back to "Chapter N".
     const chTitle = `Chapter ${i + 1}`
 
+    // Sanitize the untrusted post body here, before it's wrapped in the
+    // trusted div.chapter marker — sanitizing the fully assembled string
+    // would strip the class attribute (sanitizer.ts omits class/id to
+    // prevent clickjacking) and break multi-chapter file splitting
+    // (extractChapterDivs in capture/index.ts depends on div.chapter
+    // surviving to the saved HTML).
     chapters.push({
       title: chTitle,
-      html:  bbWrapper.innerHTML,
+      html:  sanitize(bbWrapper.innerHTML),
       text:  bbWrapper.textContent ?? '',
     })
   }
@@ -100,7 +106,7 @@ export async function captureXenForo(
   return {
     title,
     author,
-    html:        sanitize(assembled),
+    html:        assembled,
     textContent: chapters.map(c => c.text).join(' '),
     coverUrl,
   }
