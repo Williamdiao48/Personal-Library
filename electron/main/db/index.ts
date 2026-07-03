@@ -8,11 +8,13 @@ import { safeContentPath, safeUserDataPath } from '../security/paths'
 let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
-const CURRENT_VERSION = 17
+// Exported so the test harness can assert a fresh DB reaches the current version.
+export const CURRENT_VERSION = 17
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
-const MIGRATIONS: Record<number, string> = {
+// Exported so the in-memory test DB runs the exact same migration path.
+export const MIGRATIONS: Record<number, string> = {
   1: '', // baseline — tables come from SCHEMA (IF NOT EXISTS), nothing extra to run
   2: `
     CREATE TABLE IF NOT EXISTS collections (
@@ -111,8 +113,7 @@ export function initDatabase(): void {
   db.pragma('synchronous = NORMAL') // safe with WAL; skips unnecessary fsyncs vs FULL
   db.pragma('cache_size = -32000')  // 32 MB page cache (default ~8 MB)
   db.pragma('temp_store = MEMORY')  // temp B-trees/indexes stay in RAM
-  db.exec(SCHEMA)        // idempotent: creates tables only if they don't exist
-  runMigrations()
+  bringUpSchema(db)      // create tables (idempotent) + run pending migrations
 
   // Permanently purge items that have been in trash for 30+ days.
   // Paths come from the DB (attacker-influenceable via backup import), so route
@@ -135,17 +136,25 @@ export function initDatabase(): void {
   })
 }
 
-function runMigrations(): void {
-  const current = db.pragma('user_version', { simple: true }) as number
+// Create the base schema and apply any pending migrations against `database`.
+// Extracted from initDatabase (and parameterized) so the in-memory test harness
+// can bring up an identical schema without touching Electron/app state.
+export function bringUpSchema(database: Database.Database): void {
+  database.exec(SCHEMA) // idempotent: creates tables only if they don't exist
+  runMigrations(database)
+}
+
+function runMigrations(database: Database.Database): void {
+  const current = database.pragma('user_version', { simple: true }) as number
   if (current >= CURRENT_VERSION) return
 
   for (let v = current + 1; v <= CURRENT_VERSION; v++) {
-    db.transaction(() => {
+    database.transaction(() => {
       const sql = MIGRATIONS[v]
-      if (sql) db.exec(sql)
+      if (sql) database.exec(sql)
       // SQLite pragmas don't accept bound parameters for user_version;
       // v is always a loop-counter integer so direct interpolation is safe.
-      db.pragma(`user_version = ${v}`)
+      database.pragma(`user_version = ${v}`)
     })()
   }
 }
@@ -160,6 +169,15 @@ export function closeDb(): void {
     db.close()
     db = undefined as any
   }
+}
+
+/**
+ * Test-only: point the module singleton at an already-open database so the IPC
+ * handlers' run/get/all helpers operate on an in-memory test DB. Never called by
+ * production code. See test/db/harness.ts.
+ */
+export function __setTestDb(database: Database.Database | undefined): void {
+  db = database as Database.Database
 }
 
 // Convenience helpers used by IPC handlers
