@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom'
 import { all, get, run, getDb } from '../db'
 import { refreshContent, appendChapters, getChapterCount } from '../capture'
 import { BROWSER_HEADERS } from '../capture/fetch'
+import { safeContentPath, safeUserDataPath } from '../security/paths'
 import type { Item, Tag, RefreshResult } from '../../../src/types'
 
 // Fast non-crypto hash: combines text length with a sample of beginning/end.
@@ -60,7 +61,6 @@ export function registerLibraryHandlers(): void {
 
   ipcMain.handle('library:permanentlyDelete', (_e, id: string) => {
     const db = getDb()
-    const userData = app.getPath('userData')
     const row = db.prepare(
       'SELECT file_path, cover_path FROM items WHERE id = ?'
     ).get(id) as { file_path: string; cover_path: string | null } | undefined
@@ -68,20 +68,21 @@ export function registerLibraryHandlers(): void {
     // JOIN on items. No explicit FTS cleanup needed.
     db.prepare('DELETE FROM items WHERE id = ?').run(id)
     if (row) {
-      try { unlinkSync(join(userData, 'content', row.file_path)) } catch {}
-      if (row.cover_path) { try { unlinkSync(join(userData, row.cover_path)) } catch {} }
+      // safeContentPath/safeUserDataPath throw on traversal (F1); the throw is
+      // caught here so a malicious path is simply skipped, never escaping.
+      try { unlinkSync(safeContentPath(row.file_path)) } catch {}
+      if (row.cover_path) { try { unlinkSync(safeUserDataPath(row.cover_path)) } catch {} }
     }
   })
 
   ipcMain.handle('library:emptyTrash', () => {
     const db = getDb()
-    const userData = app.getPath('userData')
     const rows = db.prepare(
       'SELECT id, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL'
     ).all() as { id: string; file_path: string; cover_path: string | null }[]
     for (const row of rows) {
-      try { unlinkSync(join(userData, 'content', row.file_path)) } catch {}
-      if (row.cover_path) { try { unlinkSync(join(userData, row.cover_path)) } catch {} }
+      try { unlinkSync(safeContentPath(row.file_path)) } catch {}
+      if (row.cover_path) { try { unlinkSync(safeUserDataPath(row.cover_path)) } catch {} }
     }
     db.prepare('DELETE FROM items WHERE deleted_at IS NOT NULL').run()
   })
@@ -213,7 +214,7 @@ export function registerLibraryHandlers(): void {
     // Remove any existing cover file first
     const row = db.prepare('SELECT cover_path FROM items WHERE id = ?')
       .get(id) as { cover_path: string | null } | undefined
-    if (row?.cover_path) try { unlinkSync(join(userData, row.cover_path)) } catch {}
+    if (row?.cover_path) try { unlinkSync(safeUserDataPath(row.cover_path)) } catch {}
 
     const buf = Buffer.from(data)
     const coverFile = `${id}-cover.${ext}`
@@ -286,7 +287,6 @@ export function registerLibraryHandlers(): void {
   //        if nothing actually changed.
   ipcMain.handle('library:refresh', async (_e, id: string): Promise<RefreshResult> => {
     const db = getDb()
-    const contentDir = join(app.getPath('userData'), 'content')
 
     type Row = {
       rowid:         number
@@ -347,7 +347,7 @@ export function registerLibraryHandlers(): void {
 
     const newWordCount = newText.split(/\s+/).filter(Boolean).length
     const now          = Date.now()
-    const filePath     = join(contentDir, item.file_path)
+    const filePath     = safeContentPath(item.file_path)
 
     // ── Step 5: Read old text for FTS5 delete ─────────────────────────────
     // FTS5 contentless tables require the originally-indexed token values to
@@ -401,7 +401,7 @@ export function registerLibraryHandlers(): void {
 
     const row = db.prepare('SELECT cover_path FROM items WHERE id = ?')
       .get(id) as { cover_path: string | null } | undefined
-    if (row?.cover_path) try { unlinkSync(join(userData, row.cover_path)) } catch {}
+    if (row?.cover_path) try { unlinkSync(safeUserDataPath(row.cover_path)) } catch {}
 
     const coverFile = `${id}-cover.${ext}`
     copyFileSync(src, join(userData, 'content', coverFile))

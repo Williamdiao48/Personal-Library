@@ -3,6 +3,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { unlinkSync } from 'fs'
 import { SCHEMA } from './schema'
+import { safeContentPath, safeUserDataPath } from '../security/paths'
 
 let db: Database.Database
 
@@ -113,15 +114,17 @@ export function initDatabase(): void {
   db.exec(SCHEMA)        // idempotent: creates tables only if they don't exist
   runMigrations()
 
-  // Permanently purge items that have been in trash for 30+ days
-  const userData = app.getPath('userData')
+  // Permanently purge items that have been in trash for 30+ days.
+  // Paths come from the DB (attacker-influenceable via backup import), so route
+  // them through the F1 traversal guards; a throw is caught per-row so one bad
+  // row can't abort startup or escape the sandbox.
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
   const stale = db.prepare(
     `SELECT id, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL AND deleted_at < ?`
   ).all(cutoff) as { id: string; file_path: string; cover_path: string | null }[]
   for (const row of stale) {
-    try { unlinkSync(join(userData, 'content', row.file_path)) } catch {}
-    if (row.cover_path) { try { unlinkSync(join(userData, row.cover_path)) } catch {} }
+    try { unlinkSync(safeContentPath(row.file_path)) } catch {}
+    if (row.cover_path) { try { unlinkSync(safeUserDataPath(row.cover_path)) } catch {} }
     db.prepare('DELETE FROM items WHERE id = ?').run(row.id)
   }
 

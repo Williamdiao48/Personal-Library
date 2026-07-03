@@ -3,6 +3,7 @@ import { join } from 'path'
 import { existsSync, mkdirSync, cpSync, rmSync, renameSync } from 'fs'
 import AdmZip from 'adm-zip'
 import { get, closeDb } from '../db'
+import { safeExtractAll } from '../security/zip'
 
 export function registerBackupHandlers(): void {
 
@@ -83,10 +84,13 @@ export function registerBackupHandlers(): void {
       throw new Error('Invalid backup file: library.db not found in archive.')
     }
 
-    // Extract to import-tmp (keeps original intact while we validate)
+    // Extract to import-tmp (keeps original intact while we validate).
+    // safeExtractAll validates every entry against Zip Slip + decompression
+    // bombs and throws BEFORE closeDb()/the DB swap below, so a malicious backup
+    // aborts with the live DB and content still intact (F5).
     if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true })
     mkdirSync(tmpDir, { recursive: true })
-    zip.extractAllTo(tmpDir, true)
+    safeExtractAll(zip, tmpDir)
 
     const tmpDbPath = join(tmpDir, 'library.db')
 
