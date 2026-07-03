@@ -15,7 +15,7 @@ re-implementing (or omitting) their own checks.
 | **F4** — SSRF via cover / subresource fetch | MEDIUM | `net-guard.ts` | ✅ implemented² |
 | **F5** — `zip.extractAllTo` on untrusted backup (Zip Slip) | MEDIUM | `zip.ts` | ✅ implemented |
 | **F6** — capture `BrowserWindow`s lack explicit `webPreferences` | LOW | `../capture/fetch.ts` | ✅ implemented |
-| **F7** — untrusted parsing runs in the main process | LOW / arch | (new `utilityProcess`) | ⬜ roadmap |
+| **F7** — untrusted parsing runs in the main process | LOW / arch | `../workers/parse-worker.ts` + `parse-host.ts` | ✅ implemented |
 | **F8** — `sandbox: false` on the main window | LOW | `../index.ts` | ✅ implemented |
 | **F9** — regex-based pre-sanitization HTML rewriting | LOW | `../capture/parsers/` | ⬜ roadmap |
 | **F10** — capture URL scheme not validated on direct path | INFO | `../capture/index.ts` | ✅ implemented |
@@ -98,8 +98,50 @@ window remains (full IP-pinning via a custom undici dispatcher is deferred, LOW
 impact). Capture paths that use `BrowserWindow.loadURL` are not host-pre-validated
 (Chromium does its own DNS and returns no cross-origin response body).
 
+## Implemented: P4 (F7) — `../workers/parse-worker.ts` + `parse-host.ts`
+
+Theme: contain the untrusted-EPUB-parser blast radius (F2, the zip-bomb / `adm-zip`
+memory-safety surface) behind a process boundary.
+
+- **`workers/parse-worker.ts`** — an Electron `utilityProcess` child that runs the
+  EPUB import parsers: unzip/metadata/content extraction (`adm-zip` +
+  `parseEpubMetadata` + `extractEpubContent`, incl. the `sanitize-html` pass over
+  untrusted XHTML). It imports **no** `electron`, DB, or network/`BrowserWindow`
+  code — it only reads the handed-in file and posts structured results (metadata +
+  FTS text + cover bytes) back over `parentPort`. A memory-safety or logic bug on
+  a malicious EPUB crashes this restartable child, not the main process or the DB.
+- **`workers/parse-host.ts`** — main-side lifecycle: lazy `utilityProcess.fork`,
+  id-correlated request/response, a 120 s per-request timeout (kills a wedged
+  worker), and crash-restart (`exit` rejects all in-flight and the next call
+  respawns). Buffers requests until the child emits `spawn` (Electron does not
+  queue pre-spawn messages). Runs the child with `--max-old-space-size=512` so a
+  zip bomb OOMs the worker, not the machine (defense-in-depth atop the F2 caps).
+  The pure correlation core is `pending-registry.ts` (unit-tested in
+  `pending-registry.test.ts`).
+- **`capture/index.ts`** — `captureEpub` now calls `parseEpub`; all disk copies,
+  cover writes, and DB transactions stay in main. `assertImportFile` still runs
+  in main as a cheap pre-gate before a file reaches the worker. Worker failure
+  stays **non-fatal** (import proceeds with fallback metadata / null word count).
+- **`electron.vite.config.ts`** — the `main` build now has two `lib.entry`
+  points so `parse-worker.js` is emitted next to `index.js` in `out/main/`;
+  `index.ts` tears the worker down on `app.will-quit`.
+
+**Scope:** only the EPUB import parser moved. Two deliberate exclusions:
+- **PDF text extraction stays in main.** `pdf-parse`/pdf.js needs DOM globals
+  (`DOMMatrix`, etc.) that a `utilityProcess` does not provide (it throws
+  `DOMMatrix is not defined` there). PDF keeps its F3 hardening
+  (`isEvalSupported:false`/`disableFontFace:true`/`enableXfa:false`); the audited
+  CVE-2024-4367 is already patched in the bundled pdfjs 5.4.x, so this is the same
+  LOW residual as before. Sandboxing PDF would require polyfilling DOM globals
+  (fragile) or a native `canvas` dep — not worth it for a LOW, patched finding.
+- **The URL/HTML capture path stays in main** — every site parser is welded to
+  `capture/fetch.ts`'s `BrowserWindow`/`session.defaultSession` (Cloudflare bypass
+  + `cf_clearance` reuse) and interleaves fetch↔parse inseparably, and
+  `BrowserWindow` cannot exist in a `utilityProcess`. jsdom is already used safely
+  there (no `runScripts`, no subresource loading).
+
 ## Suggested implementation order for the rest
 
-Remaining: **F9** (move pre-sanitize HTML rewriting onto a DOM) and **F7** (move
-parsing into a sandboxed `utilityProcess`; largest — greenfield, no existing
-`child_process`/`utilityProcess` precedent — do last).
+Remaining: **F9** (move pre-sanitize HTML rewriting in `capture/parsers/`'s EPUB
+path onto a parsed DOM; add malformed-EPUB fixtures) — the last defense-in-depth
+pass.

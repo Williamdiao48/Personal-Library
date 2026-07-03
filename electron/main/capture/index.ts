@@ -15,11 +15,10 @@ import { captureWattpad, getWattpadChapterCount } from './sites/wattpad'
 import { captureScribbleHub, getScribbleHubChapterCount } from './sites/scribblehub'
 import { captureXenForo, getXenForoChapterCount } from './sites/forums'
 import { captureUniversal } from './sites/universal'
-import { parseEpubMetadata } from './parsers/epub'
-import { extractEpubContent } from './parsers/epub-content'
 import { safeContentPath } from '../security/paths'
 import { assertImportFile } from '../security/validation'
 import { assertHttpUrl, safeFetch } from '../security/net-guard'
+import { parseEpub } from '../workers/parse-host'
 import { PDFParse } from 'pdf-parse'
 
 // Fast non-crypto content hash — same algorithm as in library.ts.
@@ -352,19 +351,20 @@ async function captureEpub(filePath: string): Promise<CaptureResult> {
   // Import-time gate: size cap + ZIP magic before any parse or copy (F2).
   await assertImportFile(filePath, 'epub')
 
-  const meta = parseEpubMetadata(filePath)
-
-  // Extract text from all chapters for word count and FTS indexing
+  // Parse metadata + text in the sandboxed worker (F7). A parse crash/hang
+  // rejects here rather than taking down the main process; we then import the
+  // (still-copied) file with fallback metadata and null word count.
+  let meta:      { title: string | null; author: string | null; coverBuffer: Buffer | null; coverExt: string | null }
+    = { title: null, author: null, coverBuffer: null, coverExt: null }
   let wordCount: number | null = null
   let plainText = ''
   try {
-    const book = extractEpubContent(filePath)
-    plainText = book.chapters
-      .map(ch => ch.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim())
-      .join(' ')
-    wordCount = plainText.split(/\s+/).filter(Boolean).length
+    const parsed = await parseEpub(filePath)
+    meta = { title: parsed.title, author: parsed.author, coverBuffer: parsed.coverBuffer, coverExt: parsed.coverExt }
+    plainText = parsed.plainText
+    wordCount = parsed.wordCount
   } catch {
-    // Content extraction failure is non-fatal — proceed with null word count
+    // Worker failure is non-fatal — import the file with fallback metadata.
   }
 
   const id = randomUUID()
@@ -423,7 +423,9 @@ async function capturePdf(filePath: string): Promise<CaptureResult> {
   const title = basename(filePath, '.pdf')
   const now = Date.now()
 
-  // Extract text for word count and FTS — non-fatal if PDF is image-only or encrypted
+  // Extract text for word count and FTS — non-fatal if PDF is image-only or
+  // encrypted. Runs in main (not the F7 worker): pdf.js needs DOM globals
+  // (DOMMatrix, etc.) that a utilityProcess does not provide.
   let wordCount: number | null = null
   let plainText = ''
   try {

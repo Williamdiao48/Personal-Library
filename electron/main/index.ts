@@ -15,6 +15,7 @@ import { registerGoalsHandlers }   from './ipc/goals'
 import { registerAnnotationHandlers } from './ipc/annotations'
 import { registerUpdaterHandlers } from './ipc/updater'
 import { registerLogHandlers } from './ipc/log'
+import { shutdownParseWorker } from './workers/parse-host'
 
 // Must be called before app.whenReady()
 protocol.registerSchemesAsPrivileged([
@@ -184,4 +185,9 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+// Tear down the sandboxed parse worker (F7) so it doesn't outlive the app.
+app.on('will-quit', () => {
+  shutdownParseWorker()
 })
