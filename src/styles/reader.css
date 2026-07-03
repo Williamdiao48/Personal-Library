@@ -367,6 +367,13 @@
   font-style: italic;
 }
 
+.chapter-loading {
+  padding: 48px 0;
+  text-align: center;
+  color: #888;
+  font-style: italic;
+}
+
 /* ── Html reader shell + theme variants ─────────────────────────── */
 
 /* Wraps the header + scrollable content; fills the reader-shell flex column */

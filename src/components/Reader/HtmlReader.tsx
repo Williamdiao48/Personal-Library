@@ -51,7 +51,7 @@ interface Props {
   onReloadContent?:   () => void
 }
 
-/** Extract individual chapters from a multi-chapter document. */
+/** Extract individual chapters from a legacy, single-file multi-chapter document. */
 function parseChapters(html: string): Chapter[] | null {
   const doc  = new DOMParser().parseFromString(html, 'text/html')
   const divs = Array.from(doc.querySelectorAll('.chapter'))
@@ -60,6 +60,17 @@ function parseChapters(html: string): Chapter[] | null {
     html:  d.outerHTML,
     title: d.querySelector('.chapter-title')?.textContent?.trim() ?? `Chapter ${i + 1}`,
   }))
+}
+
+/** Extract title + body from a single per-chapter file (one .chapter div per file). */
+function parseSingleChapter(html: string, index: number): Chapter {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const div = doc.querySelector('.chapter')
+  if (!div) return { html, title: `Chapter ${index + 1}` }
+  return {
+    html:  div.outerHTML,
+    title: div.querySelector('.chapter-title')?.textContent?.trim() ?? `Chapter ${index + 1}`,
+  }
 }
 
 export default function HtmlReader({ item, content, onBack, lazyChapterCount, contentStale, onReloadContent }: Props) {
@@ -131,13 +142,48 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
   }
 
   // ── Chapter parsing ──────────────────────────────────────────────
+  // Multi-chapter items store each chapter as its own file on disk; `content`
+  // is always chapter 0, and `lazyChapterCount` (from reader:getChapterCount)
+  // tells us how many more exist. Those are fetched on demand below via
+  // readerService.loadChapter rather than expecting them all in `content`.
 
-  const chapters = useMemo(() => parseChapters(content), [content])
+  const isLazy = !!lazyChapterCount && lazyChapterCount > 1
+
+  const legacyChapters = useMemo(
+    () => (isLazy ? null : parseChapters(content)),
+    [isLazy, content],
+  )
+
+  const totalChapters = isLazy ? lazyChapterCount! : (legacyChapters?.length ?? 0)
+  const hasChapters   = isLazy || !!legacyChapters
+
+  const [lazyChapters, setLazyChapters] = useState<(Chapter | null)[]>(() => {
+    if (!isLazy) return []
+    const arr = new Array<Chapter | null>(lazyChapterCount!).fill(null)
+    arr[0] = parseSingleChapter(content, 0)
+    return arr
+  })
+
+  // Reset the lazy cache whenever chapter 0's content changes — initial load,
+  // or a reload triggered by the "Updated" badge after a background refresh.
+  useEffect(() => {
+    if (!isLazy) return
+    const arr = new Array<Chapter | null>(lazyChapterCount!).fill(null)
+    arr[0] = parseSingleChapter(content, 0)
+    setLazyChapters(arr)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content, isLazy, lazyChapterCount])
+
+  const chapters = useMemo<Chapter[] | null>(() => {
+    if (!hasChapters) return null
+    if (isLazy) return lazyChapters.map((c, i) => c ?? { html: '', title: `Chapter ${i + 1}` })
+    return legacyChapters
+  }, [hasChapters, isLazy, lazyChapters, legacyChapters])
 
   const initialChapter = useMemo(() => {
-    if (!chapters) return 0
-    if (item.scroll_chapter != null) return Math.min(item.scroll_chapter, chapters.length - 1)
-    if (item.scroll_position) return Math.round(item.scroll_position * (chapters.length - 1))
+    if (!hasChapters) return 0
+    if (item.scroll_chapter != null) return Math.min(item.scroll_chapter, totalChapters - 1)
+    if (item.scroll_position) return Math.round(item.scroll_position * (totalChapters - 1))
     return 0
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // intentionally run once on mount
@@ -159,6 +205,44 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
   const [currentChapter, setCurrentChapter] = useState(initialChapter)
   const currentChapterRef = useRef(initialChapter)
   const pendingScrollRef  = useRef<{ y: number; isLegacyFrac: boolean } | null>(initialScrollY)
+
+  // ── Lazy chapter fetching ─────────────────────────────────────────
+
+  // Paged/legacy-continuous view only ever shows one chapter at a time —
+  // fetch just the one currently in view.
+  useEffect(() => {
+    if (!isLazy || lazyChapters[currentChapter]) return
+    let cancelled = false
+    readerService.loadChapter(item.file_path, currentChapter).then(html => {
+      if (cancelled) return
+      setLazyChapters(prev => {
+        if (prev[currentChapter]) return prev
+        const next = [...prev]
+        next[currentChapter] = parseSingleChapter(html, currentChapter)
+        return next
+      })
+    })
+    return () => { cancelled = true }
+  }, [isLazy, currentChapter, lazyChapters, item.file_path])
+
+  // Continuous mode renders every chapter in one scroll — fetch whatever's missing.
+  useEffect(() => {
+    if (!isLazy || !continuousMode) return
+    const missing = lazyChapters.map((c, i) => (c ? -1 : i)).filter(i => i >= 0)
+    if (missing.length === 0) return
+    let cancelled = false
+    Promise.all(
+      missing.map(i => readerService.loadChapter(item.file_path, i).then(html => ({ i, html }))),
+    ).then(results => {
+      if (cancelled) return
+      setLazyChapters(prev => {
+        const next = [...prev]
+        for (const { i, html } of results) next[i] = parseSingleChapter(html, i)
+        return next
+      })
+    })
+    return () => { cancelled = true }
+  }, [isLazy, continuousMode, lazyChapters, item.file_path])
 
   // ── Annotations ──────────────────────────────────────────────────
 
@@ -859,7 +943,11 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
                     Chapter {i + 1}
                   </div>
                 )}
-                <div id={`chapter-${i}`} dangerouslySetInnerHTML={{ __html: c.html }} />
+                <div id={`chapter-${i}`}>
+                  {c.html
+                    ? <div dangerouslySetInnerHTML={{ __html: c.html }} />
+                    : <div className="chapter-loading">Loading chapter…</div>}
+                </div>
               </div>
             ))}
             <TextSelectionPopup
@@ -903,7 +991,9 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
         {header}
         <div className="reader-with-panel">
           <div ref={scrollRef} className="html-reader" style={{ flex: 1, minWidth: 0 }} onScroll={handleScroll}>
-            <div dangerouslySetInnerHTML={{ __html: ch.html }} />
+            {ch.html
+              ? <div dangerouslySetInnerHTML={{ __html: ch.html }} />
+              : <div className="chapter-loading">Loading chapter…</div>}
             <nav className="chapter-nav">
               <button
                 className="chapter-nav-btn chapter-nav-prev"
