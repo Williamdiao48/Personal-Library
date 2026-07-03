@@ -1,4 +1,12 @@
-// All DDL in one place. Run in order on first launch and migrations.
+// Baseline schema, created on first launch before migrations run.
+//
+// IMPORTANT: this is the ORIGINAL (v1) shape — every column/table added by a
+// later migration (see MIGRATIONS in index.ts) must be added THERE, not here.
+// Listing a migration-added column in this baseline makes a fresh install run
+// `CREATE TABLE` with that column and then hit `duplicate column name` when the
+// corresponding `ALTER TABLE ADD COLUMN` migration runs. `CREATE TABLE IF NOT
+// EXISTS` never alters an existing table, so trimming columns here is invisible
+// to already-migrated user databases.
 
 export const SCHEMA = `
   PRAGMA journal_mode = WAL;
@@ -16,18 +24,17 @@ export const SCHEMA = `
     cover_path  TEXT,
     description TEXT,
     date_saved  INTEGER NOT NULL,          -- unix timestamp
-    date_modified INTEGER NOT NULL,
-    deleted_at  INTEGER                    -- unix ms; NULL = active; non-null = in trash
+    date_modified INTEGER NOT NULL
+    -- Added by migrations: derived_from (3), chapter_start/end (8),
+    -- content_hash (9), deleted_at (15), rating/review (17).
   );
 
   CREATE TABLE IF NOT EXISTS progress (
     item_id           TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
     scroll_position   REAL DEFAULT 0,      -- 0.0 - 1.0 fraction
-    last_read_at      INTEGER,             -- unix timestamp
-    scroll_chapter    INTEGER DEFAULT NULL, -- chapter index for precise restore
-    scroll_y          REAL    DEFAULT 0,   -- scrollTop pixels within chapter / overall
-    status            TEXT    DEFAULT NULL  -- explicit reading status; NULL = infer from scroll_position
-      CHECK(status IS NULL OR status IN ('unread', 'reading', 'finished', 'on-hold', 'dropped'))
+    last_read_at      INTEGER              -- unix timestamp
+    -- Added by migrations: scroll_chapter/scroll_y (5), status (7),
+    -- max_scroll_position (11).
   );
 
   CREATE TABLE IF NOT EXISTS tags (
@@ -91,8 +98,7 @@ export const SCHEMA = `
     context_before TEXT    DEFAULT NULL,    -- ~30 chars before selection for re-anchoring
     context_after  TEXT    DEFAULT NULL,    -- ~30 chars after selection for re-anchoring
     note_text      TEXT    DEFAULT NULL,    -- user's freeform note
-    created_at     INTEGER NOT NULL,        -- unix ms
-    sort_order     INTEGER DEFAULT NULL
+    created_at     INTEGER NOT NULL         -- unix ms; sort_order added by migration 14
   );
   CREATE INDEX IF NOT EXISTS idx_annotations_item_id
     ON annotations(item_id, chapter_index, position);

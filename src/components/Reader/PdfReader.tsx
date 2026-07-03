@@ -256,7 +256,7 @@ async function tryOutlineChapters(doc: PDFDocumentProxy): Promise<ChapterBoundar
 
     // Flatten the entire outline tree depth-first so nested chapters
     // (e.g. chapters under Part / Act / Level headings) are all collected.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     function collectItems(items: any[]): any[] {
       const flat: any[] = []
       for (const item of items) {
@@ -835,7 +835,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       scrollRenderTasks.current.forEach(t => t.cancel())
       scrollRenderTasks.current.clear()
     }
-  }, [viewMode, pageDims, renderKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [viewMode, pageDims, renderKey])  
 
   // ── 4. Navigation ───────────────────────────────────────────────
 
@@ -1108,7 +1108,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
           const vh   = page.getViewport({ scale: 1 }).height
           const [tc, rawAnnotations] = await Promise.all([
             page.getTextContent(),
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+             
             page.getAnnotations() as Promise<any[]>,
           ])
 
