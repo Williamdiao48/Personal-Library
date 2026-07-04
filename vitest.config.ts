@@ -28,13 +28,15 @@ export default defineConfig({
         'src/polyfills/**',
         'src/workers/**',
       ],
-      // Starting floor — deliberately modest while the suite is young. Ratcheted
-      // upward in Phase 6 to just under the achieved numbers so regressions fail CI.
+      // Floors ratcheted to just under the achieved numbers so any coverage
+      // regression fails CI. Bumped after the Tier-2 + universal.ts parser suites
+      // landed (achieved: stmts/lines 21.66, funcs 56.36, branches 76.65). Only
+      // ever raise these — never lower to make a change pass.
       thresholds: {
-        lines: 12,
-        functions: 40,
-        branches: 70,
-        statements: 12,
+        lines: 20,
+        functions: 54,
+        branches: 75,
+        statements: 20,
       },
     },
   },
