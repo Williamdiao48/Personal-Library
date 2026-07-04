@@ -35,7 +35,12 @@ function handleEpub(filePath: string): EpubParseResult {
   try {
     const book = extractEpubContent(filePath)
     plainText = book.chapters
-      .map(ch => ch.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim())
+      .map((ch) =>
+        ch.html
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim(),
+      )
       .join(' ')
     wordCount = wordCountOf(plainText)
   } catch {
@@ -43,10 +48,10 @@ function handleEpub(filePath: string): EpubParseResult {
   }
 
   return {
-    title:       meta.title,
-    author:      meta.author,
+    title: meta.title,
+    author: meta.author,
     coverBuffer: meta.coverBuffer,
-    coverExt:    meta.coverExt,
+    coverExt: meta.coverExt,
     plainText,
     wordCount,
   }

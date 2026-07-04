@@ -9,8 +9,12 @@ const MiB = 1_048_576
 
 describe('safeExtractAll', () => {
   let dest: string
-  beforeEach(() => { dest = mkdtempSync(join(tmpdir(), 'pl-zip-')) })
-  afterEach(() => { rmSync(dest, { recursive: true, force: true }) })
+  beforeEach(() => {
+    dest = mkdtempSync(join(tmpdir(), 'pl-zip-'))
+  })
+  afterEach(() => {
+    rmSync(dest, { recursive: true, force: true })
+  })
 
   it('extracts a well-formed backup archive shape', () => {
     const zip = new AdmZip()

@@ -3,14 +3,22 @@ import { useNavigate } from 'react-router-dom'
 import { statsService } from '../../services/stats'
 import { goalsService } from '../../services/goals'
 import { libraryService } from '../../services/library'
-import type { StatsSummary, DailyReading, ItemStats, StreakInfo, Goal, GoalPeriod, Item } from '../../types'
+import type {
+  StatsSummary,
+  DailyReading,
+  ItemStats,
+  StreakInfo,
+  Goal,
+  GoalPeriod,
+  Item,
+} from '../../types'
 import '../../styles/stats.css'
 
 // ── Time formatting ────────────────────────────────────────────────────────
 
 function formatDuration(ms: number): string {
-  if (ms < 60_000)       return `${Math.round(ms / 1_000)}s`
-  if (ms < 3_600_000)    return `${Math.round(ms / 60_000)}m`
+  if (ms < 60_000) return `${Math.round(ms / 1_000)}s`
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`
   const h = Math.floor(ms / 3_600_000)
   const m = Math.round((ms % 3_600_000) / 60_000)
   return m > 0 ? `${h}h ${m}m` : `${h}h`
@@ -18,19 +26,23 @@ function formatDuration(ms: number): string {
 
 function formatWords(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000)     return `${(n / 1_000).toFixed(0)}K`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`
   return String(n)
 }
 
 function formatDate(ts: number): string {
-  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  return new Date(ts).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
 }
 
 // ── Timeline helpers ───────────────────────────────────────────────────────
 
 /** Fill a sparse timeline so every one of the last N days has an entry. */
 function fillTimeline(sparse: DailyReading[], days: number): DailyReading[] {
-  const byDate = new Map(sparse.map(d => [d.date, d.totalMs]))
+  const byDate = new Map(sparse.map((d) => [d.date, d.totalMs]))
   const result: DailyReading[] = []
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date()
@@ -44,25 +56,25 @@ function fillTimeline(sparse: DailyReading[], days: number): DailyReading[] {
 // ── Heatmap ────────────────────────────────────────────────────────────────
 
 const HEATMAP_WEEKS = 53
-const CELL_SIZE     = 12   // px
-const CELL_GAP      = 3    // px
-const CELL_STEP     = CELL_SIZE + CELL_GAP
-const DAY_LABEL_W   = 24   // px
+const CELL_SIZE = 12 // px
+const CELL_GAP = 3 // px
+const CELL_STEP = CELL_SIZE + CELL_GAP
+const DAY_LABEL_W = 24 // px
 
 type HeatmapDay = { date: string; totalMs: number; isFuture: boolean }
 
 function buildHeatmapGrid(filledData: DailyReading[]): {
-  weeks:       HeatmapDay[][]
+  weeks: HeatmapDay[][]
   monthLabels: { label: string; col: number }[]
 } {
-  const byDate   = new Map(filledData.map(d => [d.date, d.totalMs]))
-  const today    = new Date()
+  const byDate = new Map(filledData.map((d) => [d.date, d.totalMs]))
+  const today = new Date()
   const todayStr = today.toISOString().split('T')[0]
 
   // Start the grid on the Monday of the week 52 weeks before this week's Monday
-  const todayDow    = today.getDay()                              // 0=Sun … 6=Sat
-  const toMonday    = todayDow === 0 ? 6 : todayDow - 1          // days back to Mon
-  const gridStart   = new Date(today)
+  const todayDow = today.getDay() // 0=Sun … 6=Sat
+  const toMonday = todayDow === 0 ? 6 : todayDow - 1 // days back to Mon
+  const gridStart = new Date(today)
   gridStart.setDate(gridStart.getDate() - toMonday - 52 * 7)
 
   const weeks: HeatmapDay[][] = []
@@ -83,11 +95,11 @@ function buildHeatmapGrid(filledData: DailyReading[]): {
   let prevMonth = -1
   for (let w = 0; w < weeks.length; w++) {
     const firstDay = new Date(weeks[w][0].date + 'T12:00:00')
-    const month    = firstDay.getMonth()
+    const month = firstDay.getMonth()
     if (month !== prevMonth) {
       monthLabels.push({
         label: firstDay.toLocaleDateString(undefined, { month: 'short' }),
-        col:   w,
+        col: w,
       })
       prevMonth = month
     }
@@ -97,10 +109,10 @@ function buildHeatmapGrid(filledData: DailyReading[]): {
 }
 
 function heatLevel(ms: number): 0 | 1 | 2 | 3 | 4 {
-  if (ms === 0)                   return 0
-  if (ms < 15 * 60_000)           return 1
-  if (ms < 30 * 60_000)           return 2
-  if (ms < 60 * 60_000)           return 3
+  if (ms === 0) return 0
+  if (ms < 15 * 60_000) return 1
+  if (ms < 30 * 60_000) return 2
+  if (ms < 60 * 60_000) return 3
   return 4
 }
 
@@ -111,12 +123,8 @@ function HeatmapCalendar({ data }: { data: DailyReading[] }) {
     <div className="stats-heatmap">
       {/* Month labels */}
       <div className="stats-heatmap-months" style={{ marginLeft: DAY_LABEL_W + 4 }}>
-        {monthLabels.map(m => (
-          <span
-            key={m.col}
-            className="stats-heatmap-month"
-            style={{ left: m.col * CELL_STEP }}
-          >
+        {monthLabels.map((m) => (
+          <span key={m.col} className="stats-heatmap-month" style={{ left: m.col * CELL_STEP }}>
             {m.label}
           </span>
         ))}
@@ -126,18 +134,24 @@ function HeatmapCalendar({ data }: { data: DailyReading[] }) {
       <div className="stats-heatmap-body">
         <div className="stats-heatmap-daylabels">
           {['Mon', '', 'Wed', '', 'Fri', '', 'Sun'].map((lbl, i) => (
-            <span key={i} style={{ height: CELL_STEP }}>{lbl}</span>
+            <span key={i} style={{ height: CELL_STEP }}>
+              {lbl}
+            </span>
           ))}
         </div>
 
         <div className="stats-heatmap-weeks">
           {weeks.map((week, w) => (
             <div key={w} className="stats-heatmap-week">
-              {week.map(day => (
+              {week.map((day) => (
                 <div
                   key={day.date}
                   className={`stats-heatmap-day stats-heatmap-day-${day.isFuture ? 'future' : heatLevel(day.totalMs)}`}
-                  title={day.isFuture ? undefined : `${day.date}: ${day.totalMs > 0 ? formatDuration(day.totalMs) : 'No reading'}`}
+                  title={
+                    day.isFuture
+                      ? undefined
+                      : `${day.date}: ${day.totalMs > 0 ? formatDuration(day.totalMs) : 'No reading'}`
+                  }
                 />
               ))}
             </div>
@@ -148,7 +162,7 @@ function HeatmapCalendar({ data }: { data: DailyReading[] }) {
       {/* Legend */}
       <div className="stats-heatmap-legend">
         <span className="stats-heatmap-legend-label">Less</span>
-        {([0, 1, 2, 3, 4] as const).map(l => (
+        {([0, 1, 2, 3, 4] as const).map((l) => (
           <div key={l} className={`stats-heatmap-day stats-heatmap-day-${l}`} />
         ))}
         <span className="stats-heatmap-legend-label">More</span>
@@ -161,20 +175,27 @@ function HeatmapCalendar({ data }: { data: DailyReading[] }) {
 
 const PERIODS: GoalPeriod[] = ['daily', 'weekly', 'monthly', 'yearly']
 const PERIOD_LABELS: Record<GoalPeriod, string> = {
-  daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly',
+  daily: 'Daily',
+  weekly: 'Weekly',
+  monthly: 'Monthly',
+  yearly: 'Yearly',
 }
 
 function ProgressRing({ children, pct }: { children: React.ReactNode; pct: number }) {
-  const R    = 28
-  const SW   = 4
+  const R = 28
+  const SW = 4
   const circ = 2 * Math.PI * R
   const dash = Math.min(pct, 1) * circ
   return (
     <svg width={70} height={70} viewBox="0 0 70 70">
       <circle cx={35} cy={35} r={R} fill="none" stroke="var(--border)" strokeWidth={SW} />
       <circle
-        cx={35} cy={35} r={R}
-        fill="none" stroke="var(--accent)" strokeWidth={SW}
+        cx={35}
+        cy={35}
+        r={R}
+        fill="none"
+        stroke="var(--accent)"
+        strokeWidth={SW}
         strokeDasharray={`${dash} ${circ}`}
         strokeLinecap="round"
         transform="rotate(-90 35 35)"
@@ -185,15 +206,39 @@ function ProgressRing({ children, pct }: { children: React.ReactNode; pct: numbe
   )
 }
 
-function TimeProgressRing({ valueMinutes, targetMinutes }: { valueMinutes: number; targetMinutes: number }) {
-  const fmt = (m: number) => m >= 60
-    ? `${Math.floor(m / 60)}h${m % 60 > 0 ? `${m % 60}m` : ''}`
-    : `${m}m`
+function TimeProgressRing({
+  valueMinutes,
+  targetMinutes,
+}: {
+  valueMinutes: number
+  targetMinutes: number
+}) {
+  const fmt = (m: number) =>
+    m >= 60 ? `${Math.floor(m / 60)}h${m % 60 > 0 ? `${m % 60}m` : ''}` : `${m}m`
 
   return (
     <ProgressRing pct={valueMinutes / (targetMinutes || 1)}>
-      <text x={35} y={32} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight={700} fill="var(--text)">{fmt(valueMinutes)}</text>
-      <text x={35} y={43} textAnchor="middle" dominantBaseline="middle" fontSize={8} fill="var(--text-muted)">/{fmt(targetMinutes)}</text>
+      <text
+        x={35}
+        y={32}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fontSize={10}
+        fontWeight={700}
+        fill="var(--text)"
+      >
+        {fmt(valueMinutes)}
+      </text>
+      <text
+        x={35}
+        y={43}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fontSize={8}
+        fill="var(--text-muted)"
+      >
+        /{fmt(targetMinutes)}
+      </text>
     </ProgressRing>
   )
 }
@@ -201,20 +246,44 @@ function TimeProgressRing({ valueMinutes, targetMinutes }: { valueMinutes: numbe
 function CountProgressRing({ current, target }: { current: number; target: number }) {
   return (
     <ProgressRing pct={current / (target || 1)}>
-      <text x={35} y={32} textAnchor="middle" dominantBaseline="middle" fontSize={13} fontWeight={700} fill="var(--text)">{current}</text>
-      <text x={35} y={44} textAnchor="middle" dominantBaseline="middle" fontSize={8} fill="var(--text-muted)">/{target}</text>
+      <text
+        x={35}
+        y={32}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fontSize={13}
+        fontWeight={700}
+        fill="var(--text)"
+      >
+        {current}
+      </text>
+      <text
+        x={35}
+        y={44}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fontSize={8}
+        fill="var(--text-muted)"
+      >
+        /{target}
+      </text>
     </ProgressRing>
   )
 }
 
-function PeriodGoalSlot({ period, goal, type, onSave }: {
+function PeriodGoalSlot({
+  period,
+  goal,
+  type,
+  onSave,
+}: {
   period: GoalPeriod
-  goal:   Goal | undefined
-  type:   'time' | 'count'
+  goal: Goal | undefined
+  type: 'time' | 'count'
   onSave: (period: GoalPeriod, target: number | null) => void
 }) {
   const [editing, setEditing] = useState(false)
-  const [val,     setVal]     = useState('')
+  const [val, setVal] = useState('')
 
   function openEdit() {
     const current = type === 'time' ? (goal?.target_minutes ?? '') : (goal?.target_count ?? '')
@@ -241,18 +310,42 @@ function PeriodGoalSlot({ period, goal, type, onSave }: {
         <span className="stats-period-slot-label">{label}</span>
         <input
           autoFocus
-          type="number" min={1}
+          type="number"
+          min={1}
           value={val}
-          onChange={e => setVal(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }}
+          onChange={(e) => setVal(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') save()
+            if (e.key === 'Escape') setEditing(false)
+          }}
           className="stats-period-slot-input"
           placeholder={type === 'time' ? 'min' : 'books'}
         />
         <span className="stats-period-slot-unit">{type === 'time' ? 'min' : 'books'}</span>
         <div className="stats-period-slot-actions">
-          <button className="stats-goals-save-btn" style={{ padding: '4px 10px', fontSize: 12 }} onClick={save}>Save</button>
-          {goal && <button className="stats-goals-cancel-btn" style={{ padding: '4px 8px', fontSize: 12 }} onClick={clear}>Clear</button>}
-          <button className="stats-goals-cancel-btn" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => setEditing(false)}>✕</button>
+          <button
+            className="stats-goals-save-btn"
+            style={{ padding: '4px 10px', fontSize: 12 }}
+            onClick={save}
+          >
+            Save
+          </button>
+          {goal && (
+            <button
+              className="stats-goals-cancel-btn"
+              style={{ padding: '4px 8px', fontSize: 12 }}
+              onClick={clear}
+            >
+              Clear
+            </button>
+          )}
+          <button
+            className="stats-goals-cancel-btn"
+            style={{ padding: '4px 8px', fontSize: 12 }}
+            onClick={() => setEditing(false)}
+          >
+            ✕
+          </button>
         </div>
       </div>
     )
@@ -269,8 +362,15 @@ function PeriodGoalSlot({ period, goal, type, onSave }: {
 
   if (type === 'time') {
     return (
-      <div className="stats-period-slot stats-period-slot--active" onClick={openEdit} title="Click to edit">
-        <TimeProgressRing valueMinutes={goal.current_value} targetMinutes={goal.target_minutes ?? 1} />
+      <div
+        className="stats-period-slot stats-period-slot--active"
+        onClick={openEdit}
+        title="Click to edit"
+      >
+        <TimeProgressRing
+          valueMinutes={goal.current_value}
+          targetMinutes={goal.target_minutes ?? 1}
+        />
         <span className="stats-period-slot-label">{label}</span>
         <span className="stats-period-slot-edit-hint">click to edit</span>
       </div>
@@ -279,7 +379,11 @@ function PeriodGoalSlot({ period, goal, type, onSave }: {
 
   // count
   return (
-    <div className="stats-period-slot stats-period-slot--active" onClick={openEdit} title="Click to edit">
+    <div
+      className="stats-period-slot stats-period-slot--active"
+      onClick={openEdit}
+      title="Click to edit"
+    >
       <CountProgressRing current={goal.current_value} target={goal.target_count ?? 0} />
       <span className="stats-period-slot-label">{label}</span>
       <span className="stats-period-slot-edit-hint">click to edit</span>
@@ -287,9 +391,13 @@ function PeriodGoalSlot({ period, goal, type, onSave }: {
   )
 }
 
-function PeriodGoalGrid({ type, goals, onUpsert }: {
-  type:    'time' | 'count'
-  goals:   Goal[]
+function PeriodGoalGrid({
+  type,
+  goals,
+  onUpsert,
+}: {
+  type: 'time' | 'count'
+  goals: Goal[]
   onUpsert: (period: GoalPeriod, target: number | null) => void
 }) {
   const byPeriod = useMemo(() => {
@@ -306,7 +414,7 @@ function PeriodGoalGrid({ type, goals, onUpsert }: {
         </span>
       </div>
       <div className="stats-period-grid">
-        {PERIODS.map(p => (
+        {PERIODS.map((p) => (
           <PeriodGoalSlot key={p} period={p} goal={byPeriod.get(p)} type={type} onSave={onUpsert} />
         ))}
       </div>
@@ -316,39 +424,49 @@ function PeriodGoalGrid({ type, goals, onUpsert }: {
 
 // ── Reading list card ──────────────────────────────────────────────────────
 
-function ListGoalCard({ goal, allItems, onDelete, onAddItem, onRemoveItem }: {
-  goal:         Goal
-  allItems:     Item[]
-  onDelete:     () => void
-  onAddItem:    (itemId: string) => void
+function ListGoalCard({
+  goal,
+  allItems,
+  onDelete,
+  onAddItem,
+  onRemoveItem,
+}: {
+  goal: Goal
+  allItems: Item[]
+  onDelete: () => void
+  onAddItem: (itemId: string) => void
   onRemoveItem: (itemId: string) => void
 }) {
   const [search, setSearch] = useState('')
   const [searchActive, setSearchActive] = useState(false)
 
-  const pct = goal.total_items > 0
-    ? Math.min(100, Math.round(goal.current_value / goal.total_items * 100))
-    : 0
+  const pct =
+    goal.total_items > 0
+      ? Math.min(100, Math.round((goal.current_value / goal.total_items) * 100))
+      : 0
 
-  const inListIds = useMemo(() => new Set(goal.items.map(i => i.item_id)), [goal.items])
+  const inListIds = useMemo(() => new Set(goal.items.map((i) => i.item_id)), [goal.items])
 
   // Blocked IDs = already in list + related items (PDF ↔ derived EPUB)
   const blockedIds = useMemo(() => {
     const blocked = new Set(inListIds)
     for (const item of allItems) {
       if (!item.derived_from) continue
-      if (inListIds.has(item.id))           blocked.add(item.derived_from) // EPUB in list → block PDF
-      if (inListIds.has(item.derived_from)) blocked.add(item.id)           // PDF in list → block EPUB
+      if (inListIds.has(item.id)) blocked.add(item.derived_from) // EPUB in list → block PDF
+      if (inListIds.has(item.derived_from)) blocked.add(item.id) // PDF in list → block EPUB
     }
     return blocked
   }, [allItems, inListIds])
 
   const pickable = useMemo(() => {
     const q = search.toLowerCase()
-    return allItems.filter(i =>
-      !blockedIds.has(i.id) &&
-      (!q || i.title.toLowerCase().includes(q) || (i.author ?? '').toLowerCase().includes(q))
-    ).slice(0, 10)
+    return allItems
+      .filter(
+        (i) =>
+          !blockedIds.has(i.id) &&
+          (!q || i.title.toLowerCase().includes(q) || (i.author ?? '').toLowerCase().includes(q)),
+      )
+      .slice(0, 10)
   }, [allItems, blockedIds, search])
 
   return (
@@ -357,18 +475,22 @@ function ListGoalCard({ goal, allItems, onDelete, onAddItem, onRemoveItem }: {
       <div className="stats-goal-list-header">
         <span className="stats-goal-list-title">{goal.title}</span>
         <div className="stats-goal-list-header-meta">
-          <span>{goal.current_value}/{goal.total_items}</span>
+          <span>
+            {goal.current_value}/{goal.total_items}
+          </span>
           <div className="stats-goal-list-mini-bar">
             <div className="stats-progress-fill" style={{ width: `${pct}%` }} />
           </div>
         </div>
-        <button className="stats-goal-card-delete" onClick={onDelete} aria-label="Delete list">×</button>
+        <button className="stats-goal-card-delete" onClick={onDelete} aria-label="Delete list">
+          ×
+        </button>
       </div>
 
       {/* Item list */}
       {goal.items.length > 0 && (
         <div className="stats-goal-list-items">
-          {goal.items.map(item => {
+          {goal.items.map((item) => {
             const pct = Math.round(item.scroll_position * 100)
             return (
               <div
@@ -384,7 +506,13 @@ function ListGoalCard({ goal, allItems, onDelete, onAddItem, onRemoveItem }: {
                   </div>
                 </div>
                 <span className="stats-goal-list-item-pct">{pct}%</span>
-                <button className="stats-goal-list-remove" onClick={() => onRemoveItem(item.item_id)} aria-label="Remove">×</button>
+                <button
+                  className="stats-goal-list-remove"
+                  onClick={() => onRemoveItem(item.item_id)}
+                  aria-label="Remove"
+                >
+                  ×
+                </button>
               </div>
             )
           })}
@@ -397,18 +525,25 @@ function ListGoalCard({ goal, allItems, onDelete, onAddItem, onRemoveItem }: {
           className="stats-goal-list-search"
           placeholder="+ Add a book to this list…"
           value={search}
-          onChange={e => { setSearch(e.target.value); setSearchActive(true) }}
+          onChange={(e) => {
+            setSearch(e.target.value)
+            setSearchActive(true)
+          }}
           onFocus={() => setSearchActive(true)}
           onBlur={() => setTimeout(() => setSearchActive(false), 150)}
         />
         {searchActive && pickable.length > 0 && (
           <div className="stats-goal-list-search-results">
-            {pickable.map(item => (
+            {pickable.map((item) => (
               <button
                 key={item.id}
                 className="stats-goal-item-picker-row"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => { onAddItem(item.id); setSearch(''); setSearchActive(false) }}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onAddItem(item.id)
+                  setSearch('')
+                  setSearchActive(false)
+                }}
               >
                 <span className="stats-goal-item-picker-title">{item.title}</span>
                 {item.author && <span className="stats-table-author">{item.author}</span>}
@@ -418,7 +553,9 @@ function ListGoalCard({ goal, allItems, onDelete, onAddItem, onRemoveItem }: {
         )}
         {searchActive && search && pickable.length === 0 && (
           <div className="stats-goal-list-search-results">
-            <span className="stats-goals-empty" style={{ padding: '8px 12px', display: 'block' }}>No matching books</span>
+            <span className="stats-goals-empty" style={{ padding: '8px 12px', display: 'block' }}>
+              No matching books
+            </span>
           </div>
         )}
       </div>
@@ -429,15 +566,18 @@ function ListGoalCard({ goal, allItems, onDelete, onAddItem, onRemoveItem }: {
 // ── Goals section ──────────────────────────────────────────────────────────
 
 function GoalsSection() {
-  const [goals,        setGoals]        = useState<Goal[]>([])
-  const [allItems,     setAllItems]     = useState<Item[]>([])
-  const [loading,      setLoading]      = useState(true)
+  const [goals, setGoals] = useState<Goal[]>([])
+  const [allItems, setAllItems] = useState<Item[]>([])
+  const [loading, setLoading] = useState(true)
   const [creatingList, setCreatingList] = useState(false)
-  const [newListName,  setNewListName]  = useState('')
+  const [newListName, setNewListName] = useState('')
 
   useEffect(() => {
     Promise.all([goalsService.getAll(), libraryService.getAll()])
-      .then(([g, items]) => { setGoals(g); setAllItems(items) })
+      .then(([g, items]) => {
+        setGoals(g)
+        setAllItems(items)
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -446,7 +586,11 @@ function GoalsSection() {
     setGoals(g)
   }
 
-  async function handleUpsertPeriod(type: 'time' | 'count', period: GoalPeriod, target: number | null) {
+  async function handleUpsertPeriod(
+    type: 'time' | 'count',
+    period: GoalPeriod,
+    target: number | null,
+  ) {
     await goalsService.upsertPeriodGoal(type, period, target)
     await reloadGoals()
   }
@@ -462,7 +606,7 @@ function GoalsSection() {
 
   async function handleDeleteGoal(id: string) {
     await goalsService.delete(id)
-    setGoals(prev => prev.filter(g => g.id !== id))
+    setGoals((prev) => prev.filter((g) => g.id !== id))
   }
 
   async function handleAddItem(goalId: string, itemId: string) {
@@ -475,9 +619,9 @@ function GoalsSection() {
     await reloadGoals()
   }
 
-  const timeGoals  = goals.filter(g => g.type === 'time')
-  const countGoals = goals.filter(g => g.type === 'count')
-  const listGoals  = goals.filter(g => g.type === 'list')
+  const timeGoals = goals.filter((g) => g.type === 'time')
+  const countGoals = goals.filter((g) => g.type === 'count')
+  const listGoals = goals.filter((g) => g.type === 'list')
 
   return (
     <section className="stats-section">
@@ -517,14 +661,30 @@ function GoalsSection() {
                 <input
                   autoFocus
                   value={newListName}
-                  onChange={e => setNewListName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleCreateList(); if (e.key === 'Escape') { setCreatingList(false); setNewListName('') } }}
+                  onChange={(e) => setNewListName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleCreateList()
+                    if (e.key === 'Escape') {
+                      setCreatingList(false)
+                      setNewListName('')
+                    }
+                  }}
                   placeholder="List name…"
                   className="stats-goals-input stats-goals-input--wide"
                   style={{ maxWidth: 260 }}
                 />
-                <button className="stats-goals-save-btn" onClick={handleCreateList}>Save</button>
-                <button className="stats-goals-cancel-btn" onClick={() => { setCreatingList(false); setNewListName('') }}>Cancel</button>
+                <button className="stats-goals-save-btn" onClick={handleCreateList}>
+                  Save
+                </button>
+                <button
+                  className="stats-goals-cancel-btn"
+                  onClick={() => {
+                    setCreatingList(false)
+                    setNewListName('')
+                  }}
+                >
+                  Cancel
+                </button>
               </div>
             )}
 
@@ -539,14 +699,14 @@ function GoalsSection() {
 
             {listGoals.length > 0 && (
               <div className="stats-goal-lists">
-                {listGoals.map(goal => (
+                {listGoals.map((goal) => (
                   <ListGoalCard
                     key={goal.id}
                     goal={goal}
                     allItems={allItems}
                     onDelete={() => handleDeleteGoal(goal.id)}
-                    onAddItem={itemId => handleAddItem(goal.id, itemId)}
-                    onRemoveItem={itemId => handleRemoveItem(goal.id, itemId)}
+                    onAddItem={(itemId) => handleAddItem(goal.id, itemId)}
+                    onRemoveItem={(itemId) => handleRemoveItem(goal.id, itemId)}
                   />
                 ))}
               </div>
@@ -593,7 +753,7 @@ function ItemTable({ items }: { items: ItemStats[] }) {
         </tr>
       </thead>
       <tbody>
-        {items.map(it => (
+        {items.map((it) => (
           <tr key={it.id}>
             <td className="stats-table-title">
               <span className="stats-table-title-text">{it.title}</span>
@@ -604,14 +764,14 @@ function ItemTable({ items }: { items: ItemStats[] }) {
                 {it.content_type}
               </span>
             </td>
-            <td><ProgressBar value={it.scroll_position} /></td>
+            <td>
+              <ProgressBar value={it.scroll_position} />
+            </td>
             <td className="stats-table-num">
               {it.total_ms > 0 ? formatDuration(it.total_ms) : '—'}
             </td>
             <td className="stats-table-num">{it.session_count || '—'}</td>
-            <td className="stats-table-num">
-              {it.avg_wpm != null ? `${it.avg_wpm} wpm` : '—'}
-            </td>
+            <td className="stats-table-num">{it.avg_wpm != null ? `${it.avg_wpm} wpm` : '—'}</td>
             <td className="stats-table-num">
               {it.last_read_at ? formatDate(it.last_read_at) : '—'}
             </td>
@@ -627,11 +787,11 @@ function ItemTable({ items }: { items: ItemStats[] }) {
 export default function StatsView() {
   const navigate = useNavigate()
 
-  const [summary,  setSummary]  = useState<StatsSummary | null>(null)
+  const [summary, setSummary] = useState<StatsSummary | null>(null)
   const [timeline, setTimeline] = useState<DailyReading[]>([])
-  const [items,    setItems]    = useState<ItemStats[]>([])
-  const [streaks,  setStreaks]  = useState<StreakInfo>({ currentStreak: 0, longestStreak: 0 })
-  const [loading,  setLoading]  = useState(true)
+  const [items, setItems] = useState<ItemStats[]>([])
+  const [streaks, setStreaks] = useState<StreakInfo>({ currentStreak: 0, longestStreak: 0 })
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     Promise.all([
@@ -639,12 +799,14 @@ export default function StatsView() {
       statsService.getTimeline(366),
       statsService.getByItem(),
       statsService.getStreaks(),
-    ]).then(([s, t, it, sk]) => {
-      setSummary(s)
-      setTimeline(t)
-      setItems(it)
-      setStreaks(sk)
-    }).finally(() => setLoading(false))
+    ])
+      .then(([s, t, it, sk]) => {
+        setSummary(s)
+        setTimeline(t)
+        setItems(it)
+        setStreaks(sk)
+      })
+      .finally(() => setLoading(false))
   }, [])
 
   const heatmapData = useMemo(() => fillTimeline(timeline, 366), [timeline])
@@ -662,7 +824,6 @@ export default function StatsView() {
         <div className="stats-loading">Loading…</div>
       ) : (
         <div className="stats-body">
-
           {/* Overview + streak cards */}
           <section className="stats-cards">
             <div className="stats-card">
@@ -709,7 +870,6 @@ export default function StatsView() {
             <h2 className="stats-section-title">By item</h2>
             <ItemTable items={items} />
           </section>
-
         </div>
       )}
     </div>

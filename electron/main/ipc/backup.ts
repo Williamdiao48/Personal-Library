@@ -6,19 +6,18 @@ import { get, closeDb } from '../db'
 import { safeExtractAll } from '../security/zip'
 
 export function registerBackupHandlers(): void {
-
   // ── backup:export ────────────────────────────────────────────────────────
   ipcMain.handle('backup:export', async () => {
-    const userData    = app.getPath('userData')
-    const dbPath      = join(userData, 'library.db')
-    const contentDir  = join(userData, 'content')
+    const userData = app.getPath('userData')
+    const dbPath = join(userData, 'library.db')
+    const contentDir = join(userData, 'content')
 
     // Ask user where to save
     const today = new Date().toISOString().slice(0, 10)
     const { filePath, canceled } = await dialog.showSaveDialog({
-      title:       'Export Library',
+      title: 'Export Library',
       defaultPath: `personal-library-${today}.plbackup`,
-      filters:     [{ name: 'Personal Library Backup', extensions: ['plbackup'] }],
+      filters: [{ name: 'Personal Library Backup', extensions: ['plbackup'] }],
     })
     if (canceled || !filePath) return null
 
@@ -41,8 +40,8 @@ export function registerBackupHandlers(): void {
     const zip = new AdmZip()
 
     const manifest = JSON.stringify({
-      version:          1,
-      exportedAt:       new Date().toISOString(),
+      version: 1,
+      exportedAt: new Date().toISOString(),
       itemCount,
       contentFileCount,
     })
@@ -62,15 +61,15 @@ export function registerBackupHandlers(): void {
 
   // ── backup:import ────────────────────────────────────────────────────────
   ipcMain.handle('backup:import', async () => {
-    const userData   = app.getPath('userData')
-    const dbPath     = join(userData, 'library.db')
+    const userData = app.getPath('userData')
+    const dbPath = join(userData, 'library.db')
     const contentDir = join(userData, 'content')
-    const tmpDir     = join(userData, 'import-tmp')
+    const tmpDir = join(userData, 'import-tmp')
 
     // Ask user to pick a backup file
     const { filePaths, canceled } = await dialog.showOpenDialog({
-      title:      'Import Library',
-      filters:    [{ name: 'Personal Library Backup', extensions: ['plbackup', 'zip'] }],
+      title: 'Import Library',
+      filters: [{ name: 'Personal Library Backup', extensions: ['plbackup', 'zip'] }],
       properties: ['openFile'],
     })
     if (canceled || filePaths.length === 0) return
@@ -79,7 +78,7 @@ export function registerBackupHandlers(): void {
 
     // Validate the ZIP contains library.db
     const zip = new AdmZip(backupPath)
-    const entries = zip.getEntries().map(e => e.entryName)
+    const entries = zip.getEntries().map((e) => e.entryName)
     if (!entries.includes('library.db')) {
       throw new Error('Invalid backup file: library.db not found in archive.')
     }

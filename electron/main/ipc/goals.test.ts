@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { invoke, resetIpc } from '../../../test/stubs/electron'
-import { openTestDb, closeTestDb, seedItem, seedSession, type TestDb } from '../../../test/db/harness'
+import {
+  openTestDb,
+  closeTestDb,
+  seedItem,
+  seedSession,
+  type TestDb,
+} from '../../../test/db/harness'
 import { registerGoalsHandlers } from './goals'
 
 let db: TestDb
@@ -13,7 +19,10 @@ beforeEach(() => {
 afterEach(() => closeTestDb())
 
 // Give an item explicit progress (status/scroll) for count/list goal math.
-function setProgress(itemId: string, over: { status?: string; scroll?: number; lastRead?: number }) {
+function setProgress(
+  itemId: string,
+  over: { status?: string; scroll?: number; lastRead?: number },
+) {
   db.prepare(
     `INSERT INTO progress (item_id, scroll_position, status, last_read_at)
      VALUES (?, ?, ?, ?)
@@ -32,12 +41,22 @@ describe('goals IPC — CRUD', () => {
       period: 'daily',
       targetMinutes: 30,
     })) as any
-    expect(g).toMatchObject({ type: 'time', title: 'Read more', target_minutes: 30, current_value: 0 })
-    expect((await invoke('goals:getAll') as any[]).length).toBe(1)
+    expect(g).toMatchObject({
+      type: 'time',
+      title: 'Read more',
+      target_minutes: 30,
+      current_value: 0,
+    })
+    expect(((await invoke('goals:getAll')) as any[]).length).toBe(1)
   })
 
   it('update patches individual fields', async () => {
-    const g = (await invoke('goals:create', { type: 'time', title: 'x', period: 'daily', targetMinutes: 10 })) as any
+    const g = (await invoke('goals:create', {
+      type: 'time',
+      title: 'x',
+      period: 'daily',
+      targetMinutes: 10,
+    })) as any
     await invoke('goals:update', g.id, { title: 'renamed', targetMinutes: 45 })
     const row = db.prepare('SELECT title, target_minutes FROM goals WHERE id = ?').get(g.id) as any
     expect(row).toEqual({ title: 'renamed', target_minutes: 45 })
@@ -46,7 +65,7 @@ describe('goals IPC — CRUD', () => {
   it('delete removes the goal', async () => {
     const g = (await invoke('goals:create', { type: 'list', title: 'TBR' })) as any
     await invoke('goals:delete', g.id)
-    expect((await invoke('goals:getAll') as any[]).length).toBe(0)
+    expect(((await invoke('goals:getAll')) as any[]).length).toBe(0)
   })
 })
 
@@ -55,7 +74,12 @@ describe('goals IPC — progress computation', () => {
     const item = seedItem(db, {})
     seedSession(db, item, { started_at: Date.now(), duration: 30 * 60_000 }) // 30 min
     seedSession(db, item, { started_at: Date.now(), duration: 15 * 60_000 }) // 15 min
-    const g = (await invoke('goals:create', { type: 'time', title: 't', period: 'daily', targetMinutes: 60 })) as any
+    const g = (await invoke('goals:create', {
+      type: 'time',
+      title: 't',
+      period: 'daily',
+      targetMinutes: 60,
+    })) as any
     expect(g.current_value).toBe(45) // ms summed → minutes
   })
 
@@ -64,7 +88,12 @@ describe('goals IPC — progress computation', () => {
     const b = seedItem(db, {})
     setProgress(a, { status: 'finished', lastRead: Date.now() })
     setProgress(b, { scroll: 0.4, lastRead: Date.now() }) // not finished
-    const g = (await invoke('goals:create', { type: 'count', title: 'c', period: 'daily', targetCount: 3 })) as any
+    const g = (await invoke('goals:create', {
+      type: 'count',
+      title: 'c',
+      period: 'daily',
+      targetCount: 3,
+    })) as any
     expect(g.current_value).toBe(1)
   })
 
@@ -102,10 +131,10 @@ describe('goals IPC — upsertPeriodGoal', () => {
 
     const updated = (await invoke('goals:upsertPeriodGoal', 'time', 'weekly', 200)) as any
     expect(updated.target_minutes).toBe(200)
-    expect((await invoke('goals:getAll') as any[]).length).toBe(1) // upsert, not duplicate
+    expect(((await invoke('goals:getAll')) as any[]).length).toBe(1) // upsert, not duplicate
 
     const deleted = await invoke('goals:upsertPeriodGoal', 'time', 'weekly', 0)
     expect(deleted).toBeNull()
-    expect((await invoke('goals:getAll') as any[]).length).toBe(0)
+    expect(((await invoke('goals:getAll')) as any[]).length).toBe(0)
   })
 })

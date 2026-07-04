@@ -5,30 +5,36 @@ import { libraryService } from '../../services/library'
 import StarRating from '../ui/StarRating'
 
 const STATUS_LABELS: Record<ReadingStatus, string> = {
-  unread:    'Unread',
-  reading:   'Reading',
-  finished:  'Finished',
+  unread: 'Unread',
+  reading: 'Reading',
+  finished: 'Finished',
   'on-hold': 'On Hold',
-  dropped:   'Dropped',
+  dropped: 'Dropped',
 }
 
 const STATUS_OPTIONS: Array<{ value: ReadingStatus | null; label: string }> = [
-  { value: 'unread',   label: 'Unread'   },
-  { value: 'reading',  label: 'Reading'  },
+  { value: 'unread', label: 'Unread' },
+  { value: 'reading', label: 'Reading' },
   { value: 'finished', label: 'Finished' },
-  { value: 'on-hold',  label: 'On Hold'  },
-  { value: 'dropped',  label: 'Dropped'  },
-  { value: null,       label: 'Auto'     },
+  { value: 'on-hold', label: 'On Hold' },
+  { value: 'dropped', label: 'Dropped' },
+  { value: null, label: 'Auto' },
 ]
 
 // Deterministic per-item cover color when no cover image is available.
 const COVER_COLORS = [
-  '#4a6fa8', '#7a5a9e', '#a05060', '#8a7040',
-  '#3a8a6e', '#3a7a9e', '#8a5040', '#5a7a3a',
+  '#4a6fa8',
+  '#7a5a9e',
+  '#a05060',
+  '#8a7040',
+  '#3a8a6e',
+  '#3a7a9e',
+  '#8a5040',
+  '#5a7a3a',
 ]
 function coverColor(id: string): string {
   let h = 0
-  for (let i = 0; i < id.length; i++) h = Math.imul(31, h) + id.charCodeAt(i) | 0
+  for (let i = 0; i < id.length; i++) h = (Math.imul(31, h) + id.charCodeAt(i)) | 0
   return COVER_COLORS[Math.abs(h) % COVER_COLORS.length]
 }
 
@@ -56,22 +62,44 @@ interface Props {
   onRemoveFromCollection?: () => void
 }
 
-function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpenSource, onTogglePreferred, onEditTags, onEditCollections, onCoverChange, onAuthorChange, onTitleChange, onStatusChange, onTagClick, onAuthorClick, onRefresh, onAppend, onRatingChange, onWriteReview, onRemoveFromCollection }: Props) {
-  const [confirming, setConfirming]   = useState(false)
-  const [deleting, setDeleting]       = useState(false)
+function ItemCard({
+  item,
+  tags,
+  sourceItem,
+  isSelected,
+  onClick,
+  onDelete,
+  onOpenSource,
+  onTogglePreferred,
+  onEditTags,
+  onEditCollections,
+  onCoverChange,
+  onAuthorChange,
+  onTitleChange,
+  onStatusChange,
+  onTagClick,
+  onAuthorClick,
+  onRefresh,
+  onAppend,
+  onRatingChange,
+  onWriteReview,
+  onRemoveFromCollection,
+}: Props) {
+  const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
-  const [menuOpen, setMenuOpen]       = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [statusMenuOpen, setStatusMenuOpen] = useState(false)
   const [authorEditing, setAuthorEditing] = useState(false)
-  const [authorDraft, setAuthorDraft]     = useState('')
-  const [titleEditing, setTitleEditing]   = useState(false)
-  const [titleDraft, setTitleDraft]       = useState('')
-  const [refreshing, setRefreshing]       = useState(false)
-  const menuRef        = useRef<HTMLDivElement>(null)
-  const statusMenuRef  = useRef<HTMLDivElement>(null)
-  const tagsRef        = useRef<HTMLDivElement>(null)
+  const [authorDraft, setAuthorDraft] = useState('')
+  const [titleEditing, setTitleEditing] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const statusMenuRef = useRef<HTMLDivElement>(null)
+  const tagsRef = useRef<HTMLDivElement>(null)
   const authorInputRef = useRef<HTMLInputElement>(null)
-  const titleInputRef  = useRef<HTMLInputElement>(null)
+  const titleInputRef = useRef<HTMLInputElement>(null)
   const progress = item.scroll_position ? Math.round(item.scroll_position * 100) : 0
   const effectiveStatus = getEffectiveStatus(item)
 
@@ -143,7 +171,7 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
 
   function handleMenuToggle(e: React.MouseEvent) {
     e.stopPropagation()
-    setMenuOpen(prev => !prev)
+    setMenuOpen((prev) => !prev)
   }
 
   async function handlePickCover(e: React.MouseEvent) {
@@ -190,31 +218,35 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
 
   const card = (
     <div
-      className={`item-card${confirming ? ' item-card--confirming' : ''}${isSelected ? ' item-card--selected' : ''}${(menuOpen || statusMenuOpen) ? ' item-card--has-dropdown' : ''}`}
-      onClick={confirming ? undefined : e => onClick(e)}
+      className={`item-card${confirming ? ' item-card--confirming' : ''}${isSelected ? ' item-card--selected' : ''}${menuOpen || statusMenuOpen ? ' item-card--has-dropdown' : ''}`}
+      onClick={confirming ? undefined : (e) => onClick(e)}
     >
       <div
         className="item-card-cover"
         style={!item.cover_path ? { background: coverColor(item.id) } : undefined}
       >
-        {item.cover_path
-          ? <img
-              src={`library://${item.cover_path}`}
-              alt={item.title}
-              loading="lazy"
-              onLoad={e => (e.currentTarget as HTMLImageElement).classList.add('loaded')}
-            />
-          : <div className="item-card-cover-placeholder">{item.title[0]?.toUpperCase() ?? '?'}</div>
-        }
+        {item.cover_path ? (
+          <img
+            src={`library://${item.cover_path}`}
+            alt={item.title}
+            loading="lazy"
+            onLoad={(e) => (e.currentTarget as HTMLImageElement).classList.add('loaded')}
+          />
+        ) : (
+          <div className="item-card-cover-placeholder">{item.title[0]?.toUpperCase() ?? '?'}</div>
+        )}
         {tags.length > 0 && (
           <div className="item-card-tag-overlay" ref={tagsRef}>
-            {tags.map(t => (
+            {tags.map((t) => (
               <button
                 key={t.id}
                 className="item-card-tag-pill"
                 title={`Filter by ${t.name}`}
                 style={{ '--pill-color': t.color } as React.CSSProperties}
-                onClick={e => { e.stopPropagation(); if (!e.shiftKey) onTagClick(t.id) }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (!e.shiftKey) onTagClick(t.id)
+                }}
               >
                 {t.name}
               </button>
@@ -231,24 +263,42 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
             value={titleDraft}
             autoFocus
             placeholder="Title…"
-            onChange={e => setTitleDraft(e.target.value)}
+            onChange={(e) => setTitleDraft(e.target.value)}
             onBlur={commitTitleEdit}
-            onKeyDown={e => {
-              if (e.key === 'Enter')  { e.preventDefault(); commitTitleEdit() }
-              if (e.key === 'Escape') { e.preventDefault(); cancelTitleEdit() }
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                commitTitleEdit()
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                cancelTitleEdit()
+              }
             }}
-            onClick={e => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           />
         ) : (
           <div className="item-card-title-row">
-            <p className="item-card-title" title={item.title}>{item.title}</p>
+            <p className="item-card-title" title={item.title}>
+              {item.title}
+            </p>
             <button
               className="item-card-author-edit-btn"
               onClick={startTitleEdit}
               aria-label="Edit title"
               title="Edit title"
             >
-              <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <svg
+                viewBox="0 0 12 12"
+                width="11"
+                height="11"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
                 <path d="M8.5 1.5l2 2-6 6H2.5v-2l6-6z" />
               </svg>
             </button>
@@ -262,13 +312,19 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
             value={authorDraft}
             autoFocus
             placeholder="Author name…"
-            onChange={e => setAuthorDraft(e.target.value)}
+            onChange={(e) => setAuthorDraft(e.target.value)}
             onBlur={commitAuthorEdit}
-            onKeyDown={e => {
-              if (e.key === 'Enter')  { e.preventDefault(); commitAuthorEdit() }
-              if (e.key === 'Escape') { e.preventDefault(); cancelAuthorEdit() }
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                commitAuthorEdit()
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                cancelAuthorEdit()
+              }
             }}
-            onClick={e => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           />
         ) : (
           <div className="item-card-author-row">
@@ -276,7 +332,10 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
               <button
                 className="item-card-author item-card-author--clickable"
                 title={`Filter by ${item.author}`}
-                onClick={e => { e.stopPropagation(); if (!e.shiftKey) onAuthorClick(item.author!) }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (!e.shiftKey) onAuthorClick(item.author!)
+                }}
               >
                 {item.author}
               </button>
@@ -289,7 +348,17 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
               aria-label="Edit author"
               title="Edit author"
             >
-              <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <svg
+                viewBox="0 0 12 12"
+                width="11"
+                height="11"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
                 <path d="M8.5 1.5l2 2-6 6H2.5v-2l6-6z" />
               </svg>
             </button>
@@ -300,18 +369,21 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
           <div ref={statusMenuRef} style={{ position: 'relative' }}>
             <button
               className={`item-card-status item-card-status--${effectiveStatus}`}
-              onClick={e => { e.stopPropagation(); setStatusMenuOpen(s => !s) }}
+              onClick={(e) => {
+                e.stopPropagation()
+                setStatusMenuOpen((s) => !s)
+              }}
               title="Change reading status"
             >
               {STATUS_LABELS[effectiveStatus]}
             </button>
             {statusMenuOpen && (
               <div className="item-card-status-menu">
-                {STATUS_OPTIONS.map(opt => (
+                {STATUS_OPTIONS.map((opt) => (
                   <button
                     key={opt.value ?? '__auto'}
                     className={`item-card-status-menu-item${(item.status ?? null) === opt.value ? ' active' : ''}`}
-                    onClick={e => {
+                    onClick={(e) => {
                       e.stopPropagation()
                       setStatusMenuOpen(false)
                       onStatusChange(opt.value)
@@ -337,12 +409,21 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
           <div className="item-card-progress-bar" style={{ width: `${progress}%` }} />
         </div>
 
-        <div className={`item-card-rating${item.rating != null ? ' item-card-rating--rated' : ''}`} onClick={e => e.stopPropagation()}>
+        <div
+          className={`item-card-rating${item.rating != null ? ' item-card-rating--rated' : ''}`}
+          onClick={(e) => e.stopPropagation()}
+        >
           <StarRating value={item.rating ?? null} onChange={onRatingChange} size={14} />
         </div>
 
         {item.review && (
-          <button className="item-card-review" onClick={e => { e.stopPropagation(); onWriteReview() }}>
+          <button
+            className="item-card-review"
+            onClick={(e) => {
+              e.stopPropagation()
+              onWriteReview()
+            }}
+          >
             {item.review}
           </button>
         )}
@@ -362,34 +443,83 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
             <div className="item-card-dropdown">
               {onOpenSource && sourceItem && (
                 <>
-                  <button className="item-card-dropdown-item" onClick={e => { e.stopPropagation(); setMenuOpen(false); onOpenSource() }}>
+                  <button
+                    className="item-card-dropdown-item"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setMenuOpen(false)
+                      onOpenSource()
+                    }}
+                  >
                     Open as {sourceItem.content_type.toUpperCase()}
                   </button>
-                  <button className="item-card-dropdown-item" onClick={e => { e.stopPropagation(); setMenuOpen(false); onTogglePreferred?.() }}>
+                  <button
+                    className="item-card-dropdown-item"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setMenuOpen(false)
+                      onTogglePreferred?.()
+                    }}
+                  >
                     Make {sourceItem.content_type.toUpperCase()} default
                   </button>
                 </>
               )}
               {onRemoveFromCollection ? (
-                <button className="item-card-dropdown-item" onClick={e => { e.stopPropagation(); setMenuOpen(false); onRemoveFromCollection() }}>
+                <button
+                  className="item-card-dropdown-item"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setMenuOpen(false)
+                    onRemoveFromCollection()
+                  }}
+                >
                   Remove from collection
                 </button>
               ) : (
-                <button className="item-card-dropdown-item" onClick={e => { e.stopPropagation(); setMenuOpen(false); onEditCollections() }}>
+                <button
+                  className="item-card-dropdown-item"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setMenuOpen(false)
+                    onEditCollections()
+                  }}
+                >
                   Add to collection
                 </button>
               )}
-              <button className="item-card-dropdown-item" onClick={e => { e.stopPropagation(); setMenuOpen(false); onEditTags() }}>
+              <button
+                className="item-card-dropdown-item"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setMenuOpen(false)
+                  onEditTags()
+                }}
+              >
                 Edit tags
               </button>
-              <button className="item-card-dropdown-item" onClick={e => { e.stopPropagation(); setMenuOpen(false); onWriteReview() }}>
+              <button
+                className="item-card-dropdown-item"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setMenuOpen(false)
+                  onWriteReview()
+                }}
+              >
                 {item.review ? 'Edit review' : 'Write review'}
               </button>
               <button className="item-card-dropdown-item" onClick={handlePickCover}>
                 Change cover
               </button>
               {onAppend && (
-                <button className="item-card-dropdown-item" onClick={e => { e.stopPropagation(); setMenuOpen(false); onAppend() }}>
+                <button
+                  className="item-card-dropdown-item"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setMenuOpen(false)
+                    onAppend()
+                  }}
+                >
                   Append chapters…
                 </button>
               )}
@@ -402,7 +532,10 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
                   {refreshing ? 'Refreshing…' : 'Refresh from source'}
                 </button>
               )}
-              <button className="item-card-dropdown-item item-card-dropdown-item--danger" onClick={handleDeleteClick}>
+              <button
+                className="item-card-dropdown-item item-card-dropdown-item--danger"
+                onClick={handleDeleteClick}
+              >
                 Delete
               </button>
             </div>
@@ -412,12 +545,14 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
 
       {/* Inline delete confirmation overlay */}
       {confirming && (
-        <div className="item-card-confirm" onClick={e => e.stopPropagation()}>
+        <div className="item-card-confirm" onClick={(e) => e.stopPropagation()}>
           <p className="item-card-confirm-text">
             {deleteError ?? (sourceItem ? 'Delete both EPUB and PDF?' : 'Delete this item?')}
           </p>
           <div className="item-card-confirm-actions">
-            <button onClick={handleCancel} disabled={deleting}>Cancel</button>
+            <button onClick={handleCancel} disabled={deleting}>
+              Cancel
+            </button>
             <button className="btn-danger" onClick={handleConfirm} disabled={deleting}>
               {deleting ? 'Deleting…' : 'Delete'}
             </button>
@@ -441,21 +576,22 @@ function ItemCard({ item, tags, sourceItem, isSelected, onClick, onDelete, onOpe
 export default memo(ItemCard, (prev, next) => {
   // Compare item by value so reference changes from setItems spreads don't cause re-renders
   // when the actual displayed data hasn't changed.
-  const pi = prev.item, ni = next.item
+  const pi = prev.item,
+    ni = next.item
   return (
-    pi.id            === ni.id            &&
-    pi.title         === ni.title         &&
-    pi.author        === ni.author        &&
-    pi.cover_path    === ni.cover_path    &&
-    pi.word_count    === ni.word_count    &&
-    pi.chapter_end   === ni.chapter_end   &&
+    pi.id === ni.id &&
+    pi.title === ni.title &&
+    pi.author === ni.author &&
+    pi.cover_path === ni.cover_path &&
+    pi.word_count === ni.word_count &&
+    pi.chapter_end === ni.chapter_end &&
     pi.scroll_position === ni.scroll_position &&
-    pi.status        === ni.status        &&
-    pi.rating        === ni.rating        &&
-    pi.review        === ni.review        &&
+    pi.status === ni.status &&
+    pi.rating === ni.rating &&
+    pi.review === ni.review &&
     pi.date_modified === ni.date_modified &&
-    prev.tags        === next.tags        &&
-    prev.isSelected  === next.isSelected  &&
-    prev.sourceItem  === next.sourceItem
+    prev.tags === next.tags &&
+    prev.isSelected === next.isSelected &&
+    prev.sourceItem === next.sourceItem
   )
 })

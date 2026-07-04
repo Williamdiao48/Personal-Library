@@ -7,7 +7,14 @@ import type { EpubParseResult } from './parse-protocol'
 // parse-host.ts and is covered by manual verification.
 
 function epub(plainText: string): EpubParseResult {
-  return { title: null, author: null, coverBuffer: null, coverExt: null, plainText, wordCount: wordCountOf(plainText) }
+  return {
+    title: null,
+    author: null,
+    coverBuffer: null,
+    coverExt: null,
+    plainText,
+    wordCount: wordCountOf(plainText),
+  }
 }
 function wordCountOf(t: string): number {
   return t.split(/\s+/).filter(Boolean).length
@@ -50,11 +57,11 @@ describe('PendingRegistry', () => {
 
   it('correlates concurrent requests to the right promise', async () => {
     const reg = new PendingRegistry()
-    const first  = reg.create<EpubParseResult>(1000, () => {})
+    const first = reg.create<EpubParseResult>(1000, () => {})
     const second = reg.create<EpubParseResult>(1000, () => {})
     // Settle out of order.
     reg.settle({ id: second.id, ok: true, result: epub('second') })
-    reg.settle({ id: first.id,  ok: true, result: epub('first') })
+    reg.settle({ id: first.id, ok: true, result: epub('first') })
     expect((await first.promise).plainText).toBe('first')
     expect((await second.promise).plainText).toBe('second')
   })

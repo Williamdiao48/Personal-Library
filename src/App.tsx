@@ -28,7 +28,7 @@ function UpdaterListener() {
         `v${version} available — click to download`,
         'info',
         undefined,
-        () => window.api.updater.downloadUpdate()
+        () => window.api.updater.downloadUpdate(),
       )
     })
 
@@ -44,11 +44,8 @@ function UpdaterListener() {
       if (downloadToastId.current) removeToast(downloadToastId.current)
       downloadToastId.current = null
       setPendingVersion(null)
-      addToast(
-        'Update ready — click to restart',
-        'success',
-        undefined,
-        () => window.api.updater.quitAndInstall()
+      addToast('Update ready — click to restart', 'success', undefined, () =>
+        window.api.updater.quitAndInstall(),
       )
     })
 
@@ -76,18 +73,18 @@ export default function App() {
     <ErrorBoundary>
       <SettingsProvider>
         <UpdaterProvider>
-        <ToastProvider>
-          <UpdaterListener />
-          <Routes>
-            <Route path="/" element={<LibraryView />} />
-            <Route path="/read/:id" element={<ReaderView />} />
-            <Route path="/stats" element={<StatsView />} />
-            <Route path="/settings" element={<SettingsView />} />
-            <Route path="/trash" element={<TrashView />} />
-            <Route path="/collection/:id" element={<CollectionView />} />
-            <Route path="/tags" element={<TagsView />} />
-          </Routes>
-        </ToastProvider>
+          <ToastProvider>
+            <UpdaterListener />
+            <Routes>
+              <Route path="/" element={<LibraryView />} />
+              <Route path="/read/:id" element={<ReaderView />} />
+              <Route path="/stats" element={<StatsView />} />
+              <Route path="/settings" element={<SettingsView />} />
+              <Route path="/trash" element={<TrashView />} />
+              <Route path="/collection/:id" element={<CollectionView />} />
+              <Route path="/tags" element={<TagsView />} />
+            </Routes>
+          </ToastProvider>
         </UpdaterProvider>
       </SettingsProvider>
     </ErrorBoundary>

@@ -47,13 +47,13 @@ describe('library IPC — read & trash lifecycle', () => {
     seedItem(db, { id: 'x', title: 'X' })
     await invoke('library:softDelete', 'x')
 
-    expect((await invoke('library:getAll') as Item[]).length).toBe(0)
+    expect(((await invoke('library:getAll')) as Item[]).length).toBe(0)
     const trashed = (await invoke('library:getTrashed')) as Item[]
     expect(trashed.map((i) => i.id)).toEqual(['x'])
 
     await invoke('library:restore', 'x')
-    expect((await invoke('library:getAll') as Item[]).map((i) => i.id)).toEqual(['x'])
-    expect((await invoke('library:getTrashed') as Item[]).length).toBe(0)
+    expect(((await invoke('library:getAll')) as Item[]).map((i) => i.id)).toEqual(['x'])
+    expect(((await invoke('library:getTrashed')) as Item[]).length).toBe(0)
   })
 
   it('permanentlyDelete removes the row entirely', async () => {
@@ -93,7 +93,9 @@ describe('library IPC — progress & status', () => {
     db.prepare('UPDATE items SET derived_from = ? WHERE id = ?').run('src', 'epub')
 
     await invoke('library:updateProgress', 'src', 0.5)
-    const d = db.prepare('SELECT scroll_position FROM progress WHERE item_id = ?').get('epub') as any
+    const d = db
+      .prepare('SELECT scroll_position FROM progress WHERE item_id = ?')
+      .get('epub') as any
     expect(d.scroll_position).toBe(0.5)
   })
 
@@ -112,12 +114,16 @@ describe('library IPC — metadata edits', () => {
   it('regression BUG-4: setRating and setReview update date_modified', async () => {
     seedItem(db, { id: 'm', date_modified: 1 })
     await invoke('library:setRating', 'm', 4)
-    const afterRating = (db.prepare('SELECT rating, date_modified FROM items WHERE id = ?').get('m')) as any
+    const afterRating = db
+      .prepare('SELECT rating, date_modified FROM items WHERE id = ?')
+      .get('m') as any
     expect(afterRating.rating).toBe(4)
     expect(afterRating.date_modified).toBeGreaterThan(1)
 
     await invoke('library:setReview', 'm', 'good')
-    const afterReview = (db.prepare('SELECT review, date_modified FROM items WHERE id = ?').get('m')) as any
+    const afterReview = db
+      .prepare('SELECT review, date_modified FROM items WHERE id = ?')
+      .get('m') as any
     expect(afterReview.review).toBe('good')
     expect(afterReview.date_modified).toBeGreaterThan(1)
   })
@@ -126,7 +132,9 @@ describe('library IPC — metadata edits', () => {
     seedItem(db, { id: 't', date_modified: 1 })
     await invoke('library:setTitle', 't', 'New Title')
     await invoke('library:setAuthor', 't', 'New Author')
-    const row = db.prepare('SELECT title, author, date_modified FROM items WHERE id = ?').get('t') as any
+    const row = db
+      .prepare('SELECT title, author, date_modified FROM items WHERE id = ?')
+      .get('t') as any
     expect(row.title).toBe('New Title')
     expect(row.author).toBe('New Author')
     expect(row.date_modified).toBeGreaterThan(1)
@@ -154,7 +162,8 @@ describe('library IPC — metadata edits', () => {
   it('regression SEC-2: setRating clamps to [0,5]/0.5 at the IPC boundary', async () => {
     seedItem(db, { id: 's' })
     const ratingOf = () =>
-      (db.prepare('SELECT rating FROM items WHERE id = ?').get('s') as { rating: number | null }).rating
+      (db.prepare('SELECT rating FROM items WHERE id = ?').get('s') as { rating: number | null })
+        .rating
 
     await invoke('library:setRating', 's', 99) // way out of range
     expect(ratingOf()).toBe(5)
@@ -184,7 +193,7 @@ describe('library IPC — tags', () => {
     expect(all).toEqual([{ id: t.id, name: 'scifi', color: '#00ff00' }])
 
     await invoke('tags:delete', t.id)
-    expect((await invoke('tags:getAll') as any[]).length).toBe(0)
+    expect(((await invoke('tags:getAll')) as any[]).length).toBe(0)
   })
 
   it('setForItem replaces the tag set for an item', async () => {

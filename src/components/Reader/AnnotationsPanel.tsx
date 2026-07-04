@@ -2,18 +2,19 @@ import { useState } from 'react'
 import type { Annotation, ContentType } from '../../types'
 
 interface Props {
-  annotations:  Annotation[]
-  contentType:  ContentType
-  onJump:       (annotation: Annotation) => void
-  onDelete:     (id: string) => void
+  annotations: Annotation[]
+  contentType: ContentType
+  onJump: (annotation: Annotation) => void
+  onDelete: (id: string) => void
   onUpdateNote: (id: string, text: string | null) => void
-  onMove:       (id1: string, id2: string) => void
-  onClose:      () => void
+  onMove: (id1: string, id2: string) => void
+  onClose: () => void
 }
 
 function formatPosition(annotation: Annotation, contentType: ContentType): string {
   if (contentType === 'pdf') return `Page ${Math.round(annotation.position)}`
-  if (annotation.chapter_index !== null) return `Ch. ${annotation.chapter_index + 1} · ${Math.round(annotation.position * 100)}%`
+  if (annotation.chapter_index !== null)
+    return `Ch. ${annotation.chapter_index + 1} · ${Math.round(annotation.position * 100)}%`
   return `${Math.round(annotation.position * 100)}%`
 }
 
@@ -24,8 +25,8 @@ function truncate(text: string, max: number): string {
 function HighlightIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <rect x="1" y="10" width="14" height="4" rx="1" fill="currentColor" opacity="0.5"/>
-      <rect x="3" y="2" width="10" height="8" rx="1" fill="currentColor"/>
+      <rect x="1" y="10" width="14" height="4" rx="1" fill="currentColor" opacity="0.5" />
+      <rect x="3" y="2" width="10" height="8" rx="1" fill="currentColor" />
     </svg>
   )
 }
@@ -33,25 +34,36 @@ function HighlightIcon() {
 function NoteIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M2 3h12v8H9l-3 3V11H2V3z" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+      <path d="M2 3h12v8H9l-3 3V11H2V3z" stroke="currentColor" strokeWidth="1.5" fill="none" />
     </svg>
   )
 }
 
 interface RowProps {
-  annotation:   Annotation
-  contentType:  ContentType
-  isFirst:      boolean
-  isLast:       boolean
-  onJump:       (a: Annotation) => void
-  onDelete:     (id: string) => void
+  annotation: Annotation
+  contentType: ContentType
+  isFirst: boolean
+  isLast: boolean
+  onJump: (a: Annotation) => void
+  onDelete: (id: string) => void
   onUpdateNote: (id: string, text: string | null) => void
-  onMove:       (id1: string, id2: string) => void
-  prevId:       string | undefined
-  nextId:       string | undefined
+  onMove: (id1: string, id2: string) => void
+  prevId: string | undefined
+  nextId: string | undefined
 }
 
-function AnnotationRow({ annotation, contentType, isFirst, isLast, onJump, onDelete, onUpdateNote, onMove, prevId, nextId }: RowProps) {
+function AnnotationRow({
+  annotation,
+  contentType,
+  isFirst,
+  isLast,
+  onJump,
+  onDelete,
+  onUpdateNote,
+  onMove,
+  prevId,
+  nextId,
+}: RowProps) {
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(annotation.note_text ?? '')
 
@@ -82,7 +94,12 @@ function AnnotationRow({ annotation, contentType, isFirst, isLast, onJump, onDel
             aria-label="Move up"
           >
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M8 13V3M3 8l5-5 5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              <path
+                d="M8 13V3M3 8l5-5 5 5"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
             </svg>
           </button>
           <button
@@ -93,17 +110,30 @@ function AnnotationRow({ annotation, contentType, isFirst, isLast, onJump, onDel
             aria-label="Move down"
           >
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M8 3v10M3 8l5 5 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              <path
+                d="M8 3v10M3 8l5 5 5-5"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
             </svg>
           </button>
           <button
             className="annot-action-btn"
-            onClick={() => { setEditing(e => !e); setEditText(annotation.note_text ?? '') }}
+            onClick={() => {
+              setEditing((e) => !e)
+              setEditText(annotation.note_text ?? '')
+            }}
             title={editing ? 'Cancel' : 'Edit note'}
             aria-label="Edit note"
           >
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M11 2l3 3-9 9H2v-3L11 2z" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+              <path
+                d="M11 2l3 3-9 9H2v-3L11 2z"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                fill="none"
+              />
             </svg>
           </button>
           <button
@@ -113,8 +143,8 @@ function AnnotationRow({ annotation, contentType, isFirst, isLast, onJump, onDel
             aria-label="Delete annotation"
           >
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <line x1="3" y1="3" x2="13" y2="13" stroke="currentColor" strokeWidth="1.5"/>
-              <line x1="13" y1="3" x2="3" y2="13" stroke="currentColor" strokeWidth="1.5"/>
+              <line x1="3" y1="3" x2="13" y2="13" stroke="currentColor" strokeWidth="1.5" />
+              <line x1="13" y1="3" x2="3" y2="13" stroke="currentColor" strokeWidth="1.5" />
             </svg>
           </button>
         </div>
@@ -131,18 +161,34 @@ function AnnotationRow({ annotation, contentType, isFirst, isLast, onJump, onDel
           <textarea
             className="annotation-note-textarea"
             value={editText}
-            onChange={e => setEditText(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit() }
-              if (e.key === 'Escape') { setEditing(false); setEditText(annotation.note_text ?? '') }
+            onChange={(e) => setEditText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                saveEdit()
+              }
+              if (e.key === 'Escape') {
+                setEditing(false)
+                setEditText(annotation.note_text ?? '')
+              }
             }}
             autoFocus
             rows={3}
             placeholder="Add a note…"
           />
           <div className="annotation-note-actions">
-            <button className="annot-save-btn" onClick={saveEdit}>Save</button>
-            <button className="annot-cancel-btn" onClick={() => { setEditing(false); setEditText(annotation.note_text ?? '') }}>Cancel</button>
+            <button className="annot-save-btn" onClick={saveEdit}>
+              Save
+            </button>
+            <button
+              className="annot-cancel-btn"
+              onClick={() => {
+                setEditing(false)
+                setEditText(annotation.note_text ?? '')
+              }}
+            >
+              Cancel
+            </button>
           </div>
         </div>
       ) : (
@@ -154,9 +200,17 @@ function AnnotationRow({ annotation, contentType, isFirst, isLast, onJump, onDel
   )
 }
 
-export default function AnnotationsPanel({ annotations, contentType, onJump, onDelete, onUpdateNote, onMove, onClose }: Props) {
+export default function AnnotationsPanel({
+  annotations,
+  contentType,
+  onJump,
+  onDelete,
+  onUpdateNote,
+  onMove,
+  onClose,
+}: Props) {
   // Only show highlights and notes (bookmarks go in BookmarksPanel)
-  const items = annotations.filter(a => a.type === 'highlight' || a.type === 'note')
+  const items = annotations.filter((a) => a.type === 'highlight' || a.type === 'note')
   const isEmpty = items.length === 0
 
   return (
@@ -165,8 +219,8 @@ export default function AnnotationsPanel({ annotations, contentType, onJump, onD
         <span className="annotations-panel-title">Annotations</span>
         <button className="annot-close-btn" onClick={onClose} aria-label="Close annotations panel">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <line x1="3" y1="3" x2="13" y2="13" stroke="currentColor" strokeWidth="1.5"/>
-            <line x1="13" y1="3" x2="3" y2="13" stroke="currentColor" strokeWidth="1.5"/>
+            <line x1="3" y1="3" x2="13" y2="13" stroke="currentColor" strokeWidth="1.5" />
+            <line x1="13" y1="3" x2="3" y2="13" stroke="currentColor" strokeWidth="1.5" />
           </svg>
         </button>
       </div>

@@ -44,7 +44,11 @@ describe('annotations IPC', () => {
 
   it('updateNote edits note text', async () => {
     const item = seedItem(db, {})
-    const a = (await invoke('annotations:create', { item_id: item, type: 'note', position: 0 })) as any
+    const a = (await invoke('annotations:create', {
+      item_id: item,
+      type: 'note',
+      position: 0,
+    })) as any
     await invoke('annotations:updateNote', a.id, 'edited')
     const list = (await invoke('annotations:getForItem', item)) as any[]
     expect(list[0].note_text).toBe('edited')
@@ -52,15 +56,27 @@ describe('annotations IPC', () => {
 
   it('delete removes an annotation', async () => {
     const item = seedItem(db, {})
-    const a = (await invoke('annotations:create', { item_id: item, type: 'bookmark', position: 0 })) as any
+    const a = (await invoke('annotations:create', {
+      item_id: item,
+      type: 'bookmark',
+      position: 0,
+    })) as any
     await invoke('annotations:delete', a.id)
     expect(((await invoke('annotations:getForItem', item)) as any[]).length).toBe(0)
   })
 
   it('swapSortOrder exchanges the ordering of two annotations', async () => {
     const item = seedItem(db, {})
-    const a = (await invoke('annotations:create', { item_id: item, type: 'note', position: 0 })) as any
-    const b = (await invoke('annotations:create', { item_id: item, type: 'note', position: 0 })) as any
+    const a = (await invoke('annotations:create', {
+      item_id: item,
+      type: 'note',
+      position: 0,
+    })) as any
+    const b = (await invoke('annotations:create', {
+      item_id: item,
+      type: 'note',
+      position: 0,
+    })) as any
     expect([a.sort_order, b.sort_order]).toEqual([1, 2])
 
     await invoke('annotations:swapSortOrder', a.id, b.id)

@@ -18,9 +18,9 @@ export async function getAo3ChapterCount(url: string): Promise<number | null> {
   if (!m) return null
   try {
     const html = await fetchPage(`https://archiveofourown.org/works/${m[1]}`)
-    const doc  = new JSDOM(html).window.document
+    const doc = new JSDOM(html).window.document
     // "dd.chapters" text is "X/Y" (complete) or "X/?" (WIP) — X = posted count.
-    const text  = doc.querySelector('dd.chapters')?.textContent?.trim() ?? ''
+    const text = doc.querySelector('dd.chapters')?.textContent?.trim() ?? ''
     const match = /^(\d+)/.exec(text)
     return match ? parseInt(match[1], 10) : null
   } catch {
@@ -40,28 +40,32 @@ export async function captureAo3(
   const workId = workIdMatch[1]
 
   // ── Page 1: metadata + first batch of chapters ────────────────────────────
-  const page1Url  = `https://archiveofourown.org/works/${workId}?view_full_work=true`
+  const page1Url = `https://archiveofourown.org/works/${workId}?view_full_work=true`
   onProgress?.('Fetching story from AO3…')
   const page1Html = await fetchPage(page1Url)
-  const page1Doc  = new JSDOM(page1Html, { url: page1Url }).window.document
+  const page1Doc = new JSDOM(page1Html, { url: page1Url }).window.document
 
   const title = page1Doc.querySelector('.title.heading')?.textContent?.trim() ?? 'Unknown Work'
-  const author = page1Doc.querySelector('.byline.heading a[rel="author"]')?.textContent?.trim() ?? null
-  const ogImg  = page1Doc.querySelector('meta[property="og:image"]')?.getAttribute('content') ?? null
-  const coverUrl = ogImg && !ogImg.includes('/ao3_logos') && !ogImg.includes('/images/') ? ogImg : null
+  const author =
+    page1Doc.querySelector('.byline.heading a[rel="author"]')?.textContent?.trim() ?? null
+  const ogImg = page1Doc.querySelector('meta[property="og:image"]')?.getAttribute('content') ?? null
+  const coverUrl =
+    ogImg && !ogImg.includes('/ao3_logos') && !ogImg.includes('/images/') ? ogImg : null
 
   const allChapterEls: Element[] = Array.from(page1Doc.querySelectorAll('#chapters .chapter'))
-  const textParts: string[]      = [page1Doc.querySelector('#workskin')?.textContent ?? '']
+  const textParts: string[] = [page1Doc.querySelector('#workskin')?.textContent ?? '']
 
   // ── Remaining pages: batch fetch in parallel ──────────────────────────────
   // Determine total page count from the highest page number in pagination links.
-  const needsMore = !!page1Doc.querySelector('a[rel="next"]') &&
-    !(range && allChapterEls.length >= range.end)
+  const needsMore =
+    !!page1Doc.querySelector('a[rel="next"]') && !(range && allChapterEls.length >= range.end)
 
   if (needsMore) {
     // Find the highest page number from any pagination anchor
     let maxPage = 1
-    for (const a of Array.from(page1Doc.querySelectorAll<HTMLAnchorElement>('ol.pagination a[href*="page="]'))) {
+    for (const a of Array.from(
+      page1Doc.querySelectorAll<HTMLAnchorElement>('ol.pagination a[href*="page="]'),
+    )) {
       const pm = /[?&]page=(\d+)/.exec(a.getAttribute('href') ?? '')
       if (pm) maxPage = Math.max(maxPage, parseInt(pm[1], 10))
     }
@@ -69,8 +73,9 @@ export async function captureAo3(
     maxPage = Math.min(maxPage, MAX_AO3_PAGES)
 
     if (maxPage > 1) {
-      const remainingUrls = Array.from({ length: maxPage - 1 }, (_, i) =>
-        `https://archiveofourown.org/works/${workId}?view_full_work=true&page=${i + 2}`,
+      const remainingUrls = Array.from(
+        { length: maxPage - 1 },
+        (_, i) => `https://archiveofourown.org/works/${workId}?view_full_work=true&page=${i + 2}`,
       )
 
       onProgress?.(`Fetching ${maxPage} pages in parallel…`)
@@ -91,7 +96,7 @@ export async function captureAo3(
         const pageUrl = `https://archiveofourown.org/works/${workId}?view_full_work=true&page=${page}`
         onProgress?.(`Fetching AO3 chapters (page ${page})…`)
         const html = await fetchPage(pageUrl)
-        const doc  = new JSDOM(html, { url: pageUrl }).window.document
+        const doc = new JSDOM(html, { url: pageUrl }).window.document
         allChapterEls.push(...Array.from(doc.querySelectorAll('#chapters .chapter')))
         textParts.push(doc.querySelector('#workskin')?.textContent ?? '')
         if (range && allChapterEls.length >= range.end) break
@@ -110,14 +115,17 @@ export async function captureAo3(
   // (extractChapterDivs in capture/index.ts depends on div.chapter surviving).
   let assembled: string
   if (rangedEls.length > 1) {
-    assembled = rangedEls.map((el, i) => {
-      const chapterTitle = el.querySelector('h3.title')?.textContent?.trim() ?? `Chapter ${(range?.start ?? 1) + i}`
-      const content      = sanitize(el.querySelector('.userstuff')?.innerHTML ?? '')
-      return `<div class="chapter">
+    assembled = rangedEls
+      .map((el, i) => {
+        const chapterTitle =
+          el.querySelector('h3.title')?.textContent?.trim() ?? `Chapter ${(range?.start ?? 1) + i}`
+        const content = sanitize(el.querySelector('.userstuff')?.innerHTML ?? '')
+        return `<div class="chapter">
 <h2 class="chapter-title">${escHtml(chapterTitle)}</h2>
 <div class="chapter-content">${content}</div>
 </div>`
-    }).join('\n')
+      })
+      .join('\n')
   } else {
     const userstuff = page1Doc.querySelector('#chapters .userstuff, .userstuff[role="article"]')
     assembled = sanitize(userstuff?.innerHTML ?? '')
@@ -126,7 +134,7 @@ export async function captureAo3(
   return {
     title,
     author,
-    html:        assembled,
+    html: assembled,
     textContent: textParts.join(' '),
     coverUrl,
   }

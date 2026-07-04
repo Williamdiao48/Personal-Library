@@ -19,7 +19,10 @@ const MiB = 1_048_576
 // Minimal structural stand-in for an adm-zip entry — assertEntryInflateOk only
 // reads header.size / header.compressedSize / entryName.
 function fakeEntry(size: number, compressedSize: number): AdmZip.IZipEntry {
-  return { entryName: 'test-entry', header: { size, compressedSize } } as unknown as AdmZip.IZipEntry
+  return {
+    entryName: 'test-entry',
+    header: { size, compressedSize },
+  } as unknown as AdmZip.IZipEntry
 }
 
 describe('hasMagic', () => {
@@ -50,8 +53,9 @@ describe('assertEntryInflateOk', () => {
     expect(() => assertEntryInflateOk(fakeEntry(1000, 1000))).not.toThrow()
   })
   it('rejects an entry whose decompressed size exceeds the per-entry cap', () => {
-    expect(() => assertEntryInflateOk(fakeEntry(ZIP_ENTRY_MAX_BYTES + 1, ZIP_ENTRY_MAX_BYTES + 1)))
-      .toThrow(/too large when decompressed/)
+    expect(() =>
+      assertEntryInflateOk(fakeEntry(ZIP_ENTRY_MAX_BYTES + 1, ZIP_ENTRY_MAX_BYTES + 1)),
+    ).toThrow(/too large when decompressed/)
   })
   it('rejects a high compression-ratio bomb below the size cap', () => {
     expect(() => assertEntryInflateOk(fakeEntry(10 * MiB, 1))).toThrow(/compression ratio too high/)
@@ -60,8 +64,12 @@ describe('assertEntryInflateOk', () => {
 
 describe('assertImportFile', () => {
   let dir: string
-  beforeAll(() => { dir = mkdtempSync(join(tmpdir(), 'pl-validation-')) })
-  afterAll(() => { rmSync(dir, { recursive: true, force: true }) })
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'pl-validation-'))
+  })
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
 
   it('accepts a file with the correct magic', async () => {
     const f = join(dir, 'ok.pdf')

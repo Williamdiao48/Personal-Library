@@ -13,19 +13,19 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-14        # Apple Silicon (arm64)
+          - os: macos-14 # Apple Silicon (arm64)
             platform: mac
             arch: arm64
             arch_flag: --arm64
-          - os: macos-15-intel  # Intel (x64)
+          - os: macos-15-intel # Intel (x64)
             platform: mac
             arch: x64
             arch_flag: --x64
-          - os: windows-latest  # x64
+          - os: windows-latest # x64
             platform: win
             arch: ''
             arch_flag: ''
-          - os: ubuntu-latest   # x64
+          - os: ubuntu-latest # x64
             platform: linux
             arch: ''
             arch_flag: ''

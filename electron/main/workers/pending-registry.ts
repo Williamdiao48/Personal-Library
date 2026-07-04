@@ -6,8 +6,8 @@ import type { ParseResponse } from './parse-protocol'
 
 interface Pending {
   resolve: (value: unknown) => void
-  reject:  (err: Error) => void
-  timer:   ReturnType<typeof setTimeout>
+  reject: (err: Error) => void
+  timer: ReturnType<typeof setTimeout>
 }
 
 export class PendingRegistry {
@@ -19,7 +19,10 @@ export class PendingRegistry {
    * matching response arrives, or rejects after `timeoutMs`. `onTimeout` fires
    * on expiry so the caller can recycle a wedged worker.
    */
-  create<T>(timeoutMs: number, onTimeout: (id: number) => void): { id: number; promise: Promise<T> } {
+  create<T>(
+    timeoutMs: number,
+    onTimeout: (id: number) => void,
+  ): { id: number; promise: Promise<T> } {
     const id = ++this.seq
     const promise = new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -29,7 +32,7 @@ export class PendingRegistry {
       }, timeoutMs)
       // Don't let a pending parse timer keep the process alive on shutdown.
       if (typeof (timer as { unref?: () => void }).unref === 'function') {
-        (timer as { unref: () => void }).unref()
+        ;(timer as { unref: () => void }).unref()
       }
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer })
     })
