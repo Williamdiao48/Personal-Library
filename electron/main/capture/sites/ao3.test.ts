@@ -43,7 +43,9 @@ beforeEach(() => {
 describe('captureAo3', () => {
   it('extracts metadata and sanitized content for a single-chapter work', async () => {
     mockFetchPage.mockResolvedValue(
-      ao3Page(['<p>The body.</p><script>evil()</script>'], { ogImage: 'https://ao3.org/cover.jpg' }),
+      ao3Page(['<p>The body.</p><script>evil()</script>'], {
+        ogImage: 'https://ao3.org/cover.jpg',
+      }),
     )
 
     const result = await captureAo3('https://archiveofourown.org/works/123')
@@ -65,9 +67,7 @@ describe('captureAo3', () => {
   })
 
   it('assembles multiple chapters into div.chapter blocks', async () => {
-    mockFetchPage.mockResolvedValue(
-      ao3Page(['<p>One.</p>', '<p>Two.</p>', '<p>Three.</p>']),
-    )
+    mockFetchPage.mockResolvedValue(ao3Page(['<p>One.</p>', '<p>Two.</p>', '<p>Three.</p>']))
     const result = await captureAo3('https://archiveofourown.org/works/9')
     const blocks = result.html.match(/class="chapter"/g) ?? []
     expect(blocks.length).toBe(3)
@@ -76,9 +76,7 @@ describe('captureAo3', () => {
   })
 
   it('honors a chapter range, slicing to the requested window', async () => {
-    mockFetchPage.mockResolvedValue(
-      ao3Page(['<p>One.</p>', '<p>Two.</p>', '<p>Three.</p>']),
-    )
+    mockFetchPage.mockResolvedValue(ao3Page(['<p>One.</p>', '<p>Two.</p>', '<p>Three.</p>']))
     const result = await captureAo3('https://archiveofourown.org/works/9', undefined, {
       start: 1,
       end: 2,

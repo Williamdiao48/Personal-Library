@@ -59,8 +59,9 @@ export function buildEpub(opts: EpubOptions = {}): Buffer {
     omitMimetype = false,
   } = opts
 
-  const chapters: EpubChapter[] =
-    opts.chapters ?? [{ href: 'chap1.xhtml', title: 'Chapter 1', body: '<p>Hello world.</p>' }]
+  const chapters: EpubChapter[] = opts.chapters ?? [
+    { href: 'chap1.xhtml', title: 'Chapter 1', body: '<p>Hello world.</p>' },
+  ]
 
   const zip = new AdmZip()
 

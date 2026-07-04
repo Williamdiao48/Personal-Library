@@ -28,7 +28,10 @@ export default function ReaderView() {
 
     libraryService.getById(id).then(async (found) => {
       if (cancelled) return
-      if (!found) { navigate('/'); return }
+      if (!found) {
+        navigate('/')
+        return
+      }
       setItem(found)
       // Record that the book was opened, updating last_read_at regardless of
       // whether the user navigates to a new page or chapter.
@@ -37,15 +40,20 @@ export default function ReaderView() {
       // Runs the HEAD check (and full re-scrape if stale) silently; if content
       // changed, surfaces an "Updated" badge offering a one-click reload.
       if (found.content_type === 'article' && found.source_url) {
-        libraryService.refresh(found.id).then(result => {
-          if (!cancelled && result.changed) setContentStale(true)
-        }).catch(() => { /* silent — don't disturb reading on network error */ })
+        libraryService
+          .refresh(found.id)
+          .then((result) => {
+            if (!cancelled && result.changed) setContentStale(true)
+          })
+          .catch(() => {
+            /* silent — don't disturb reading on network error */
+          })
       }
       if (found.content_type === 'pdf' || found.content_type === 'epub') {
         setContent('') // PdfReader / EpubReader load their own data internally
         if (found.content_type === 'pdf') {
-          libraryService.getAll().then(all => {
-            if (!cancelled) setHasDerivedEpub(all.some(i => i.derived_from === found.id))
+          libraryService.getAll().then((all) => {
+            if (!cancelled) setHasDerivedEpub(all.some((i) => i.derived_from === found.id))
           })
         }
         return
@@ -68,19 +76,23 @@ export default function ReaderView() {
           if (!cancelled) setContent(html)
         }
       } catch {
-        if (!cancelled) setLoadError('Could not load content. The file may be missing or corrupted.')
+        if (!cancelled)
+          setLoadError('Could not load content. The file may be missing or corrupted.')
       }
     })
 
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [id])
 
-  if (loadError) return (
-    <div className="reader-loading reader-load-error">
-      <p>{loadError}</p>
-      <button onClick={() => navigate('/')}>Back to library</button>
-    </div>
-  )
+  if (loadError)
+    return (
+      <div className="reader-loading reader-load-error">
+        <p>{loadError}</p>
+        <button onClick={() => navigate('/')}>Back to library</button>
+      </div>
+    )
 
   if (!item || content === null) return <div className="reader-loading">Loading…</div>
 
@@ -112,9 +124,7 @@ export default function ReaderView() {
           }}
         />
       )}
-      {item.content_type === 'epub' && (
-        <EpubReader item={item} onBack={() => navigate('/')} />
-      )}
+      {item.content_type === 'epub' && <EpubReader item={item} onBack={() => navigate('/')} />}
       {item.content_type === 'pdf' && (
         <PdfReader item={item} onBack={() => navigate('/')} hasEpub={hasDerivedEpub} />
       )}

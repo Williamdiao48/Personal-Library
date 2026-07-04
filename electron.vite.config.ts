@@ -11,34 +11,34 @@ export default defineConfig({
         // worker (F7). Both emit to out/main/ so utilityProcess.fork can
         // resolve parse-worker.js next to index.js in dev and packaged.
         entry: {
-          index:          resolve('electron/main/index.ts'),
-          'parse-worker': resolve('electron/main/workers/parse-worker.ts')
-        }
-      }
+          index: resolve('electron/main/index.ts'),
+          'parse-worker': resolve('electron/main/workers/parse-worker.ts'),
+        },
+      },
     },
     resolve: {
       alias: {
-        '@main': resolve('electron/main')
-      }
-    }
+        '@main': resolve('electron/main'),
+      },
+    },
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        input: resolve('electron/preload/index.ts')
-      }
-    }
+        input: resolve('electron/preload/index.ts'),
+      },
+    },
   },
   renderer: {
-    root: resolve('.'),          // project root — index.html lives here
+    root: resolve('.'), // project root — index.html lives here
     plugins: [react()],
     build: {
       outDir: resolve('out/renderer'),
       emptyOutDir: true,
       rollupOptions: {
-        input: resolve('index.html')
-      }
+        input: resolve('index.html'),
+      },
     },
     resolve: {
       alias: {
@@ -46,8 +46,8 @@ export default defineConfig({
         '@services': resolve('src/services'),
         '@components': resolve('src/components'),
         '@hooks': resolve('src/hooks'),
-        '@store': resolve('src/store')
-      }
-    }
-  }
+        '@store': resolve('src/store'),
+      },
+    },
+  },
 })

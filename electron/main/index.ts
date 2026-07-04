@@ -9,9 +9,9 @@ import { registerCaptureHandlers } from './ipc/capture'
 import { registerReaderHandlers } from './ipc/reader'
 import { registerCollectionHandlers } from './ipc/collections'
 import { registerConvertHandlers } from './ipc/convert'
-import { registerStatsHandlers }   from './ipc/stats'
-import { registerBackupHandlers }  from './ipc/backup'
-import { registerGoalsHandlers }   from './ipc/goals'
+import { registerStatsHandlers } from './ipc/stats'
+import { registerBackupHandlers } from './ipc/backup'
+import { registerGoalsHandlers } from './ipc/goals'
 import { registerAnnotationHandlers } from './ipc/annotations'
 import { registerUpdaterHandlers } from './ipc/updater'
 import { registerLogHandlers } from './ipc/log'
@@ -19,7 +19,7 @@ import { shutdownParseWorker } from './workers/parse-host'
 
 // Must be called before app.whenReady()
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'library', privileges: { secure: true, standard: true, supportFetchAPI: true } }
+  { scheme: 'library', privileges: { secure: true, standard: true, supportFetchAPI: true } },
 ])
 
 // Single-instance lock — required for protocol handler on Windows/Linux
@@ -64,7 +64,7 @@ app.on('open-url', (event, url) => {
 
 // Windows/Linux: new instance launched with protocol URL in argv
 app.on('second-instance', (_event, argv) => {
-  const url = argv.find(arg => arg.startsWith('personallibrary://'))
+  const url = argv.find((arg) => arg.startsWith('personallibrary://'))
   if (url) void handleProtocolUrl(url)
 
   const win = BrowserWindow.getAllWindows()[0]
@@ -91,8 +91,8 @@ function createWindow(): BrowserWindow {
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: true
-    }
+      webSecurity: true,
+    },
   })
 
   win.once('ready-to-show', () => {
@@ -147,7 +147,7 @@ app.whenReady().then(() => {
     } catch {
       return new Response('Forbidden', { status: 403 })
     }
-    return net.fetch(`file://${filePath}`).then(res => {
+    return net.fetch(`file://${filePath}`).then((res) => {
       const headers = new Headers(res.headers)
       headers.set('X-Content-Type-Options', 'nosniff')
       return new Response(res.body, { status: res.status, headers })
@@ -170,7 +170,7 @@ app.whenReady().then(() => {
   } catch (err) {
     dialog.showErrorBox(
       'Personal Library failed to start',
-      `Startup error: ${err instanceof Error ? err.message : String(err)}\n\nIf this keeps happening, delete ~/Library/Application Support/personal-library/library.db and relaunch.`
+      `Startup error: ${err instanceof Error ? err.message : String(err)}\n\nIf this keeps happening, delete ~/Library/Application Support/personal-library/library.db and relaunch.`,
     )
     app.quit()
     return

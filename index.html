@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -34,7 +34,8 @@
       base-uri   'self'    — prevent <base href="…"> hijacking
       form-action 'none'   — no form submissions in this app
     -->
-    <meta http-equiv="Content-Security-Policy"
+    <meta
+      http-equiv="Content-Security-Policy"
       content="default-src 'self';
                script-src 'self' blob:;
                style-src 'self' 'unsafe-inline';
@@ -45,7 +46,8 @@
                object-src 'none';
                frame-src 'none';
                base-uri 'self';
-               form-action 'none';" />
+               form-action 'none';"
+    />
     <title>Personal Library</title>
   </head>
   <body>

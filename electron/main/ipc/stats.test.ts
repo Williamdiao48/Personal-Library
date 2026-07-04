@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { invoke, resetIpc } from '../../../test/stubs/electron'
-import { openTestDb, closeTestDb, seedItem, seedSession, type TestDb } from '../../../test/db/harness'
+import {
+  openTestDb,
+  closeTestDb,
+  seedItem,
+  seedSession,
+  type TestDb,
+} from '../../../test/db/harness'
 import { registerStatsHandlers } from './stats'
 
 let db: TestDb
@@ -20,7 +26,10 @@ function daysAgoNoon(n: number): number {
   return d.getTime()
 }
 
-function setProgress(itemId: string, over: { scroll?: number; maxScroll?: number; lastRead?: number }) {
+function setProgress(
+  itemId: string,
+  over: { scroll?: number; maxScroll?: number; lastRead?: number },
+) {
   db.prepare(
     `INSERT INTO progress (item_id, scroll_position, max_scroll_position, last_read_at)
      VALUES (?, ?, ?, ?)`,

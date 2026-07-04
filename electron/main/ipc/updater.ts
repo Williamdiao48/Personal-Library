@@ -11,9 +11,9 @@ export function registerUpdaterHandlers(): void {
   if (handlersRegistered) return
   handlersRegistered = true
 
-  autoUpdater.autoDownload        = false   // user initiates download via toast click
-  autoUpdater.autoInstallOnAppQuit = true   // install on next quit if downloaded but not applied
-  autoUpdater.logger              = null    // suppress log file growth in production
+  autoUpdater.autoDownload = false // user initiates download via toast click
+  autoUpdater.autoInstallOnAppQuit = true // install on next quit if downloaded but not applied
+  autoUpdater.logger = null // suppress log file growth in production
 
   autoUpdater.on('update-available', (info) => {
     getWindow()?.webContents.send('updater:update-available', { version: info.version })
@@ -38,8 +38,8 @@ export function registerUpdaterHandlers(): void {
   })
 
   ipcMain.handle('updater:checkForUpdates', () => autoUpdater.checkForUpdates())
-  ipcMain.handle('updater:downloadUpdate',  () => autoUpdater.downloadUpdate())
-  ipcMain.handle('updater:quitAndInstall',  () => {
+  ipcMain.handle('updater:downloadUpdate', () => autoUpdater.downloadUpdate())
+  ipcMain.handle('updater:quitAndInstall', () => {
     // isSilent=false shows progress UI; isForceRunAfter=true relaunches after install
     autoUpdater.quitAndInstall(false, true)
   })

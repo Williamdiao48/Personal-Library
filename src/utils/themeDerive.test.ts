@@ -18,16 +18,33 @@ describe('isValidHex', () => {
 describe('deriveCustomTheme', () => {
   it('passes through seed values and produces all derived vars', () => {
     const t = deriveCustomTheme('id1', 'My Theme', '#101418', '#3b82f6', false)
-    expect(t).toMatchObject({ id: 'id1', name: 'My Theme', bg: '#101418', accent: '#3b82f6', isLight: false })
+    expect(t).toMatchObject({
+      id: 'id1',
+      name: 'My Theme',
+      bg: '#101418',
+      accent: '#3b82f6',
+      isLight: false,
+    })
     // Every derived field present and a valid hex (except coverScrim which is rgba).
-    for (const key of ['bgSurface', 'bgHover', 'border', 'text', 'textMuted', 'accentDim'] as const) {
+    for (const key of [
+      'bgSurface',
+      'bgHover',
+      'border',
+      'text',
+      'textMuted',
+      'accentDim',
+    ] as const) {
       expect(isValidHex(t[key])).toBe(true)
     }
   })
 
   it('picks a lighter cover scrim for light backgrounds, darker for dark', () => {
-    expect(deriveCustomTheme('a', 'A', '#ffffff', '#000000', true).coverScrim).toBe('rgba(0,0,0,0.55)')
-    expect(deriveCustomTheme('b', 'B', '#000000', '#ffffff', false).coverScrim).toBe('rgba(0,0,0,0.72)')
+    expect(deriveCustomTheme('a', 'A', '#ffffff', '#000000', true).coverScrim).toBe(
+      'rgba(0,0,0,0.55)',
+    )
+    expect(deriveCustomTheme('b', 'B', '#000000', '#ffffff', false).coverScrim).toBe(
+      'rgba(0,0,0,0.72)',
+    )
   })
 
   it('derives light text on dark bg and dark text on light bg', () => {

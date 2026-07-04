@@ -11,7 +11,7 @@ import type { ParseRequest, ParseResponse, EpubParseResult } from './parse-proto
 // Scope: EPUB import parsing only. PDF text extraction stays in main because
 // pdf.js needs DOM globals a utilityProcess does not provide.
 
-const WORKER_SCRIPT      = join(__dirname, 'parse-worker.js')
+const WORKER_SCRIPT = join(__dirname, 'parse-worker.js')
 const REQUEST_TIMEOUT_MS = 120_000 // EPUB parsing of large files can be slow
 
 let child: UtilityProcess | null = null
@@ -43,7 +43,10 @@ function ensureWorker(): UtilityProcess {
   // Surface worker crash traces in the main terminal.
   c.stderr?.on('data', (d) => console.error('[parse-worker]', d.toString().trimEnd()))
 
-  c.on('spawn', () => { ready = true; flush() })
+  c.on('spawn', () => {
+    ready = true
+    flush()
+  })
   c.on('message', (msg: ParseResponse) => registry.settle(msg))
 
   // Crash or clean exit: fail everything in flight and drop the ref so the next

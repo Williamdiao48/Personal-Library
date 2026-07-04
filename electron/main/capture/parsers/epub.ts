@@ -27,7 +27,7 @@ export function parseEpubMetadata(filePath: string): EpubMetadata {
     const opfContent = readEntryTextCapped(zip, opfPath) ?? ''
 
     // Extract title and author from Dublin Core elements
-    const title  = /<dc:title[^>]*>([^<]+)<\/dc:title>/i.exec(opfContent)?.[1]?.trim() ?? null
+    const title = /<dc:title[^>]*>([^<]+)<\/dc:title>/i.exec(opfContent)?.[1]?.trim() ?? null
     const author = /<dc:creator[^>]*>([^<]+)<\/dc:creator>/i.exec(opfContent)?.[1]?.trim() ?? null
 
     // Locate cover image href in the manifest
@@ -37,16 +37,16 @@ export function parseEpubMetadata(filePath: string): EpubMetadata {
     if (coverMetaId) {
       const eid = escapeRegExp(coverMetaId)
       coverHref =
-        new RegExp(`<item[^>]+id="${eid}"[^>]+href="([^"]+)"`, 'i').exec(opfContent)?.[1]
-        ?? new RegExp(`<item[^>]+href="([^"]+)"[^>]+id="${eid}"`, 'i').exec(opfContent)?.[1]
-        ?? null
+        new RegExp(`<item[^>]+id="${eid}"[^>]+href="([^"]+)"`, 'i').exec(opfContent)?.[1] ??
+        new RegExp(`<item[^>]+href="([^"]+)"[^>]+id="${eid}"`, 'i').exec(opfContent)?.[1] ??
+        null
     }
     // Method 2: <item properties="cover-image" href="...">
     if (!coverHref) {
       coverHref =
-        /<item[^>]+properties="cover-image"[^>]+href="([^"]+)"/i.exec(opfContent)?.[1]
-        ?? /<item[^>]+href="([^"]+)"[^>]+properties="cover-image"/i.exec(opfContent)?.[1]
-        ?? null
+        /<item[^>]+properties="cover-image"[^>]+href="([^"]+)"/i.exec(opfContent)?.[1] ??
+        /<item[^>]+href="([^"]+)"[^>]+properties="cover-image"/i.exec(opfContent)?.[1] ??
+        null
     }
 
     let coverBuffer: Buffer | null = null

@@ -19,29 +19,29 @@ const MiB = 1_048_576
 
 // Whole-file magic bytes.
 // PDF must begin with %PDF- (0x25 0x50 0x44 0x46 0x2D).
-export const PDF_MAGIC  = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d])
+export const PDF_MAGIC = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d])
 // EPUB is a ZIP archive and must begin with PK\x03\x04.
 export const EPUB_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04])
 
 // Whole-file size caps (checked via stat before any buffer is allocated).
-export const PDF_MAX_BYTES  = 200 * MiB
+export const PDF_MAX_BYTES = 200 * MiB
 export const EPUB_MAX_BYTES = 150 * MiB
 
 // Per-entry / aggregate inflate caps for zip decompression (F2 + F5).
-export const ZIP_ENTRY_MAX_BYTES = 25  * MiB  // max decompressed size of one entry
-export const ZIP_TOTAL_MAX_BYTES = 250 * MiB  // max total decompressed per archive
-export const ZIP_MAX_RATIO       = 100        // max size:compressedSize (bomb guard)
+export const ZIP_ENTRY_MAX_BYTES = 25 * MiB // max decompressed size of one entry
+export const ZIP_TOTAL_MAX_BYTES = 250 * MiB // max total decompressed per archive
+export const ZIP_MAX_RATIO = 100 // max size:compressedSize (bomb guard)
 
 export type ImportKind = 'pdf' | 'epub'
 
-const MAGIC:     Record<ImportKind, Buffer> = { pdf: PDF_MAGIC,     epub: EPUB_MAGIC }
+const MAGIC: Record<ImportKind, Buffer> = { pdf: PDF_MAGIC, epub: EPUB_MAGIC }
 const MAX_BYTES: Record<ImportKind, number> = { pdf: PDF_MAX_BYTES, epub: EPUB_MAX_BYTES }
 
 function magicError(kind: ImportKind): Error {
   return new Error(
     kind === 'pdf'
       ? 'File is not a valid PDF (missing %PDF- header).'
-      : 'File is not a valid EPUB (missing ZIP header).'
+      : 'File is not a valid EPUB (missing ZIP header).',
   )
 }
 
@@ -70,13 +70,13 @@ export async function assertImportFile(path: string, kind: ImportKind): Promise<
   const { size } = await stat(path)
   if (size > max) {
     throw new Error(
-      `File too large (${(size / MiB).toFixed(0)} MB). Maximum allowed size is ${max / MiB} MB.`
+      `File too large (${(size / MiB).toFixed(0)} MB). Maximum allowed size is ${max / MiB} MB.`,
     )
   }
 
   const magic = MAGIC[kind]
-  const head  = Buffer.alloc(magic.length)
-  const fh    = await open(path, 'r')
+  const head = Buffer.alloc(magic.length)
+  const fh = await open(path, 'r')
   try {
     await fh.read(head, 0, magic.length, 0)
   } finally {
@@ -92,17 +92,17 @@ export async function assertImportFile(path: string, kind: ImportKind): Promise<
  * before it is materialized in memory.
  */
 export function assertEntryInflateOk(entry: AdmZip.IZipEntry): void {
-  const size       = entry.header.size
+  const size = entry.header.size
   const compressed = entry.header.compressedSize
   if (size > ZIP_ENTRY_MAX_BYTES) {
     throw new Error(
-      `Zip entry too large when decompressed (${(size / MiB).toFixed(0)} MB): ${entry.entryName}`
+      `Zip entry too large when decompressed (${(size / MiB).toFixed(0)} MB): ${entry.entryName}`,
     )
   }
   // Ratio bomb: a tiny compressed payload that inflates enormously.
   if (compressed > 0 && size / compressed > ZIP_MAX_RATIO) {
     throw new Error(
-      `Zip entry compression ratio too high (${Math.round(size / compressed)}:1): ${entry.entryName}`
+      `Zip entry compression ratio too high (${Math.round(size / compressed)}:1): ${entry.entryName}`,
     )
   }
 }

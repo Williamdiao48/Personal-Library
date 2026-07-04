@@ -8,7 +8,16 @@ function hexToRgb(hex: string): [number, number, number] {
 }
 
 function rgbToHex(r: number, g: number, b: number): string {
-  return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('')
+  return (
+    '#' +
+    [r, g, b]
+      .map((v) =>
+        Math.max(0, Math.min(255, Math.round(v)))
+          .toString(16)
+          .padStart(2, '0'),
+      )
+      .join('')
+  )
 }
 
 /** Shift a hex color toward white (positive amount) or black (negative). */
@@ -50,29 +59,36 @@ function darken(hex: string, fraction: number): string {
  * Returns a complete CustomTheme (minus id and name, which the caller sets).
  */
 export function deriveCustomTheme(
-  id:      string,
-  name:    string,
-  bg:      string,
-  accent:  string,
+  id: string,
+  name: string,
+  bg: string,
+  accent: string,
   isLight: boolean,
 ): CustomTheme {
-  const shiftAmt = isLight ? -10 : 10   // surface shifts darker for light, lighter for dark
+  const shiftAmt = isLight ? -10 : 10 // surface shifts darker for light, lighter for dark
 
-  const bgSurface  = shift(bg, shiftAmt)
-  const bgHover    = shift(bg, shiftAmt * 2)
-  const border     = blend(bg, bgSurface, 0.4)
-  const text       = isLight ? darken(bg, 0.88) : shift(bg, 180)
-  const textMuted  = blend(text, bg, 0.5)
-  const accentDim  = darken(accent, 0.25)
-  const lum        = luminance(bg)
-  const coverScrim = lum > 0.3
-    ? 'rgba(0,0,0,0.55)'
-    : 'rgba(0,0,0,0.72)'
+  const bgSurface = shift(bg, shiftAmt)
+  const bgHover = shift(bg, shiftAmt * 2)
+  const border = blend(bg, bgSurface, 0.4)
+  const text = isLight ? darken(bg, 0.88) : shift(bg, 180)
+  const textMuted = blend(text, bg, 0.5)
+  const accentDim = darken(accent, 0.25)
+  const lum = luminance(bg)
+  const coverScrim = lum > 0.3 ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.72)'
 
   return {
-    id, name, bg, accent, isLight,
-    bgSurface, bgHover, border,
-    text, textMuted, accentDim, coverScrim,
+    id,
+    name,
+    bg,
+    accent,
+    isLight,
+    bgSurface,
+    bgHover,
+    border,
+    text,
+    textMuted,
+    accentDim,
+    coverScrim,
   }
 }
 

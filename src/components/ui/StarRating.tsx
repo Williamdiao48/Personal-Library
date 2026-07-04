@@ -6,11 +6,25 @@ interface Props {
   size?: number
 }
 
-const STAR_PATH = 'M10 1L12.24 7.28H19L13.38 11.22L15.62 17.5L10 13.56L4.38 17.5L6.62 11.22L1 7.28H7.76Z'
+const STAR_PATH =
+  'M10 1L12.24 7.28H19L13.38 11.22L15.62 17.5L10 13.56L4.38 17.5L6.62 11.22L1 7.28H7.76Z'
 
-function StarSvg({ size, fill, clipId }: { size: number; fill: 'full' | 'half' | 'empty'; clipId: string }) {
+function StarSvg({
+  size,
+  fill,
+  clipId,
+}: {
+  size: number
+  fill: 'full' | 'half' | 'empty'
+  clipId: string
+}) {
   return (
-    <svg viewBox="0 0 20 20" width={size} height={size} style={{ display: 'block', pointerEvents: 'none' }}>
+    <svg
+      viewBox="0 0 20 20"
+      width={size}
+      height={size}
+      style={{ display: 'block', pointerEvents: 'none' }}
+    >
       {fill === 'half' && (
         <defs>
           <clipPath id={clipId}>
@@ -37,7 +51,7 @@ export default function StarRating({ value, onChange, size = 16 }: Props) {
 
   return (
     <div className="star-rating" onMouseLeave={() => onChange && setHovered(null)}>
-      {[1, 2, 3, 4, 5].map(star => {
+      {[1, 2, 3, 4, 5].map((star) => {
         const full = displayed != null && displayed >= star
         const half = displayed != null && displayed >= star - 0.5 && displayed < star
         const fill: 'full' | 'half' | 'empty' = full ? 'full' : half ? 'half' : 'empty'
@@ -49,13 +63,19 @@ export default function StarRating({ value, onChange, size = 16 }: Props) {
                 <button
                   className="star-half star-half--left"
                   onMouseEnter={() => setHovered(star - 0.5)}
-                  onClick={e => { e.stopPropagation(); onChange(value === star - 0.5 ? null : star - 0.5) }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onChange(value === star - 0.5 ? null : star - 0.5)
+                  }}
                   aria-label={`Rate ${star - 0.5} stars`}
                 />
                 <button
                   className="star-half star-half--right"
                   onMouseEnter={() => setHovered(star)}
-                  onClick={e => { e.stopPropagation(); onChange(value === star ? null : star) }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onChange(value === star ? null : star)
+                  }}
                   aria-label={`Rate ${star} stars`}
                 />
               </>

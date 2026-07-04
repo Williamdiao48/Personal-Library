@@ -1,6 +1,12 @@
 import { describe, it, expect, afterAll } from 'vitest'
 import { parseEpubMetadata } from './epub'
-import { buildEpub, makeEpubFile, writeTempEpub, cleanupTempEpubs, PNG_1x1 } from '../../../../test/fixtures/epub'
+import {
+  buildEpub,
+  makeEpubFile,
+  writeTempEpub,
+  cleanupTempEpubs,
+  PNG_1x1,
+} from '../../../../test/fixtures/epub'
 
 afterAll(() => cleanupTempEpubs())
 

@@ -94,7 +94,11 @@ export function seedCollection(db: TestDb, name: string): string {
 export function seedAnnotation(
   db: TestDb,
   itemId: string,
-  over: { type?: 'bookmark' | 'highlight' | 'note'; position?: number; sort_order?: number | null } = {},
+  over: {
+    type?: 'bookmark' | 'highlight' | 'note'
+    position?: number
+    sort_order?: number | null
+  } = {},
 ): string {
   const id = randomUUID()
   db.prepare(

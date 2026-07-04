@@ -14,16 +14,16 @@ import type { Item, EpubBook, Annotation } from '../../types'
 import '../../styles/epub-reader.css'
 
 const SAVE_DEBOUNCE_MS = 600
-const TRANSITION_MS    = 250
+const TRANSITION_MS = 250
 
 type FontFamily = 'serif' | 'sans' | 'mono'
-type Theme      = 'dark' | 'light' | 'sepia'
+type Theme = 'dark' | 'light' | 'sepia'
 type ColPadding = 'narrow' | 'normal' | 'wide'
 
 const FONT_FAMILIES: Record<FontFamily, string> = {
   serif: "Georgia, 'Times New Roman', serif",
-  sans:  "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  mono:  "'SF Mono', 'Fira Code', monospace",
+  sans: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  mono: "'SF Mono', 'Fira Code', monospace",
 }
 
 // Side padding values (px) for narrow/normal/wide width settings.
@@ -33,81 +33,101 @@ const FONT_FAMILIES: Record<FontFamily, string> = {
 const COL_PADDING_PX: Record<ColPadding, number> = {
   narrow: 80,
   normal: 40,
-  wide:   12,
+  wide: 12,
 }
 
-const LS_FONT_SIZE   = 'epub-font-size'
-const LS_FONT_FAM    = 'epub-font-family'
-const LS_THEME       = 'epub-theme'
+const LS_FONT_SIZE = 'epub-font-size'
+const LS_FONT_FAM = 'epub-font-family'
+const LS_THEME = 'epub-theme'
 const LS_LINE_HEIGHT = 'epub-line-height'
 const LS_COL_PADDING = 'epub-col-padding'
 
-interface Props { item: Item; onBack: () => void }
+interface Props {
+  item: Item
+  onBack: () => void
+}
 
 interface XAnim {
-  chapter:    number
-  direction:  'forward' | 'backward'
-  newPage:    number           // 0 for fwd; lastPage for bwd (filled during 'measure')
-  phase:      'setup'          // fwd: incoming at W off-screen-right, waiting for rAF
-            | 'measure'        // bwd: incoming at 0 visibility:hidden, measuring scrollWidth
-            | 'positioned'     // bwd: incoming at -(lastPage+1)*W, waiting for rAF
-            | 'sliding'        // CSS transition active on both divs
-  activeEnd:  number           // translateX the active div animates to
-  xTransform: number           // incoming div's current (pre-slide) translateX
-  xEnd:       number           // incoming div's final (post-slide) translateX
+  chapter: number
+  direction: 'forward' | 'backward'
+  newPage: number // 0 for fwd; lastPage for bwd (filled during 'measure')
+  phase:
+    | 'setup' // fwd: incoming at W off-screen-right, waiting for rAF
+    | 'measure' // bwd: incoming at 0 visibility:hidden, measuring scrollWidth
+    | 'positioned' // bwd: incoming at -(lastPage+1)*W, waiting for rAF
+    | 'sliding' // CSS transition active on both divs
+  activeEnd: number // translateX the active div animates to
+  xTransform: number // incoming div's current (pre-slide) translateX
+  xEnd: number // incoming div's final (post-slide) translateX
 }
 
 export default function EpubReader({ item, onBack }: Props) {
   const { recordActivity } = useReadingSession(item.id)
 
-  const [book,         setBook]         = useState<EpubBook | null>(null)
-  const [chapter,      setChapter]      = useState(0)
-  const [page,         setPage]         = useState(0)
-  const [totalPages,   setTotalPages]   = useState(1)
-  const [outerWidth,   setOuterWidth]   = useState(0)
-  const [outerHeight,  setOuterHeight]  = useState(0)
+  const [book, setBook] = useState<EpubBook | null>(null)
+  const [chapter, setChapter] = useState(0)
+  const [page, setPage] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+  const [outerWidth, setOuterWidth] = useState(0)
+  const [outerHeight, setOuterHeight] = useState(0)
   const [noTransition, setNoTransition] = useState(false)
-  const [loading,      setLoading]      = useState(true)
-  const [error,        setError]        = useState<string | null>(null)
-  const [xAnim,        setXAnim]        = useState<XAnim | null>(null)
-  const [fontSize,     setFontSize]     = useState(() => Number(localStorage.getItem(LS_FONT_SIZE)) || 18)
-  const [fontFamily,   setFontFamily]   = useState<FontFamily>(() => (localStorage.getItem(LS_FONT_FAM) as FontFamily) || 'serif')
-  const [theme,        setTheme]        = useState<Theme>(() => (localStorage.getItem(LS_THEME) as Theme) || 'dark')
-  const [lineHeight,   setLineHeight]   = useState(() => Number(localStorage.getItem(LS_LINE_HEIGHT)) || 1.4)
-  const [colPadding,   setColPadding]   = useState<ColPadding>(() => (localStorage.getItem(LS_COL_PADDING) as ColPadding) || 'normal')
-  const [showSettings,      setShowSettings]      = useState(false)
-  const [showChapterList,   setShowChapterList]   = useState(false)
-  const [showSearch,        setShowSearch]        = useState(false)
-  const [searchQuery,       setSearchQuery]       = useState('')
-  const [showPanel,         setShowPanel]         = useState(false)
-  const [showBookmarks,     setShowBookmarks]     = useState(false)
-  const [notePopup,    setNotePopup]    = useState<{ x: number; y: number; annotation: Annotation } | null>(null)
-  const [contextMenu,  setContextMenu]  = useState<{ x: number; y: number; annotation: Annotation } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [xAnim, setXAnim] = useState<XAnim | null>(null)
+  const [fontSize, setFontSize] = useState(() => Number(localStorage.getItem(LS_FONT_SIZE)) || 18)
+  const [fontFamily, setFontFamily] = useState<FontFamily>(
+    () => (localStorage.getItem(LS_FONT_FAM) as FontFamily) || 'serif',
+  )
+  const [theme, setTheme] = useState<Theme>(
+    () => (localStorage.getItem(LS_THEME) as Theme) || 'dark',
+  )
+  const [lineHeight, setLineHeight] = useState(
+    () => Number(localStorage.getItem(LS_LINE_HEIGHT)) || 1.4,
+  )
+  const [colPadding, setColPadding] = useState<ColPadding>(
+    () => (localStorage.getItem(LS_COL_PADDING) as ColPadding) || 'normal',
+  )
+  const [showSettings, setShowSettings] = useState(false)
+  const [showChapterList, setShowChapterList] = useState(false)
+  const [showSearch, setShowSearch] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showPanel, setShowPanel] = useState(false)
+  const [showBookmarks, setShowBookmarks] = useState(false)
+  const [notePopup, setNotePopup] = useState<{
+    x: number
+    y: number
+    annotation: Annotation
+  } | null>(null)
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    annotation: Annotation
+  } | null>(null)
   const [chapterPageCounts, setChapterPageCounts] = useState<number[]>([])
   const [noteEditorState, setNoteEditorState] = useState<{
-    range:       Range | null
-    position:    number
+    range: Range | null
+    position: number
     existingId?: string
     initialText?: string
   } | null>(null)
   const [noteText, setNoteText] = useState('')
 
-  const outerRef   = useRef<HTMLDivElement>(null)
+  const outerRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const xRef       = useRef<HTMLDivElement>(null)   // ref for incoming chapter div
-  const saveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const xRef = useRef<HTMLDivElement>(null) // ref for incoming chapter div
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Ref mirrors for use inside stable event handlers / stale closures
-  const pageRef               = useRef(0)
-  const totalPagesRef         = useRef(1)
-  const chapterRef            = useRef(0)
-  const bookRef               = useRef<EpubBook | null>(null)
-  const outerWidthRef         = useRef(0)            // mirrors outerWidth
-  const xAnimRef              = useRef<XAnim | null>(null)  // mirrors xAnim
-  const chapterPageCountsRef  = useRef<number[]>([]) // mirrors chapterPageCounts
+  const pageRef = useRef(0)
+  const totalPagesRef = useRef(1)
+  const chapterRef = useRef(0)
+  const bookRef = useRef<EpubBook | null>(null)
+  const outerWidthRef = useRef(0) // mirrors outerWidth
+  const xAnimRef = useRef<XAnim | null>(null) // mirrors xAnim
+  const chapterPageCountsRef = useRef<number[]>([]) // mirrors chapterPageCounts
   // Carries the within-chapter page from initial localStorage read to the first
   // page-count measurement (effect 3), where totalPages is known for clamping.
-  const pendingPageRef        = useRef<number | null>(null)
+  const pendingPageRef = useRef<number | null>(null)
   // Set before calling jumpToChapter; consumed after chapter settles to jump to annotation mark
   const pendingJumpAnnotationId = useRef<string | null>(null)
   // Set when a link click targets a fragment; consumed in the post-render rAF
@@ -127,29 +147,33 @@ export default function EpubReader({ item, onBack }: Props) {
   // overflow-scroll. scrollIntoView() is ineffective here — instead we
   // recover the mark's logical column index and flip to that page directly.
   const handleSearchActivate = useCallback((mark: HTMLElement) => {
-    const w     = outerWidthRef.current
+    const w = outerWidthRef.current
     const outer = outerRef.current
     if (!w || !outer) return
     // getBoundingClientRect() gives the visual (post-transform) position.
     // Adding back the current page offset recovers the logical column position.
-    const markRect  = mark.getBoundingClientRect()
+    const markRect = mark.getBoundingClientRect()
     const outerRect = outer.getBoundingClientRect()
-    const logicalX  = (markRect.left - outerRect.left) + pageRef.current * w
-    const target    = Math.max(0, Math.min(Math.floor(logicalX / w), totalPagesRef.current - 1))
+    const logicalX = markRect.left - outerRect.left + pageRef.current * w
+    const target = Math.max(0, Math.min(Math.floor(logicalX / w), totalPagesRef.current - 1))
     if (target !== pageRef.current) {
       pageRef.current = target
       setPage(target)
     }
   }, []) // refs are stable — no deps needed
 
-  const { matchCount, currentMatch, goNext: hlNext, goPrev: hlPrev } =
-    useTextHighlight(contentRef, showSearch ? searchQuery : '', chapter, handleSearchActivate)
+  const {
+    matchCount,
+    currentMatch,
+    goNext: hlNext,
+    goPrev: hlPrev,
+  } = useTextHighlight(contentRef, showSearch ? searchQuery : '', chapter, handleSearchActivate)
 
   // ── Annotations ───────────────────────────────────────────────
 
   const annot = useAnnotations({
-    itemId:       item.id,
-    contentRef:   contentRef,
+    itemId: item.id,
+    contentRef: contentRef,
     chapterIndex: chapter,
   })
 
@@ -173,15 +197,20 @@ export default function EpubReader({ item, onBack }: Props) {
       if (pendingId) {
         pendingJumpAnnotationId.current = null
         const container = contentRef.current
-        const outer     = outerRef.current
+        const outer = outerRef.current
         if (container && outer) {
-          const mark = container.querySelector<HTMLElement>(`mark[data-annotation-id="${pendingId}"]`)
+          const mark = container.querySelector<HTMLElement>(
+            `mark[data-annotation-id="${pendingId}"]`,
+          )
           if (mark) {
-            const w        = outerWidthRef.current
+            const w = outerWidthRef.current
             const markRect = mark.getBoundingClientRect()
             const outerRect = outer.getBoundingClientRect()
-            const logicalX  = (markRect.left - outerRect.left) + pageRef.current * w
-            const target    = Math.max(0, Math.min(Math.floor(logicalX / w), totalPagesRef.current - 1))
+            const logicalX = markRect.left - outerRect.left + pageRef.current * w
+            const target = Math.max(
+              0,
+              Math.min(Math.floor(logicalX / w), totalPagesRef.current - 1),
+            )
             if (target !== pageRef.current) {
               pageRef.current = target
               setPage(target)
@@ -194,12 +223,17 @@ export default function EpubReader({ item, onBack }: Props) {
       const pendingFrag = pendingFragmentRef.current
       if (pendingFrag) {
         pendingFragmentRef.current = null
-        const el = contentRef.current?.querySelector<HTMLElement>(`[id="${CSS.escape(pendingFrag)}"]`)
+        const el = contentRef.current?.querySelector<HTMLElement>(
+          `[id="${CSS.escape(pendingFrag)}"]`,
+        )
         if (el) handleSearchActivate(el)
       }
     })
-    return () => { cancelled = true; cancelAnimationFrame(raf) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapter, annot.annotations, loading, fontSize, fontFamily])
 
   function getCurrentEpubPosition(): number {
@@ -219,7 +253,10 @@ export default function EpubReader({ item, onBack }: Props) {
   async function saveNote() {
     if (!noteEditorState) return
     const text = noteText.trim()
-    if (!text) { setNoteEditorState(null); return }
+    if (!text) {
+      setNoteEditorState(null)
+      return
+    }
     if (noteEditorState.existingId) {
       await annot.updateNote(noteEditorState.existingId, text)
     } else {
@@ -239,15 +276,17 @@ export default function EpubReader({ item, onBack }: Props) {
     }
     // Same chapter — find the mark and flip to its page
     const container = contentRef.current
-    const outer     = outerRef.current
+    const outer = outerRef.current
     if (container && outer) {
-      const mark = container.querySelector<HTMLElement>(`mark[data-annotation-id="${annotation.id}"]`)
+      const mark = container.querySelector<HTMLElement>(
+        `mark[data-annotation-id="${annotation.id}"]`,
+      )
       if (mark) {
-        const w         = outerWidthRef.current
-        const markRect  = mark.getBoundingClientRect()
+        const w = outerWidthRef.current
+        const markRect = mark.getBoundingClientRect()
         const outerRect = outer.getBoundingClientRect()
-        const logicalX  = (markRect.left - outerRect.left) + pageRef.current * w
-        const target    = Math.max(0, Math.min(Math.floor(logicalX / w), totalPagesRef.current - 1))
+        const logicalX = markRect.left - outerRect.left + pageRef.current * w
+        const target = Math.max(0, Math.min(Math.floor(logicalX / w), totalPagesRef.current - 1))
         if (target !== pageRef.current) {
           pageRef.current = target
           setPage(target)
@@ -261,12 +300,12 @@ export default function EpubReader({ item, onBack }: Props) {
     setPage(target)
   }
 
-  const bookmarks    = annot.annotations.filter(a => a.type === 'bookmark')
-  const isBookmarked = bookmarks.some(b => b.chapter_index === chapterRef.current)
+  const bookmarks = annot.annotations.filter((a) => a.type === 'bookmark')
+  const isBookmarked = bookmarks.some((b) => b.chapter_index === chapterRef.current)
 
   function handleBookmarkToggle() {
     if (isBookmarked) {
-      const existing = bookmarks.find(b => b.chapter_index === chapterRef.current)
+      const existing = bookmarks.find((b) => b.chapter_index === chapterRef.current)
       if (existing) annot.deleteAnnotation(existing.id)
     } else {
       annot.createBookmark(getCurrentEpubPosition())
@@ -289,14 +328,16 @@ export default function EpubReader({ item, onBack }: Props) {
   useEffect(() => {
     let cancelled = false
 
-    readerService.loadEpub(item.file_path)
-      .then(loaded => {
+    readerService
+      .loadEpub(item.file_path)
+      .then((loaded) => {
         if (cancelled) return
-        const total   = loaded.chapters.length
-        const initial = item.scroll_position && total > 1
-          ? Math.max(0, Math.min(Math.round(item.scroll_position * (total - 1)), total - 1))
-          : 0
-        bookRef.current    = loaded
+        const total = loaded.chapters.length
+        const initial =
+          item.scroll_position && total > 1
+            ? Math.max(0, Math.min(Math.round(item.scroll_position * (total - 1)), total - 1))
+            : 0
+        bookRef.current = loaded
         chapterRef.current = initial
         // Restore within-chapter page from localStorage. The page count for
         // this chapter isn't known yet (requires a rendered DOM), so we stash
@@ -304,7 +345,10 @@ export default function EpubReader({ item, onBack }: Props) {
         try {
           const raw = localStorage.getItem(`epub-pos-${item.id}`)
           if (raw) {
-            const { chapter: savedCh, page: savedPg } = JSON.parse(raw) as { chapter: number; page: number }
+            const { chapter: savedCh, page: savedPg } = JSON.parse(raw) as {
+              chapter: number
+              page: number
+            }
             if (savedCh === initial && savedPg > 0) pendingPageRef.current = savedPg
           }
         } catch {}
@@ -312,7 +356,7 @@ export default function EpubReader({ item, onBack }: Props) {
         setChapter(initial)
         setLoading(false)
       })
-      .catch(err => {
+      .catch((err) => {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Failed to load EPUB.')
           setLoading(false)
@@ -408,27 +452,27 @@ export default function EpubReader({ item, onBack }: Props) {
     if (h === 0) return
 
     const chapters = book.chapters
-    const counts   = new Array<number>(chapters.length)
-    let cancelled  = false
-    let i          = 0
+    const counts = new Array<number>(chapters.length)
+    let cancelled = false
+    let i = 0
 
     const el = document.createElement('div')
     Object.assign(el.style, {
-      position:      'fixed',
-      left:          '-99999px',
-      top:           '0',
-      visibility:    'hidden',
+      position: 'fixed',
+      left: '-99999px',
+      top: '0',
+      visibility: 'hidden',
       pointerEvents: 'none',
-      width:         `${outerWidth}px`,
-      height:        `${h}px`,
-      columnWidth:   `${Math.floor(outerWidth / 2)}px`,
-      columnFill:    'auto',
-      columnGap:     '0',
-      boxSizing:     'border-box',
-      padding:       `16px ${COL_PADDING_PX[colPadding]}px`,
-      fontSize:      `${fontSize}px`,
-      fontFamily:    FONT_FAMILIES[fontFamily],
-      lineHeight:    String(lineHeight),
+      width: `${outerWidth}px`,
+      height: `${h}px`,
+      columnWidth: `${Math.floor(outerWidth / 2)}px`,
+      columnFill: 'auto',
+      columnGap: '0',
+      boxSizing: 'border-box',
+      padding: `16px ${COL_PADDING_PX[colPadding]}px`,
+      fontSize: `${fontSize}px`,
+      fontFamily: FONT_FAMILIES[fontFamily],
+      lineHeight: String(lineHeight),
     })
     document.body.appendChild(el)
 
@@ -436,10 +480,10 @@ export default function EpubReader({ item, onBack }: Props) {
 
     function measureBatch() {
       if (cancelled) return
-      const deadline = performance.now() + 8  // ≤8 ms per frame
+      const deadline = performance.now() + 8 // ≤8 ms per frame
       while (i < chapters.length && performance.now() < deadline) {
         el.innerHTML = chapters[i].html
-        counts[i]    = Math.max(1, Math.round(el.scrollWidth / outerWidth))
+        counts[i] = Math.max(1, Math.round(el.scrollWidth / outerWidth))
         i++
       }
       if (i < chapters.length) {
@@ -468,8 +512,7 @@ export default function EpubReader({ item, onBack }: Props) {
     // Forward nav: incoming div has been painted at xTransform=W with no transition.
     // One rAF ensures the browser commits that position before we enable the transition.
     if (xAnim.phase === 'setup') {
-      const raf = requestAnimationFrame(() =>
-        updateXAnim({ ...xAnim, phase: 'sliding' }))
+      const raf = requestAnimationFrame(() => updateXAnim({ ...xAnim, phase: 'sliding' }))
       return () => cancelAnimationFrame(raf)
     }
 
@@ -479,15 +522,15 @@ export default function EpubReader({ item, onBack }: Props) {
       const raf = requestAnimationFrame(() => {
         const el = xRef.current
         if (!el) return
-        const w     = outerWidthRef.current
+        const w = outerWidthRef.current
         const pages = Math.max(1, Math.round(el.scrollWidth / w))
-        const last  = pages - 1
+        const last = pages - 1
         updateXAnim({
           ...xAnim,
-          phase:      'positioned',
-          newPage:    last,
-          xTransform: -(last + 1) * w,  // off-screen left; last-page col is 1 W off left edge
-          xEnd:       -(last * w),        // final: last page aligns with viewport
+          phase: 'positioned',
+          newPage: last,
+          xTransform: -(last + 1) * w, // off-screen left; last-page col is 1 W off left edge
+          xEnd: -(last * w), // final: last page aligns with viewport
         })
       })
       return () => cancelAnimationFrame(raf)
@@ -496,8 +539,7 @@ export default function EpubReader({ item, onBack }: Props) {
     // Backward nav: incoming has been snapped to off-screen-left (no transition).
     // One rAF so browser commits that position before enabling the transition.
     if (xAnim.phase === 'positioned') {
-      const raf = requestAnimationFrame(() =>
-        updateXAnim({ ...xAnim, phase: 'sliding' }))
+      const raf = requestAnimationFrame(() => updateXAnim({ ...xAnim, phase: 'sliding' }))
       return () => cancelAnimationFrame(raf)
     }
 
@@ -506,7 +548,7 @@ export default function EpubReader({ item, onBack }: Props) {
     if (xAnim.phase === 'sliding') {
       const timer = setTimeout(() => {
         chapterRef.current = xAnim.chapter
-        pageRef.current    = xAnim.newPage
+        pageRef.current = xAnim.newPage
 
         if (xAnim.direction === 'backward') {
           // We measured the page count; set it now so totalPagesRef is correct
@@ -543,11 +585,12 @@ export default function EpubReader({ item, onBack }: Props) {
       }
 
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-      if (xAnimRef.current) return  // block all nav during chapter transition
+      if (xAnimRef.current) return // block all nav during chapter transition
 
       // f — toggle fullscreen
       if (e.key === 'f') {
-        if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {})
+        if (!document.fullscreenElement)
+          document.documentElement.requestFullscreen().catch(() => {})
         else document.exitFullscreen().catch(() => {})
         return
       }
@@ -575,7 +618,7 @@ export default function EpubReader({ item, onBack }: Props) {
           // Held-down key: skip the slide animation so rapid flipping isn't
           // interrupted by the 250 ms transition at every chapter boundary.
           if (e.repeat) jumpToChapter(chapterRef.current + 1)
-          else          changeChapter(chapterRef.current + 1, false)
+          else changeChapter(chapterRef.current + 1, false)
         }
       }
 
@@ -587,8 +630,8 @@ export default function EpubReader({ item, onBack }: Props) {
           setPage(prev)
         } else if (chapterRef.current > 0) {
           if (e.repeat) {
-            const prev     = chapterRef.current - 1
-            const known    = chapterPageCountsRef.current[prev]
+            const prev = chapterRef.current - 1
+            const known = chapterPageCountsRef.current[prev]
             const lastPage = known ? known - 1 : 0
             jumpToChapter(prev, lastPage)
           } else {
@@ -611,7 +654,7 @@ export default function EpubReader({ item, onBack }: Props) {
       const anchor = (e.target as HTMLElement).closest('a')
       if (!anchor) return
 
-      const chapterAttr  = anchor.getAttribute('data-epub-chapter')
+      const chapterAttr = anchor.getAttribute('data-epub-chapter')
       const fragmentAttr = anchor.getAttribute('data-epub-fragment')
 
       if (chapterAttr !== null) {
@@ -643,19 +686,23 @@ export default function EpubReader({ item, onBack }: Props) {
     if (!container) return
 
     const handleMarkClick = (e: MouseEvent) => {
-      const mark = (e.target as HTMLElement).closest('mark[data-annotation-id]') as HTMLElement | null
+      const mark = (e.target as HTMLElement).closest(
+        'mark[data-annotation-id]',
+      ) as HTMLElement | null
       if (!mark || mark.dataset.type !== 'note') return
-      const annotation = annot.annotations.find(a => a.id === mark.dataset.annotationId)
+      const annotation = annot.annotations.find((a) => a.id === mark.dataset.annotationId)
       if (!annotation?.note_text) return
       const rect = mark.getBoundingClientRect()
       setNotePopup({ x: rect.left + rect.width / 2, y: rect.top, annotation })
     }
 
     const handleContextMenu = (e: MouseEvent) => {
-      const mark = (e.target as HTMLElement).closest('mark[data-annotation-id]') as HTMLElement | null
+      const mark = (e.target as HTMLElement).closest(
+        'mark[data-annotation-id]',
+      ) as HTMLElement | null
       if (!mark) return
       e.preventDefault()
-      const annotation = annot.annotations.find(a => a.id === mark.dataset.annotationId)
+      const annotation = annot.annotations.find((a) => a.id === mark.dataset.annotationId)
       if (!annotation) return
       const rect = mark.getBoundingClientRect()
       setNotePopup(null)
@@ -674,20 +721,20 @@ export default function EpubReader({ item, onBack }: Props) {
 
   function changeChapter(index: number, goToLastPage: boolean) {
     const bk = bookRef.current
-    if (!bk || xAnimRef.current) return  // block during active transition
+    if (!bk || xAnimRef.current) return // block during active transition
     const clamped = Math.max(0, Math.min(index, bk.chapters.length - 1))
-    const w       = outerWidthRef.current
-    const curOff  = -(pageRef.current * w)
+    const w = outerWidthRef.current
+    const curOff = -(pageRef.current * w)
     chapterRef.current = clamped
 
     updateXAnim({
-      chapter:    clamped,
-      direction:  goToLastPage ? 'backward' : 'forward',
-      newPage:    0,                                        // filled during 'measure' for backward
-      phase:      goToLastPage ? 'measure' : 'setup',
-      activeEnd:  goToLastPage ? curOff + w : curOff - w,  // active slides right (bwd) or left (fwd)
-      xTransform: goToLastPage ? 0 : w,                    // bwd: hidden at 0; fwd: off-screen right
-      xEnd:       0,                                        // filled during 'measure' for backward
+      chapter: clamped,
+      direction: goToLastPage ? 'backward' : 'forward',
+      newPage: 0, // filled during 'measure' for backward
+      phase: goToLastPage ? 'measure' : 'setup',
+      activeEnd: goToLastPage ? curOff + w : curOff - w, // active slides right (bwd) or left (fwd)
+      xTransform: goToLastPage ? 0 : w, // bwd: hidden at 0; fwd: off-screen right
+      xEnd: 0, // filled during 'measure' for backward
     })
 
     const fraction = bk.chapters.length > 1 ? clamped / (bk.chapters.length - 1) : 0
@@ -707,7 +754,7 @@ export default function EpubReader({ item, onBack }: Props) {
     setNotePopup(null)
     setContextMenu(null)
     chapterRef.current = clamped
-    pageRef.current    = targetPage
+    pageRef.current = targetPage
     setNoTransition(true)
     setChapter(clamped)
     setPage(targetPage)
@@ -746,12 +793,15 @@ export default function EpubReader({ item, onBack }: Props) {
     }
   }
 
-  const scheduleSave = useCallback((fraction: number) => {
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => {
-      libraryService.updateProgress(item.id, fraction)
-    }, SAVE_DEBOUNCE_MS)
-  }, [item.id])
+  const scheduleSave = useCallback(
+    (fraction: number) => {
+      if (saveTimer.current) clearTimeout(saveTimer.current)
+      saveTimer.current = setTimeout(() => {
+        libraryService.updateProgress(item.id, fraction)
+      }, SAVE_DEBOUNCE_MS)
+    },
+    [item.id],
+  )
 
   function adjustFontSize(delta: number) {
     const next = Math.max(12, Math.min(28, fontSize + delta))
@@ -782,43 +832,46 @@ export default function EpubReader({ item, onBack }: Props) {
   // ── Render ─────────────────────────────────────────────────────
 
   if (loading) return <div className="reader-loading">Loading EPUB…</div>
-  if (error)   return <div className="reader-loading">{error}</div>
+  if (error) return <div className="reader-loading">{error}</div>
   if (!book || book.chapters.length === 0)
     return <div className="reader-loading">No readable content found in this EPUB.</div>
 
-  const ch      = book.chapters[chapter]
-  const w       = outerWidth
-  const offset  = w > 0 ? -(page * w) : 0
+  const ch = book.chapters[chapter]
+  const w = outerWidth
+  const offset = w > 0 ? -(page * w) : 0
   const canPrev = page > 0 || chapter > 0
   const canNext = page < totalPages - 1 || chapter < book.chapters.length - 1
 
   const allMeasured = chapterPageCounts.length === book.chapters.length
-  const globalPage  = allMeasured
+  const globalPage = allMeasured
     ? chapterPageCounts.slice(0, chapter).reduce((a, b) => a + b, 0) + page + 1
     : null
-  const globalTotal         = allMeasured ? chapterPageCounts.reduce((a, b) => a + b, 0) : null
-  const remainingInChapter  = totalPages - page - 1
+  const globalTotal = allMeasured ? chapterPageCounts.reduce((a, b) => a + b, 0) : null
+  const remainingInChapter = totalPages - page - 1
 
   // During 'sliding', override the active div's transform to its animated end position
-  const activeTransform  = xAnim?.phase === 'sliding' ? xAnim.activeEnd : offset
-  const activeTransition = xAnim?.phase === 'sliding'
-    ? `transform ${TRANSITION_MS}ms ease`
-    : noTransition ? 'none' : `transform ${TRANSITION_MS}ms ease`
+  const activeTransform = xAnim?.phase === 'sliding' ? xAnim.activeEnd : offset
+  const activeTransition =
+    xAnim?.phase === 'sliding'
+      ? `transform ${TRANSITION_MS}ms ease`
+      : noTransition
+        ? 'none'
+        : `transform ${TRANSITION_MS}ms ease`
 
   // Shared style props for both content divs.
   // '--epub-side-padding' drives padding on > * via CSS var — side padding
   // must not go on the container itself (would break column-width math).
   const contentStyleBase = {
-    columnWidth:            w > 0 ? `${Math.floor(w / 2)}px` : undefined,
-    fontSize:               `${fontSize}px`,
-    fontFamily:             FONT_FAMILIES[fontFamily],
-    lineHeight:             String(lineHeight),
-    '--epub-side-padding':  `${COL_PADDING_PX[colPadding]}px`,
+    columnWidth: w > 0 ? `${Math.floor(w / 2)}px` : undefined,
+    fontSize: `${fontSize}px`,
+    fontFamily: FONT_FAMILIES[fontFamily],
+    lineHeight: String(lineHeight),
+    '--epub-side-padding': `${COL_PADDING_PX[colPadding]}px`,
   } as React.CSSProperties
 
   const noteEditorModal = noteEditorState && (
     <div className="note-editor-overlay" onClick={() => setNoteEditorState(null)}>
-      <div className="note-editor-modal" onClick={e => e.stopPropagation()}>
+      <div className="note-editor-modal" onClick={(e) => e.stopPropagation()}>
         <div className="note-editor-header">
           {noteEditorState.existingId ? 'Edit note' : 'Add note'}
         </div>
@@ -830,18 +883,34 @@ export default function EpubReader({ item, onBack }: Props) {
         <textarea
           className="note-editor-textarea"
           value={noteText}
-          onChange={e => setNoteText(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveNote() }
-            if (e.key === 'Escape') { setNoteEditorState(null); setNoteText('') }
+          onChange={(e) => setNoteText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              saveNote()
+            }
+            if (e.key === 'Escape') {
+              setNoteEditorState(null)
+              setNoteText('')
+            }
           }}
           autoFocus
           rows={4}
           placeholder="Write a note…"
         />
         <div className="note-editor-actions">
-          <button className="annot-save-btn" onClick={saveNote}>Save</button>
-          <button className="annot-cancel-btn" onClick={() => { setNoteEditorState(null); setNoteText('') }}>Cancel</button>
+          <button className="annot-save-btn" onClick={saveNote}>
+            Save
+          </button>
+          <button
+            className="annot-cancel-btn"
+            onClick={() => {
+              setNoteEditorState(null)
+              setNoteText('')
+            }}
+          >
+            Cancel
+          </button>
         </div>
       </div>
     </div>
@@ -849,11 +918,11 @@ export default function EpubReader({ item, onBack }: Props) {
 
   return (
     <div className={`epub-reader epub-theme-${theme}`}>
-
       {/* ── Combined reader header ─────────────────────────────── */}
       <header className="reader-header">
-
-        <button className="epub-back-btn" onClick={onBack}>← Library</button>
+        <button className="epub-back-btn" onClick={onBack}>
+          ← Library
+        </button>
 
         {showSearch ? (
           <SearchBar
@@ -876,25 +945,30 @@ export default function EpubReader({ item, onBack }: Props) {
               className="epub-chapter-arrow"
               onClick={() => jumpToChapter(chapter - 1)}
               disabled={chapter === 0}
-            >‹</button>
+            >
+              ‹
+            </button>
 
             <div className="epub-chapter-dropdown-wrapper">
-              <button
-                className="epub-chapter-btn"
-                onClick={() => setShowChapterList(s => !s)}
-              >
+              <button className="epub-chapter-btn" onClick={() => setShowChapterList((s) => !s)}>
                 {chapter + 1}. {ch.title} ▾
               </button>
 
               {showChapterList && (
                 <>
-                  <div className="epub-settings-overlay" onClick={() => setShowChapterList(false)} />
-                  <div className="epub-chapter-list" style={{left: 'auto', right: 0}}>
+                  <div
+                    className="epub-settings-overlay"
+                    onClick={() => setShowChapterList(false)}
+                  />
+                  <div className="epub-chapter-list" style={{ left: 'auto', right: 0 }}>
                     {book.chapters.map((c, i) => (
                       <button
                         key={i}
                         className={`epub-chapter-item${i === chapter ? ' active' : ''}`}
-                        onClick={() => { jumpToChapter(i); setShowChapterList(false) }}
+                        onClick={() => {
+                          jumpToChapter(i)
+                          setShowChapterList(false)
+                        }}
                       >
                         {i + 1}. {c.title}
                       </button>
@@ -908,7 +982,9 @@ export default function EpubReader({ item, onBack }: Props) {
               className="epub-chapter-arrow"
               onClick={() => jumpToChapter(chapter + 1)}
               disabled={chapter === book.chapters.length - 1}
-            >›</button>
+            >
+              ›
+            </button>
           </div>
         )}
 
@@ -920,7 +996,16 @@ export default function EpubReader({ item, onBack }: Props) {
             aria-label="Search in content"
             title="Search (⌘F)"
           >
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
+            <svg
+              viewBox="0 0 16 16"
+              width="13"
+              height="13"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
               <circle cx="6.5" cy="6.5" r="4.5" />
               <line x1="10.5" y1="10.5" x2="14" y2="14" />
             </svg>
@@ -951,15 +1036,18 @@ export default function EpubReader({ item, onBack }: Props) {
         {!showSearch && (
           <button
             className={`epub-top-btn${showBookmarks ? ' active' : ''}`}
-            onClick={() => { setShowBookmarks(s => !s); setShowPanel(false) }}
+            onClick={() => {
+              setShowBookmarks((s) => !s)
+              setShowPanel(false)
+            }}
             aria-label="Bookmarks"
             title="Bookmarks"
             style={{ marginLeft: '4px' }}
           >
             <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-              <path d="M2 2h12v12l-4-2.5L6 14V2z" stroke="currentColor" strokeWidth="1.5"/>
-              <line x1="5" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.2"/>
-              <line x1="5" y1="9" x2="9" y2="9" stroke="currentColor" strokeWidth="1.2"/>
+              <path d="M2 2h12v12l-4-2.5L6 14V2z" stroke="currentColor" strokeWidth="1.5" />
+              <line x1="5" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.2" />
+              <line x1="5" y1="9" x2="9" y2="9" stroke="currentColor" strokeWidth="1.2" />
             </svg>
           </button>
         )}
@@ -968,15 +1056,18 @@ export default function EpubReader({ item, onBack }: Props) {
         {!showSearch && (
           <button
             className={`epub-top-btn${showPanel ? ' active' : ''}`}
-            onClick={() => { setShowPanel(s => !s); setShowBookmarks(false) }}
+            onClick={() => {
+              setShowPanel((s) => !s)
+              setShowBookmarks(false)
+            }}
             aria-label="Annotations"
             title="Annotations"
             style={{ marginLeft: '4px' }}
           >
             <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-              <rect x="1" y="3" width="14" height="2" rx="1" fill="currentColor" opacity="0.5"/>
-              <rect x="1" y="7" width="10" height="2" rx="1" fill="currentColor" opacity="0.5"/>
-              <rect x="1" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+              <rect x="1" y="3" width="14" height="2" rx="1" fill="currentColor" opacity="0.5" />
+              <rect x="1" y="7" width="10" height="2" rx="1" fill="currentColor" opacity="0.5" />
+              <rect x="1" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.5" />
             </svg>
           </button>
         )}
@@ -984,7 +1075,10 @@ export default function EpubReader({ item, onBack }: Props) {
         <div className="epub-settings-wrapper">
           <button
             className={`epub-top-btn${showSettings ? ' active' : ''}`}
-            onClick={() => { setShowSettings(s => !s); setShowSearch(false) }}
+            onClick={() => {
+              setShowSettings((s) => !s)
+              setShowSearch(false)
+            }}
             aria-label="Reader settings"
           >
             Aa
@@ -998,16 +1092,20 @@ export default function EpubReader({ item, onBack }: Props) {
                 <div className="epub-settings-row">
                   <span className="epub-settings-label">Text size</span>
                   <div className="epub-settings-group">
-                    <button className="epub-settings-btn" onClick={() => adjustFontSize(-1)}>A−</button>
+                    <button className="epub-settings-btn" onClick={() => adjustFontSize(-1)}>
+                      A−
+                    </button>
                     <span className="epub-settings-size-display">{fontSize}</span>
-                    <button className="epub-settings-btn" onClick={() => adjustFontSize(+1)}>A+</button>
+                    <button className="epub-settings-btn" onClick={() => adjustFontSize(+1)}>
+                      A+
+                    </button>
                   </div>
                 </div>
 
                 <div className="epub-settings-row">
                   <span className="epub-settings-label">Font</span>
                   <div className="epub-settings-group">
-                    {(['serif', 'sans', 'mono'] as FontFamily[]).map(ff => (
+                    {(['serif', 'sans', 'mono'] as FontFamily[]).map((ff) => (
                       <button
                         key={ff}
                         className={`epub-settings-btn${fontFamily === ff ? ' active' : ''}`}
@@ -1022,7 +1120,7 @@ export default function EpubReader({ item, onBack }: Props) {
                 <div className="epub-settings-row">
                   <span className="epub-settings-label">Spacing</span>
                   <div className="epub-settings-group">
-                    {([1.4, 1.7, 2.1] as const).map(v => (
+                    {([1.4, 1.7, 2.1] as const).map((v) => (
                       <button
                         key={v}
                         className={`epub-settings-btn${lineHeight === v ? ' active' : ''}`}
@@ -1037,7 +1135,7 @@ export default function EpubReader({ item, onBack }: Props) {
                 <div className="epub-settings-row">
                   <span className="epub-settings-label">Width</span>
                   <div className="epub-settings-group">
-                    {(['narrow', 'normal', 'wide'] as ColPadding[]).map(v => (
+                    {(['narrow', 'normal', 'wide'] as ColPadding[]).map((v) => (
                       <button
                         key={v}
                         className={`epub-settings-btn${colPadding === v ? ' active' : ''}`}
@@ -1052,7 +1150,7 @@ export default function EpubReader({ item, onBack }: Props) {
                 <div className="epub-settings-row">
                   <span className="epub-settings-label">Theme</span>
                   <div className="epub-settings-group">
-                    {(['dark', 'light', 'sepia'] as Theme[]).map(t => (
+                    {(['dark', 'light', 'sepia'] as Theme[]).map((t) => (
                       <button
                         key={t}
                         className={`epub-settings-btn${theme === t ? ' active' : ''}`}
@@ -1067,105 +1165,107 @@ export default function EpubReader({ item, onBack }: Props) {
             </>
           )}
         </div>
-
       </header>
 
       {/* ── Page viewport + annotations panel ─────────────────��─ */}
       <div className="reader-with-panel">
-      <div
-        ref={outerRef}
-        className="epub-page-outer"
-        style={{ flex: 1, minWidth: 0 }}
-        onClick={(e) => {
-          const target = e.target as HTMLElement
-          if (target.closest('a, button, mark')) return
-          const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
-          const relX = (e.clientX - rect.left) / rect.width
-          if (relX < 0.15 && canPrev) prevPage()
-          else if (relX > 0.85 && canNext) nextPage()
-        }}
-        onMouseMove={(e) => {
-          const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
-          const relX = (e.clientX - rect.left) / rect.width
-          const isEdge = (relX < 0.15 && canPrev) || (relX > 0.85 && canNext)
-          ;(e.currentTarget as HTMLDivElement).style.cursor = isEdge ? 'pointer' : ''
-        }}
-        onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.cursor = '' }}
-      >
-
-        {/* Active (current) chapter */}
         <div
-          ref={contentRef}
-          className="epub-page-content"
-          style={{
-            ...contentStyleBase,
-            transform:  `translateX(${activeTransform}px)`,
-            transition: activeTransition,
+          ref={outerRef}
+          className="epub-page-outer"
+          style={{ flex: 1, minWidth: 0 }}
+          onClick={(e) => {
+            const target = e.target as HTMLElement
+            if (target.closest('a, button, mark')) return
+            const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
+            const relX = (e.clientX - rect.left) / rect.width
+            if (relX < 0.15 && canPrev) prevPage()
+            else if (relX > 0.85 && canNext) nextPage()
           }}
-          dangerouslySetInnerHTML={{ __html: ch.html }}
-        />
-
-        {/* Incoming chapter — rendered only during a chapter transition */}
-        {xAnim && (
+          onMouseMove={(e) => {
+            const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
+            const relX = (e.clientX - rect.left) / rect.width
+            const isEdge = (relX < 0.15 && canPrev) || (relX > 0.85 && canNext)
+            ;(e.currentTarget as HTMLDivElement).style.cursor = isEdge ? 'pointer' : ''
+          }}
+          onMouseLeave={(e) => {
+            ;(e.currentTarget as HTMLDivElement).style.cursor = ''
+          }}
+        >
+          {/* Active (current) chapter */}
           <div
-            ref={xRef}
+            ref={contentRef}
             className="epub-page-content"
             style={{
               ...contentStyleBase,
-              position:   'absolute',
-              inset:      0,
-              transform:  `translateX(${xAnim.phase === 'sliding' ? xAnim.xEnd : xAnim.xTransform}px)`,
-              transition: xAnim.phase === 'sliding' ? `transform ${TRANSITION_MS}ms ease` : 'none',
-              visibility: xAnim.phase === 'measure' ? 'hidden' : 'visible',
+              transform: `translateX(${activeTransform}px)`,
+              transition: activeTransition,
             }}
-            dangerouslySetInnerHTML={{ __html: book.chapters[xAnim.chapter].html }}
+            dangerouslySetInnerHTML={{ __html: ch.html }}
+          />
+
+          {/* Incoming chapter — rendered only during a chapter transition */}
+          {xAnim && (
+            <div
+              ref={xRef}
+              className="epub-page-content"
+              style={{
+                ...contentStyleBase,
+                position: 'absolute',
+                inset: 0,
+                transform: `translateX(${xAnim.phase === 'sliding' ? xAnim.xEnd : xAnim.xTransform}px)`,
+                transition:
+                  xAnim.phase === 'sliding' ? `transform ${TRANSITION_MS}ms ease` : 'none',
+                visibility: xAnim.phase === 'measure' ? 'hidden' : 'visible',
+              }}
+              dangerouslySetInnerHTML={{ __html: book.chapters[xAnim.chapter].html }}
+            />
+          )}
+
+          {canPrev && <div className="epub-click-prev" aria-hidden="true" />}
+          {canNext && <div className="epub-click-next" aria-hidden="true" />}
+
+          {/* Page number overlay — absolute, centred at bottom of reading area */}
+          {allMeasured && (
+            <div className="epub-page-footer">
+              <span className="epub-page-short epub-page-indicator">{globalPage}</span>
+              <span className="epub-page-long epub-page-indicator">
+                {globalPage} / {globalTotal} ·{' '}
+                {remainingInChapter > 0
+                  ? `${remainingInChapter} page${remainingInChapter !== 1 ? 's' : ''} left in chapter`
+                  : 'last page of chapter'}
+              </span>
+            </div>
+          )}
+
+          {/* TextSelectionPopup — must be outside epub-page-outer (overflow:hidden) */}
+          <TextSelectionPopup
+            containerRef={contentRef}
+            clearTrigger={`${chapter}-${page}`}
+            onHighlight={handleSelectionHighlight}
+            onNote={handleSelectionNote}
+          />
+        </div>
+
+        {showBookmarks && (
+          <BookmarksPanel
+            bookmarks={annot.annotations.filter((a) => a.type === 'bookmark')}
+            contentType={item.content_type}
+            onJump={handleJumpToAnnotation}
+            onDelete={annot.deleteAnnotation}
+            onClose={() => setShowBookmarks(false)}
           />
         )}
-
-        {canPrev && <div className="epub-click-prev" aria-hidden="true" />}
-        {canNext && <div className="epub-click-next" aria-hidden="true" />}
-
-        {/* Page number overlay — absolute, centred at bottom of reading area */}
-        {allMeasured && (
-          <div className="epub-page-footer">
-            <span className="epub-page-short epub-page-indicator">{globalPage}</span>
-            <span className="epub-page-long epub-page-indicator">
-              {globalPage} / {globalTotal} · {remainingInChapter > 0
-                ? `${remainingInChapter} page${remainingInChapter !== 1 ? 's' : ''} left in chapter`
-                : 'last page of chapter'}
-            </span>
-          </div>
+        {showPanel && (
+          <AnnotationsPanel
+            annotations={annot.annotations}
+            contentType={item.content_type}
+            onJump={handleJumpToAnnotation}
+            onDelete={annot.deleteAnnotation}
+            onUpdateNote={annot.updateNote}
+            onMove={annot.swapAnnotationOrder}
+            onClose={() => setShowPanel(false)}
+          />
         )}
-
-        {/* TextSelectionPopup — must be outside epub-page-outer (overflow:hidden) */}
-        <TextSelectionPopup
-          containerRef={contentRef}
-          clearTrigger={`${chapter}-${page}`}
-          onHighlight={handleSelectionHighlight}
-          onNote={handleSelectionNote}
-        />
-      </div>
-
-      {showBookmarks && (
-        <BookmarksPanel
-          bookmarks={annot.annotations.filter(a => a.type === 'bookmark')}
-          contentType={item.content_type}
-          onJump={handleJumpToAnnotation}
-          onDelete={annot.deleteAnnotation}
-          onClose={() => setShowBookmarks(false)}
-        />
-      )}
-      {showPanel && (
-        <AnnotationsPanel
-          annotations={annot.annotations}
-          contentType={item.content_type}
-          onJump={handleJumpToAnnotation}
-          onDelete={annot.deleteAnnotation}
-          onUpdateNote={annot.updateNote}
-          onMove={annot.swapAnnotationOrder}
-          onClose={() => setShowPanel(false)}
-        />
-      )}
       </div>
 
       {noteEditorModal}
@@ -1182,7 +1282,10 @@ export default function EpubReader({ item, onBack }: Props) {
           x={contextMenu.x}
           y={contextMenu.y}
           annotation={contextMenu.annotation}
-          onDelete={id => { annot.deleteAnnotation(id); setContextMenu(null) }}
+          onDelete={(id) => {
+            annot.deleteAnnotation(id)
+            setContextMenu(null)
+          }}
           onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
           onClose={() => setContextMenu(null)}
         />
