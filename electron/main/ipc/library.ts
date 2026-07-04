@@ -15,7 +15,7 @@ function contentHash(text: string): string {
   let h = 0
   const sample = text.length > 4000 ? text.slice(0, 2000) + text.slice(-2000) : text
   for (let i = 0; i < sample.length; i++) {
-    h = Math.imul(31, h) + sample.charCodeAt(i) | 0
+    h = (Math.imul(31, h) + sample.charCodeAt(i)) | 0
   }
   return `${text.length}:${h >>> 0}`
 }
@@ -35,7 +35,6 @@ export function clampRating(rating: unknown): number | null {
 }
 
 export function registerLibraryHandlers(): void {
-
   ipcMain.handle('library:getAll', () => {
     return all<Item>(`
       SELECT i.*, p.scroll_position, p.last_read_at, p.scroll_chapter, p.scroll_y, p.status
@@ -47,12 +46,15 @@ export function registerLibraryHandlers(): void {
   })
 
   ipcMain.handle('library:getById', (_e, id: string) => {
-    return get<Item>(`
+    return get<Item>(
+      `
       SELECT i.*, p.scroll_position, p.last_read_at, p.scroll_chapter, p.scroll_y, p.status
       FROM items i
       LEFT JOIN progress p ON p.item_id = i.id
       WHERE i.id = ?
-    `, [id])
+    `,
+      [id],
+    )
   })
 
   ipcMain.handle('library:softDelete', (_e, id: string) => {
@@ -75,28 +77,39 @@ export function registerLibraryHandlers(): void {
 
   ipcMain.handle('library:permanentlyDelete', (_e, id: string) => {
     const db = getDb()
-    const row = db.prepare(
-      'SELECT file_path, cover_path FROM items WHERE id = ?'
-    ).get(id) as { file_path: string; cover_path: string | null } | undefined
+    const row = db.prepare('SELECT file_path, cover_path FROM items WHERE id = ?').get(id) as
+      { file_path: string; cover_path: string | null } | undefined
     // NOTE: items_fts is contentless FTS5; orphaned entries are excluded by the
     // JOIN on items. No explicit FTS cleanup needed.
     db.prepare('DELETE FROM items WHERE id = ?').run(id)
     if (row) {
       // safeContentPath/safeUserDataPath throw on traversal (F1); the throw is
       // caught here so a malicious path is simply skipped, never escaping.
-      try { unlinkSync(safeContentPath(row.file_path)) } catch {}
-      if (row.cover_path) { try { unlinkSync(safeUserDataPath(row.cover_path)) } catch {} }
+      try {
+        unlinkSync(safeContentPath(row.file_path))
+      } catch {}
+      if (row.cover_path) {
+        try {
+          unlinkSync(safeUserDataPath(row.cover_path))
+        } catch {}
+      }
     }
   })
 
   ipcMain.handle('library:emptyTrash', () => {
     const db = getDb()
-    const rows = db.prepare(
-      'SELECT id, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL'
-    ).all() as { id: string; file_path: string; cover_path: string | null }[]
+    const rows = db
+      .prepare('SELECT id, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL')
+      .all() as { id: string; file_path: string; cover_path: string | null }[]
     for (const row of rows) {
-      try { unlinkSync(safeContentPath(row.file_path)) } catch {}
-      if (row.cover_path) { try { unlinkSync(safeUserDataPath(row.cover_path)) } catch {} }
+      try {
+        unlinkSync(safeContentPath(row.file_path))
+      } catch {}
+      if (row.cover_path) {
+        try {
+          unlinkSync(safeUserDataPath(row.cover_path))
+        } catch {}
+      }
     }
     db.prepare('DELETE FROM items WHERE deleted_at IS NOT NULL').run()
   })
@@ -106,19 +119,26 @@ export function registerLibraryHandlers(): void {
     const safePosition = Number.isFinite(position) ? Math.min(1, Math.max(0, position)) : 0
     position = safePosition
     const now = Date.now()
-    const upsertProgress = (itemId: string) => run(`
+    const upsertProgress = (itemId: string) =>
+      run(
+        `
       INSERT INTO progress (item_id, scroll_position, max_scroll_position, last_read_at)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(item_id) DO UPDATE SET
         scroll_position     = excluded.scroll_position,
         max_scroll_position = MAX(COALESCE(max_scroll_position, 0), excluded.scroll_position),
         last_read_at        = excluded.last_read_at
-    `, [itemId, position, position, now])
+    `,
+        [itemId, position, position, now],
+      )
 
     upsertProgress(id)
 
     // Sync to related items (PDF ↔ derived EPUB)
-    const self = get<{ derived_from: string | null }>(`SELECT derived_from FROM items WHERE id = ?`, [id])
+    const self = get<{ derived_from: string | null }>(
+      `SELECT derived_from FROM items WHERE id = ?`,
+      [id],
+    )
     if (self?.derived_from) {
       upsertProgress(self.derived_from)
     }
@@ -127,27 +147,33 @@ export function registerLibraryHandlers(): void {
   })
 
   ipcMain.handle('library:saveScrollPos', (_e, id: string, chapter: number, scrollY: number) => {
-    run(`
+    run(
+      `
       INSERT INTO progress (item_id, scroll_chapter, scroll_y, last_read_at)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(item_id) DO UPDATE SET
         scroll_chapter = excluded.scroll_chapter,
         scroll_y       = excluded.scroll_y,
         last_read_at   = excluded.last_read_at
-    `, [id, chapter, scrollY, Date.now()])
+    `,
+      [id, chapter, scrollY, Date.now()],
+    )
   })
 
   ipcMain.handle('library:search', (_e, query: string) => {
     // FTS5 MATCH throws on malformed syntax (unbalanced quotes, bare operators, etc.)
     // Return an empty result set rather than propagating the SQLite exception.
     try {
-      return all<Item>(`
+      return all<Item>(
+        `
         SELECT i.*
         FROM items_fts f
         JOIN items i ON i.rowid = f.rowid
         WHERE items_fts MATCH ? AND i.deleted_at IS NULL
         ORDER BY rank
-      `, [toFtsPrefix(query)])
+      `,
+        [toFtsPrefix(query)],
+      )
     } catch {
       return []
     }
@@ -181,11 +207,14 @@ export function registerLibraryHandlers(): void {
   })
 
   ipcMain.handle('tags:getForItem', (_e, itemId: string) => {
-    return all<Tag>(`
+    return all<Tag>(
+      `
       SELECT t.* FROM tags t
       JOIN item_tags it ON it.tag_id = t.id
       WHERE it.item_id = ?
-    `, [itemId])
+    `,
+      [itemId],
+    )
   })
 
   ipcMain.handle('tags:setForItem', (_e, itemId: string, tagIds: string[]) => {
@@ -226,39 +255,51 @@ export function registerLibraryHandlers(): void {
     const db = getDb()
 
     // Remove any existing cover file first
-    const row = db.prepare('SELECT cover_path FROM items WHERE id = ?')
-      .get(id) as { cover_path: string | null } | undefined
-    if (row?.cover_path) try { unlinkSync(safeUserDataPath(row.cover_path)) } catch {}
+    const row = db.prepare('SELECT cover_path FROM items WHERE id = ?').get(id) as
+      { cover_path: string | null } | undefined
+    if (row?.cover_path)
+      try {
+        unlinkSync(safeUserDataPath(row.cover_path))
+      } catch {}
 
     const buf = Buffer.from(data)
     const coverFile = `${id}-cover.${ext}`
     writeFileSync(join(userData, 'content', coverFile), buf)
     const coverPath = `content/${coverFile}`
 
-    db.prepare('UPDATE items SET cover_path = ?, date_modified = ? WHERE id = ?')
-      .run(coverPath, Date.now(), id)
+    db.prepare('UPDATE items SET cover_path = ?, date_modified = ? WHERE id = ?').run(
+      coverPath,
+      Date.now(),
+      id,
+    )
 
     // Propagate cover to any derived items (e.g. converted EPUBs) that have no cover yet.
     // Each gets its own copy of the file so deletions don't cross-contaminate.
-    const derived = db.prepare(
-      `SELECT id FROM items WHERE derived_from = ? AND cover_path IS NULL`
-    ).all(id) as { id: string }[]
+    const derived = db
+      .prepare(`SELECT id FROM items WHERE derived_from = ? AND cover_path IS NULL`)
+      .all(id) as { id: string }[]
     for (const { id: derivedId } of derived) {
       const derivedFile = `${derivedId}-cover.${ext}`
       writeFileSync(join(userData, 'content', derivedFile), buf)
-      db.prepare('UPDATE items SET cover_path = ?, date_modified = ? WHERE id = ?')
-        .run(`content/${derivedFile}`, Date.now(), derivedId)
+      db.prepare('UPDATE items SET cover_path = ?, date_modified = ? WHERE id = ?').run(
+        `content/${derivedFile}`,
+        Date.now(),
+        derivedId,
+      )
     }
 
     return coverPath
   })
 
   ipcMain.handle('library:setStatus', (_e, id: string, status: string | null) => {
-    run(`
+    run(
+      `
       INSERT INTO progress (item_id, status)
       VALUES (?, ?)
       ON CONFLICT(item_id) DO UPDATE SET status = excluded.status
-    `, [id, status])
+    `,
+      [id, status],
+    )
   })
 
   ipcMain.handle('library:setAuthor', (_e, id: string, author: string | null) => {
@@ -270,7 +311,11 @@ export function registerLibraryHandlers(): void {
   })
 
   ipcMain.handle('library:setRating', (_e, id: string, rating: number | null) => {
-    run('UPDATE items SET rating = ?, date_modified = ? WHERE id = ?', [clampRating(rating), Date.now(), id])
+    run('UPDATE items SET rating = ?, date_modified = ? WHERE id = ?', [
+      clampRating(rating),
+      Date.now(),
+      id,
+    ])
   })
 
   ipcMain.handle('library:setReview', (_e, id: string, review: string | null) => {
@@ -303,22 +348,24 @@ export function registerLibraryHandlers(): void {
     const db = getDb()
 
     type Row = {
-      rowid:         number
-      source_url:    string | null
-      file_path:     string
-      word_count:    number | null
-      content_hash:  string | null
-      title:         string
-      author:        string | null
+      rowid: number
+      source_url: string | null
+      file_path: string
+      word_count: number | null
+      content_hash: string | null
+      title: string
+      author: string | null
       date_modified: number
       chapter_start: number | null
-      chapter_end:   number | null
+      chapter_end: number | null
     }
-    const item = db.prepare(
-      'SELECT rowid, source_url, file_path, word_count, content_hash, title, author, date_modified, chapter_start, chapter_end FROM items WHERE id = ?'
-    ).get(id) as Row | undefined
+    const item = db
+      .prepare(
+        'SELECT rowid, source_url, file_path, word_count, content_hash, title, author, date_modified, chapter_start, chapter_end FROM items WHERE id = ?',
+      )
+      .get(id) as Row | undefined
 
-    if (!item)            throw new Error('Item not found.')
+    if (!item) throw new Error('Item not found.')
     if (!item.source_url) throw new Error('This item has no source URL and cannot be refreshed.')
 
     // ── Step 1: Conditional HEAD check (3 s timeout) ──────────────────────
@@ -348,10 +395,15 @@ export function registerLibraryHandlers(): void {
     }
 
     // ── Step 3: Full re-scrape ─────────────────────────────────────────────
-    const range = (item.chapter_start != null && item.chapter_end != null)
-      ? { start: item.chapter_start, end: item.chapter_end }
-      : undefined
-    const { html: newHtml, textContent: newText } = await refreshContent(item.source_url, undefined, range)
+    const range =
+      item.chapter_start != null && item.chapter_end != null
+        ? { start: item.chapter_start, end: item.chapter_end }
+        : undefined
+    const { html: newHtml, textContent: newText } = await refreshContent(
+      item.source_url,
+      undefined,
+      range,
+    )
 
     // ── Step 4: Content hash check — skip all I/O if nothing changed ───────
     const newHash = contentHash(newText)
@@ -360,8 +412,8 @@ export function registerLibraryHandlers(): void {
     }
 
     const newWordCount = newText.split(/\s+/).filter(Boolean).length
-    const now          = Date.now()
-    const filePath     = safeContentPath(item.file_path)
+    const now = Date.now()
+    const filePath = safeContentPath(item.file_path)
 
     // ── Step 5: Read old text for FTS5 delete ─────────────────────────────
     // FTS5 contentless tables require the originally-indexed token values to
@@ -380,17 +432,21 @@ export function registerLibraryHandlers(): void {
     writeFileSync(filePath, newHtml, 'utf8')
 
     db.transaction(() => {
-      db.prepare('UPDATE items SET word_count = ?, content_hash = ?, date_modified = ? WHERE id = ?')
-        .run(newWordCount, newHash, now, id)
+      db.prepare(
+        'UPDATE items SET word_count = ?, content_hash = ?, date_modified = ? WHERE id = ?',
+      ).run(newWordCount, newHash, now, id)
 
       db.prepare(
         `INSERT INTO items_fts(items_fts, rowid, title, author, content)
-         VALUES('delete', ?, ?, ?, ?)`
+         VALUES('delete', ?, ?, ?, ?)`,
       ).run(item.rowid, item.title, item.author ?? '', oldText)
 
-      db.prepare(
-        `INSERT INTO items_fts(rowid, title, author, content) VALUES(?, ?, ?, ?)`
-      ).run(item.rowid, item.title, item.author ?? '', newText)
+      db.prepare(`INSERT INTO items_fts(rowid, title, author, content) VALUES(?, ?, ?, ?)`).run(
+        item.rowid,
+        item.title,
+        item.author ?? '',
+        newText,
+      )
     })()
 
     return { changed: true, wordCount: newWordCount }
@@ -413,16 +469,22 @@ export function registerLibraryHandlers(): void {
     const userData = app.getPath('userData')
     const db = getDb()
 
-    const row = db.prepare('SELECT cover_path FROM items WHERE id = ?')
-      .get(id) as { cover_path: string | null } | undefined
-    if (row?.cover_path) try { unlinkSync(safeUserDataPath(row.cover_path)) } catch {}
+    const row = db.prepare('SELECT cover_path FROM items WHERE id = ?').get(id) as
+      { cover_path: string | null } | undefined
+    if (row?.cover_path)
+      try {
+        unlinkSync(safeUserDataPath(row.cover_path))
+      } catch {}
 
     const coverFile = `${id}-cover.${ext}`
     copyFileSync(src, join(userData, 'content', coverFile))
     const coverPath = `content/${coverFile}`
 
-    db.prepare('UPDATE items SET cover_path = ?, date_modified = ? WHERE id = ?')
-      .run(coverPath, Date.now(), id)
+    db.prepare('UPDATE items SET cover_path = ?, date_modified = ? WHERE id = ?').run(
+      coverPath,
+      Date.now(),
+      id,
+    )
     return coverPath
   })
 }
@@ -438,7 +500,7 @@ function toFtsPrefix(raw: string): string {
     .trim()
     .split(/\s+/)
     .filter(Boolean)
-    .map(token => {
+    .map((token) => {
       if (/^(AND|OR|NOT)$/i.test(token)) return token
       if (token.startsWith('"') || token.endsWith('*')) return token
       return token + '*'

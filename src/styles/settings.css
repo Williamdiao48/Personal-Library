@@ -28,7 +28,9 @@
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 5px;
-  transition: color 0.12s, background 0.12s;
+  transition:
+    color 0.12s,
+    background 0.12s;
 }
 
 .settings-page-back-btn:hover {
@@ -116,7 +118,9 @@
   padding: 3px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: color var(--t-fast), background var(--t-fast);
+  transition:
+    color var(--t-fast),
+    background var(--t-fast);
 }
 
 .custom-theme-row-btn:hover {
@@ -224,7 +228,8 @@
 
 .custom-theme-preview-surface {
   position: absolute;
-  top: 0; right: 0;
+  top: 0;
+  right: 0;
   width: 60%;
   height: 100%;
   display: block;

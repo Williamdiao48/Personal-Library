@@ -7,33 +7,33 @@ import { backupService } from '../../services/backup'
 // ── Theme preview data ──────────────────────────────────────────────────────
 
 const THEMES: {
-  value:   Theme
-  label:   string
-  bg:      string
+  value: Theme
+  label: string
+  bg: string
   surface: string
-  accent:  string
+  accent: string
 }[] = [
-  { value: 'dark',          label: 'Dark',     bg: '#1a1a1a', surface: '#2e2e2e', accent: '#7c6aff' },
-  { value: 'darker',        label: 'Darker',   bg: '#0d0d0d', surface: '#1a1a1a', accent: '#5b8dee' },
-  { value: 'light',         label: 'Light',    bg: '#f0eff5', surface: '#ffffff', accent: '#6253c9' },
-  { value: 'sepia',         label: 'Sepia',    bg: '#f5f0e8', surface: '#ede8dc', accent: '#9b6b3e' },
-  { value: 'ocean',         label: 'Ocean',    bg: '#0f1923', surface: '#162433', accent: '#38bdf8' },
-  { value: 'nord',          label: 'Nord',     bg: '#2e3440', surface: '#3b4252', accent: '#88c0d0' },
-  { value: 'rose',          label: 'Rose',     bg: '#1a1015', surface: '#251820', accent: '#f472b6' },
-  { value: 'forest',        label: 'Forest',   bg: '#131a12', surface: '#1c2a1b', accent: '#4ade80' },
-  { value: 'high-contrast', label: 'Hi-Con',   bg: '#000000', surface: '#0d0d0d', accent: '#03fcf4' },
+  { value: 'dark', label: 'Dark', bg: '#1a1a1a', surface: '#2e2e2e', accent: '#7c6aff' },
+  { value: 'darker', label: 'Darker', bg: '#0d0d0d', surface: '#1a1a1a', accent: '#5b8dee' },
+  { value: 'light', label: 'Light', bg: '#f0eff5', surface: '#ffffff', accent: '#6253c9' },
+  { value: 'sepia', label: 'Sepia', bg: '#f5f0e8', surface: '#ede8dc', accent: '#9b6b3e' },
+  { value: 'ocean', label: 'Ocean', bg: '#0f1923', surface: '#162433', accent: '#38bdf8' },
+  { value: 'nord', label: 'Nord', bg: '#2e3440', surface: '#3b4252', accent: '#88c0d0' },
+  { value: 'rose', label: 'Rose', bg: '#1a1015', surface: '#251820', accent: '#f472b6' },
+  { value: 'forest', label: 'Forest', bg: '#131a12', surface: '#1c2a1b', accent: '#4ade80' },
+  { value: 'high-contrast', label: 'Hi-Con', bg: '#000000', surface: '#0d0d0d', accent: '#03fcf4' },
 ]
 
 const DENSITY_OPTIONS: { value: GridDensity; label: string }[] = [
-  { value: 'compact',     label: 'Compact'     },
-  { value: 'normal',      label: 'Normal'      },
+  { value: 'compact', label: 'Compact' },
+  { value: 'normal', label: 'Normal' },
   { value: 'comfortable', label: 'Comfortable' },
 ]
 
 const SORT_OPTIONS = [
   { value: 'date_saved', label: 'Date saved' },
-  { value: 'last_read',  label: 'Last read'  },
-  { value: 'title',      label: 'Title'      },
+  { value: 'last_read', label: 'Last read' },
+  { value: 'title', label: 'Title' },
 ]
 
 // ── Toggle switch ───────────────────────────────────────────────────────────
@@ -43,9 +43,9 @@ function Toggle({
   onChange,
   id,
 }: {
-  checked:  boolean
+  checked: boolean
   onChange: (value: boolean) => void
-  id:       string
+  id: string
 }) {
   return (
     <button
@@ -68,17 +68,20 @@ type ImportState = 'idle' | 'confirming' | 'busy' | 'error'
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const { settings, updateSettings } = useSettings()
 
-  const [exportState,   setExportState]   = useState<ExportState>('idle')
+  const [exportState, setExportState] = useState<ExportState>('idle')
   const [exportMessage, setExportMessage] = useState('')
-  const [importState,   setImportState]   = useState<ImportState>('idle')
-  const [importError,   setImportError]   = useState('')
+  const [importState, setImportState] = useState<ImportState>('idle')
+  const [importError, setImportError] = useState('')
 
   async function handleExport() {
     setExportState('busy')
     setExportMessage('')
     try {
       const result = await backupService.export()
-      if (!result) { setExportState('idle'); return }
+      if (!result) {
+        setExportState('idle')
+        return
+      }
       const mb = (result.fileSizeBytes / 1024 / 1024).toFixed(1)
       setExportMessage(`Saved — ${result.itemCount} items, ${mb} MB`)
       setExportState('success')
@@ -117,17 +120,22 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
-        onClick={e => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
       >
         {/* ── Header ── */}
         <div className="settings-modal-header">
           <h2 id="settings-title">Settings</h2>
-          <button
-            className="settings-modal-close"
-            onClick={onClose}
-            aria-label="Close settings"
-          >
-            <svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
+          <button className="settings-modal-close" onClick={onClose} aria-label="Close settings">
+            <svg
+              viewBox="0 0 12 12"
+              width="12"
+              height="12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
               <path d="M1 1l10 10M11 1L1 11" />
             </svg>
           </button>
@@ -140,7 +148,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           <div className="settings-row settings-row--column">
             <span className="settings-row-label">Theme</span>
             <div className="settings-theme-swatches">
-              {THEMES.map(t => (
+              {THEMES.map((t) => (
                 <button
                   key={t.value}
                   className={`settings-theme-swatch${settings.theme === t.value ? ' selected' : ''}`}
@@ -153,8 +161,14 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     style={{ background: t.bg }}
                     aria-hidden="true"
                   >
-                    <span className="settings-theme-preview-stripe" style={{ background: t.surface }} />
-                    <span className="settings-theme-preview-accent" style={{ background: t.accent }} />
+                    <span
+                      className="settings-theme-preview-stripe"
+                      style={{ background: t.surface }}
+                    />
+                    <span
+                      className="settings-theme-preview-accent"
+                      style={{ background: t.accent }}
+                    />
                   </span>
                   <span className="settings-theme-label">{t.label}</span>
                 </button>
@@ -190,7 +204,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             <Toggle
               id="toggle-authors"
               checked={settings.showAuthors}
-              onChange={v => updateSettings({ showAuthors: v })}
+              onChange={(v) => updateSettings({ showAuthors: v })}
             />
           </div>
 
@@ -201,7 +215,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             <Toggle
               id="toggle-progress"
               checked={settings.showProgress}
-              onChange={v => updateSettings({ showProgress: v })}
+              onChange={(v) => updateSettings({ showProgress: v })}
             />
           </div>
         </section>
@@ -216,7 +230,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               label=""
               includePlaceholder={false}
               value={settings.defaultSort}
-              onChange={val => updateSettings({ defaultSort: val as SortBy })}
+              onChange={(val) => updateSettings({ defaultSort: val as SortBy })}
               options={SORT_OPTIONS}
             />
           </div>
@@ -231,7 +245,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             <div className="settings-row-stack">
               <span className="settings-row-label">Export library</span>
               <span className="settings-row-hint">
-                Saves a .plbackup file with all items, covers, tags, collections, and reading progress.
+                Saves a .plbackup file with all items, covers, tags, collections, and reading
+                progress.
               </span>
               {exportState === 'success' && (
                 <span className="settings-feedback settings-feedback--ok">{exportMessage}</span>
@@ -283,7 +298,10 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             ) : (
               <button
                 className="settings-action-btn"
-                onClick={() => { setImportError(''); setImportState('confirming') }}
+                onClick={() => {
+                  setImportError('')
+                  setImportState('confirming')
+                }}
                 disabled={importState === 'busy'}
               >
                 {importState === 'busy' ? 'Importing…' : 'Import'}

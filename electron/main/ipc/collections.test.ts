@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { invoke, resetIpc } from '../../../test/stubs/electron'
-import { openTestDb, closeTestDb, seedItem, seedCollection, type TestDb } from '../../../test/db/harness'
+import {
+  openTestDb,
+  closeTestDb,
+  seedItem,
+  seedCollection,
+  type TestDb,
+} from '../../../test/db/harness'
 import { registerCollectionHandlers } from './collections'
 import type { Item } from '../../../src/types'
 

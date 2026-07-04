@@ -4,22 +4,22 @@ import { libraryService } from '../../services/library'
 import type { CaptureResult, Item } from '../../types'
 
 interface Props {
-  onClose:      () => void
-  onSaved:      (item: Item) => void                   // file imports only
-  onJobStarted: (jobId: string, url: string) => void   // URL captures
-  initialUrl?:  string
+  onClose: () => void
+  onSaved: (item: Item) => void // file imports only
+  onJobStarted: (jobId: string, url: string) => void // URL captures
+  initialUrl?: string
 }
 
 const BOOKMARKLET = `javascript:(function(){location.href='personallibrary://save?url='+encodeURIComponent(location.href)})();`
 
 export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUrl }: Props) {
-  const [url, setUrl]             = useState(initialUrl ?? '')
+  const [url, setUrl] = useState(initialUrl ?? '')
   const [importing, setImporting] = useState(false)
-  const [error, setError]         = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [showRange, setShowRange] = useState(false)
   const [rangeStart, setRangeStart] = useState('')
-  const [rangeEnd, setRangeEnd]     = useState('')
-  const [duplicate, setDuplicate]   = useState<{ id: string; title: string } | null>(null)
+  const [rangeEnd, setRangeEnd] = useState('')
+  const [duplicate, setDuplicate] = useState<{ id: string; title: string } | null>(null)
 
   // URL capture: fire-and-forget — modal closes immediately, job tracked in sidebar
   async function handleSubmit(e: React.FormEvent) {
@@ -42,7 +42,7 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
 
   async function startCapture(trimmed: string) {
     const start = showRange && rangeStart ? parseInt(rangeStart) : undefined
-    const end   = showRange && rangeEnd   ? parseInt(rangeEnd)   : undefined
+    const end = showRange && rangeEnd ? parseInt(rangeEnd) : undefined
     const jobId = await captureService.start(trimmed, start, end)
     onJobStarted(jobId, trimmed)
     onClose()
@@ -54,7 +54,10 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
     setError(null)
     try {
       const result: CaptureResult | null = await captureService.fromFile()
-      if (!result) { setImporting(false); return }  // user cancelled picker
+      if (!result) {
+        setImporting(false)
+        return
+      } // user cancelled picker
       const item = await libraryService.getById(result.id)
       if (!item) throw new Error('Item was saved but could not be retrieved.')
       onSaved(item)
@@ -66,7 +69,7 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Add item</h2>
 
         <form onSubmit={handleSubmit}>
@@ -74,11 +77,15 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
             type="url"
             placeholder="https://..."
             value={url}
-            onChange={e => setUrl(e.target.value)}
+            onChange={(e) => setUrl(e.target.value)}
             autoFocus
           />
           <div className="modal-range-toggle">
-            <button type="button" className="modal-range-toggle-btn" onClick={() => setShowRange(s => !s)}>
+            <button
+              type="button"
+              className="modal-range-toggle-btn"
+              onClick={() => setShowRange((s) => !s)}
+            >
               {showRange ? '− Chapter range' : '+ Chapter range'}
             </button>
           </div>
@@ -86,12 +93,24 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
             <div className="modal-range-inputs">
               <label>
                 From
-                <input type="number" min="1" placeholder="1" value={rangeStart} onChange={e => setRangeStart(e.target.value)} />
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="1"
+                  value={rangeStart}
+                  onChange={(e) => setRangeStart(e.target.value)}
+                />
               </label>
               <span className="modal-range-dash">–</span>
               <label>
                 To
-                <input type="number" min="1" placeholder="last" value={rangeEnd} onChange={e => setRangeEnd(e.target.value)} />
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="last"
+                  value={rangeEnd}
+                  onChange={(e) => setRangeEnd(e.target.value)}
+                />
               </label>
             </div>
           )}
@@ -102,14 +121,20 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
                 <strong>{duplicate.title}</strong> is already in your library.
               </p>
               <div className="modal-actions">
-                <button type="button" onClick={() => setDuplicate(null)}>Back</button>
-                <button type="button" onClick={() => startCapture(url.trim())}>Add anyway</button>
+                <button type="button" onClick={() => setDuplicate(null)}>
+                  Back
+                </button>
+                <button type="button" onClick={() => startCapture(url.trim())}>
+                  Add anyway
+                </button>
               </div>
             </div>
           )}
           {!duplicate && (
             <div className="modal-actions">
-              <button type="button" onClick={onClose}>Cancel</button>
+              <button type="button" onClick={onClose}>
+                Cancel
+              </button>
               <button type="submit">Save</button>
             </div>
           )}
@@ -136,7 +161,7 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
             href={BOOKMARKLET}
             className="bookmarklet-btn"
             draggable
-            onClick={e => e.preventDefault()}
+            onClick={(e) => e.preventDefault()}
           >
             Save to Library
           </a>

@@ -12,12 +12,11 @@ import {
 } from '../security/validation'
 
 export function registerReaderHandlers(): void {
-
   // Path-traversal guard lives in security/paths.ts (safeContentPath).
 
   // Returns HTML/text content as a UTF-8 string (articles).
   ipcMain.handle('reader:loadContent', (_e, relativePath: string) =>
-    readFile(safeContentPath(relativePath), 'utf8')
+    readFile(safeContentPath(relativePath), 'utf8'),
   )
 
   // Returns the number of chapter files for a multi-chapter item.
@@ -31,7 +30,9 @@ export function registerReaderHandlers(): void {
       try {
         await stat(safeContentPath(`${base}-ch${count}.html`))
         count++
-      } catch { break }
+      } catch {
+        break
+      }
     }
     return Math.max(count, 1)
   })
@@ -40,13 +41,16 @@ export function registerReaderHandlers(): void {
   // relativePath is the first chapter file path (e.g. "{uuid}-ch0.html").
   // For single-chapter/legacy items (no -ch0 suffix), index is ignored and
   // the full file is returned.
-  ipcMain.handle('reader:loadChapter', async (_e, relativePath: string, index: number): Promise<string> => {
-    if (!relativePath.match(/-ch\d+\.html$/)) {
-      return readFile(safeContentPath(relativePath), 'utf8')
-    }
-    const base = relativePath.replace(/-ch\d+\.html$/, '')
-    return readFile(safeContentPath(`${base}-ch${index}.html`), 'utf8')
-  })
+  ipcMain.handle(
+    'reader:loadChapter',
+    async (_e, relativePath: string, index: number): Promise<string> => {
+      if (!relativePath.match(/-ch\d+\.html$/)) {
+        return readFile(safeContentPath(relativePath), 'utf8')
+      }
+      const base = relativePath.replace(/-ch\d+\.html$/, '')
+      return readFile(safeContentPath(`${base}-ch${index}.html`), 'utf8')
+    },
+  )
 
   // Returns raw bytes of a PDF after validating size + magic bytes.
   // Validation runs in the main process so the renderer never receives bytes
@@ -59,7 +63,7 @@ export function registerReaderHandlers(): void {
     if (size > PDF_MAX_BYTES) {
       throw new Error(
         `File too large (${(size / 1_048_576).toFixed(0)} MB). ` +
-        `Maximum allowed size is ${PDF_MAX_BYTES / 1_048_576} MB.`
+          `Maximum allowed size is ${PDF_MAX_BYTES / 1_048_576} MB.`,
       )
     }
 
@@ -84,7 +88,7 @@ export function registerReaderHandlers(): void {
     if (size > EPUB_MAX_BYTES) {
       throw new Error(
         `File too large (${(size / 1_048_576).toFixed(0)} MB). ` +
-        `Maximum allowed size is ${EPUB_MAX_BYTES / 1_048_576} MB.`
+          `Maximum allowed size is ${EPUB_MAX_BYTES / 1_048_576} MB.`,
       )
     }
 
@@ -96,5 +100,4 @@ export function registerReaderHandlers(): void {
     //    or on the file path directly (we pass fullPath; adm-zip re-reads it).
     return extractEpubContent(fullPath)
   })
-
 }

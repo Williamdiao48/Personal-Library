@@ -12,52 +12,52 @@ import NotePopover from './NotePopover'
 import AnnotationContextMenu from './AnnotationContextMenu'
 import type { Item, Annotation } from '../../types'
 import '../../styles/reader.css'
-import '../../styles/epub-reader.css'   // reuse settings panel + button styles
+import '../../styles/epub-reader.css' // reuse settings panel + button styles
 
 type FontFamily = 'serif' | 'sans' | 'mono'
-type HtmlTheme  = 'dark' | 'light' | 'sepia'
+type HtmlTheme = 'dark' | 'light' | 'sepia'
 
 const FONT_FAMILIES: Record<FontFamily, string> = {
   serif: "Georgia, 'Times New Roman', serif",
-  sans:  "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  mono:  "'SF Mono', 'Fira Code', monospace",
+  sans: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  mono: "'SF Mono', 'Fira Code', monospace",
 }
 
 // localStorage keys
-const LS_FONT_SIZE    = 'html-font-size'
-const LS_FONT_FAM    = 'html-font-family'
-const LS_THEME       = 'html-theme'
+const LS_FONT_SIZE = 'html-font-size'
+const LS_FONT_FAM = 'html-font-family'
+const LS_THEME = 'html-theme'
 const LS_LINE_HEIGHT = 'html-line-height'
-const LS_MAX_WIDTH   = 'html-max-width'
-const LS_CONTINUOUS  = 'html-continuous-mode'
+const LS_MAX_WIDTH = 'html-max-width'
+const LS_CONTINUOUS = 'html-continuous-mode'
 
 const SAVE_DEBOUNCE_MS = 1000
 
 interface Chapter {
-  html:  string
+  html: string
   title: string
 }
 
 interface Props {
-  item:               Item
-  content:            string
-  onBack:             () => void
+  item: Item
+  content: string
+  onBack: () => void
   /** When set, enables per-chapter lazy loading. `content` is the HTML for
    *  chapter 0 and additional chapters are fetched on demand via IPC. */
-  lazyChapterCount?:  number
+  lazyChapterCount?: number
   /** True when the background refresh detected new content on the source. */
-  contentStale?:      boolean
+  contentStale?: boolean
   /** Called when the user clicks the "Updated" badge to reload fresh content. */
-  onReloadContent?:   () => void
+  onReloadContent?: () => void
 }
 
 /** Extract individual chapters from a legacy, single-file multi-chapter document. */
 function parseChapters(html: string): Chapter[] | null {
-  const doc  = new DOMParser().parseFromString(html, 'text/html')
+  const doc = new DOMParser().parseFromString(html, 'text/html')
   const divs = Array.from(doc.querySelectorAll('.chapter'))
   if (divs.length < 2) return null
   return divs.map((d, i) => ({
-    html:  d.outerHTML,
+    html: d.outerHTML,
     title: d.querySelector('.chapter-title')?.textContent?.trim() ?? `Chapter ${i + 1}`,
   }))
 }
@@ -68,43 +68,68 @@ function parseSingleChapter(html: string, index: number): Chapter {
   const div = doc.querySelector('.chapter')
   if (!div) return { html, title: `Chapter ${index + 1}` }
   return {
-    html:  div.outerHTML,
+    html: div.outerHTML,
     title: div.querySelector('.chapter-title')?.textContent?.trim() ?? `Chapter ${index + 1}`,
   }
 }
 
-export default function HtmlReader({ item, content, onBack, lazyChapterCount, contentStale, onReloadContent }: Props) {
+export default function HtmlReader({
+  item,
+  content,
+  onBack,
+  lazyChapterCount,
+  contentStale,
+  onReloadContent,
+}: Props) {
   const { recordActivity } = useReadingSession(item.id)
 
   const scrollRef = useRef<HTMLDivElement>(null)
-  const saveTimer            = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const posTimer             = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const activityThrottleRef  = useRef<number>(0)
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const posTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const activityThrottleRef = useRef<number>(0)
 
   // ── Reader settings (localStorage) ───────────────────────────────
 
-  const [fontSize,       setFontSize]       = useState(() => Number(localStorage.getItem(LS_FONT_SIZE)) || 18)
-  const [fontFamily,     setFontFamily]     = useState<FontFamily>(() => (localStorage.getItem(LS_FONT_FAM) as FontFamily) || 'serif')
-  const [theme,          setTheme]          = useState<HtmlTheme>(() => (localStorage.getItem(LS_THEME) as HtmlTheme) || 'dark')
-  const [lineHeight,     setLineHeight]     = useState(() => Number(localStorage.getItem(LS_LINE_HEIGHT)) || 1.75)
-  const [maxWidth,       setMaxWidth]       = useState(() => Number(localStorage.getItem(LS_MAX_WIDTH)) || 680)
-  const [continuousMode, setContinuousMode] = useState(() => localStorage.getItem(LS_CONTINUOUS) === 'true')
+  const [fontSize, setFontSize] = useState(() => Number(localStorage.getItem(LS_FONT_SIZE)) || 18)
+  const [fontFamily, setFontFamily] = useState<FontFamily>(
+    () => (localStorage.getItem(LS_FONT_FAM) as FontFamily) || 'serif',
+  )
+  const [theme, setTheme] = useState<HtmlTheme>(
+    () => (localStorage.getItem(LS_THEME) as HtmlTheme) || 'dark',
+  )
+  const [lineHeight, setLineHeight] = useState(
+    () => Number(localStorage.getItem(LS_LINE_HEIGHT)) || 1.75,
+  )
+  const [maxWidth, setMaxWidth] = useState(() => Number(localStorage.getItem(LS_MAX_WIDTH)) || 680)
+  const [continuousMode, setContinuousMode] = useState(
+    () => localStorage.getItem(LS_CONTINUOUS) === 'true',
+  )
 
-  const [showSettings,    setShowSettings]    = useState(false)
-  const [showSearch,      setShowSearch]      = useState(false)
-  const [searchQuery,     setSearchQuery]     = useState('')
+  const [showSettings, setShowSettings] = useState(false)
+  const [showSearch, setShowSearch] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const [showChapterList, setShowChapterList] = useState(false)
-  const [showPanel,       setShowPanel]       = useState(false)
-  const [showBookmarks,   setShowBookmarks]   = useState(false)
-  const [readingProgress, setReadingProgress] = useState(() => Math.round((item.scroll_position ?? 0) * 100))
-  const [notePopup,    setNotePopup]    = useState<{ x: number; y: number; annotation: Annotation } | null>(null)
-  const [contextMenu,  setContextMenu]  = useState<{ x: number; y: number; annotation: Annotation } | null>(null)
+  const [showPanel, setShowPanel] = useState(false)
+  const [showBookmarks, setShowBookmarks] = useState(false)
+  const [readingProgress, setReadingProgress] = useState(() =>
+    Math.round((item.scroll_position ?? 0) * 100),
+  )
+  const [notePopup, setNotePopup] = useState<{
+    x: number
+    y: number
+    annotation: Annotation
+  } | null>(null)
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    annotation: Annotation
+  } | null>(null)
 
   // Note editor state: null = closed
   const [noteEditorState, setNoteEditorState] = useState<{
-    range:       Range | null
-    position:    number
-    chapterIdx:  number | null
+    range: Range | null
+    position: number
+    chapterIdx: number | null
     existingId?: string
     initialText?: string
   } | null>(null)
@@ -149,13 +174,10 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
 
   const isLazy = !!lazyChapterCount && lazyChapterCount > 1
 
-  const legacyChapters = useMemo(
-    () => (isLazy ? null : parseChapters(content)),
-    [isLazy, content],
-  )
+  const legacyChapters = useMemo(() => (isLazy ? null : parseChapters(content)), [isLazy, content])
 
   const totalChapters = isLazy ? lazyChapterCount! : (legacyChapters?.length ?? 0)
-  const hasChapters   = isLazy || !!legacyChapters
+  const hasChapters = isLazy || !!legacyChapters
 
   const [lazyChapters, setLazyChapters] = useState<(Chapter | null)[]>(() => {
     if (!isLazy) return []
@@ -171,7 +193,6 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     const arr = new Array<Chapter | null>(lazyChapterCount!).fill(null)
     arr[0] = parseSingleChapter(content, 0)
     setLazyChapters(arr)
-   
   }, [content, isLazy, lazyChapterCount])
 
   const chapters = useMemo<Chapter[] | null>(() => {
@@ -185,26 +206,30 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     if (item.scroll_chapter != null) return Math.min(item.scroll_chapter, totalChapters - 1)
     if (item.scroll_position) return Math.round(item.scroll_position * (totalChapters - 1))
     return 0
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // intentionally run once on mount
 
   const initialScrollY = useMemo(() => {
     if (!chapters) return null
-    if (item.scroll_chapter != null && item.scroll_y != null && item.scroll_y > 0) return { y: item.scroll_y, isLegacyFrac: false }
+    if (item.scroll_chapter != null && item.scroll_y != null && item.scroll_y > 0)
+      return { y: item.scroll_y, isLegacyFrac: false }
     try {
       const raw = localStorage.getItem(`html-pos-${item.id}`)
       if (raw) {
-        const { chapter: savedCh, scrollFraction: savedFrac } = JSON.parse(raw) as { chapter: number; scrollFraction: number }
+        const { chapter: savedCh, scrollFraction: savedFrac } = JSON.parse(raw) as {
+          chapter: number
+          scrollFraction: number
+        }
         if (savedCh === initialChapter && savedFrac > 0) return { y: savedFrac, isLegacyFrac: true }
       }
     } catch {}
     return null
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // intentionally run once on mount
 
   const [currentChapter, setCurrentChapter] = useState(initialChapter)
   const currentChapterRef = useRef(initialChapter)
-  const pendingScrollRef  = useRef<{ y: number; isLegacyFrac: boolean } | null>(initialScrollY)
+  const pendingScrollRef = useRef<{ y: number; isLegacyFrac: boolean } | null>(initialScrollY)
 
   // ── Lazy chapter fetching ─────────────────────────────────────────
 
@@ -213,35 +238,41 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
   useEffect(() => {
     if (!isLazy || lazyChapters[currentChapter]) return
     let cancelled = false
-    readerService.loadChapter(item.file_path, currentChapter).then(html => {
+    readerService.loadChapter(item.file_path, currentChapter).then((html) => {
       if (cancelled) return
-      setLazyChapters(prev => {
+      setLazyChapters((prev) => {
         if (prev[currentChapter]) return prev
         const next = [...prev]
         next[currentChapter] = parseSingleChapter(html, currentChapter)
         return next
       })
     })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [isLazy, currentChapter, lazyChapters, item.file_path])
 
   // Continuous mode renders every chapter in one scroll — fetch whatever's missing.
   useEffect(() => {
     if (!isLazy || !continuousMode) return
-    const missing = lazyChapters.map((c, i) => (c ? -1 : i)).filter(i => i >= 0)
+    const missing = lazyChapters.map((c, i) => (c ? -1 : i)).filter((i) => i >= 0)
     if (missing.length === 0) return
     let cancelled = false
     Promise.all(
-      missing.map(i => readerService.loadChapter(item.file_path, i).then(html => ({ i, html }))),
-    ).then(results => {
+      missing.map((i) =>
+        readerService.loadChapter(item.file_path, i).then((html) => ({ i, html })),
+      ),
+    ).then((results) => {
       if (cancelled) return
-      setLazyChapters(prev => {
+      setLazyChapters((prev) => {
         const next = [...prev]
         for (const { i, html } of results) next[i] = parseSingleChapter(html, i)
         return next
       })
     })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [isLazy, continuousMode, lazyChapters, item.file_path])
 
   // ── Annotations ──────────────────────────────────────────────────
@@ -249,8 +280,8 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
   // For single articles: chapterIndex = null. For multi-chapter: 0-based index.
   const annotChapterIndex = chapters ? currentChapter : null
   const annot = useAnnotations({
-    itemId:       item.id,
-    contentRef:   scrollRef,
+    itemId: item.id,
+    contentRef: scrollRef,
     chapterIndex: annotChapterIndex,
   })
 
@@ -269,9 +300,12 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
         annot.applyHighlightsToDOM(annotChapterIndex)
       })
     })
-    return () => { cancelled = true; cancelAnimationFrame(outer) }
-  // We intentionally re-run when annotations array changes too
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(outer)
+    }
+    // We intentionally re-run when annotations array changes too
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChapter, content, annot.annotations, annotChapterIndex])
 
   function getCurrentPosition(): number {
@@ -294,7 +328,10 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
   async function saveNote() {
     if (!noteEditorState) return
     const text = noteText.trim()
-    if (!text) { setNoteEditorState(null); return }
+    if (!text) {
+      setNoteEditorState(null)
+      return
+    }
     if (noteEditorState.existingId) {
       await annot.updateNote(noteEditorState.existingId, text)
     } else {
@@ -311,7 +348,11 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     if (!el) return
 
     // If multi-chapter and different chapter, navigate there first
-    if (chapters && annotation.chapter_index !== null && annotation.chapter_index !== currentChapter) {
+    if (
+      chapters &&
+      annotation.chapter_index !== null &&
+      annotation.chapter_index !== currentChapter
+    ) {
       goToChapter(annotation.chapter_index)
       // After navigation, the re-apply effect will mark the text; then we scroll
       // We use a timeout to wait for chapter content to render
@@ -341,17 +382,18 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     el.scrollTo({ top: annotation.position * scrollable, behavior: 'smooth' })
   }
 
-  const bookmarks      = annot.annotations.filter(a => a.type === 'bookmark')
-  const isBookmarked   = bookmarks.some(b =>
-    b.chapter_index === annotChapterIndex &&
-    Math.abs(b.position - getCurrentPosition()) < 0.01
+  const bookmarks = annot.annotations.filter((a) => a.type === 'bookmark')
+  const isBookmarked = bookmarks.some(
+    (b) =>
+      b.chapter_index === annotChapterIndex && Math.abs(b.position - getCurrentPosition()) < 0.01,
   )
 
   function handleBookmarkToggle() {
     if (isBookmarked) {
-      const existing = bookmarks.find(b =>
-        b.chapter_index === annotChapterIndex &&
-        Math.abs(b.position - getCurrentPosition()) < 0.01
+      const existing = bookmarks.find(
+        (b) =>
+          b.chapter_index === annotChapterIndex &&
+          Math.abs(b.position - getCurrentPosition()) < 0.01,
       )
       if (existing) annot.deleteAnnotation(existing.id)
     } else {
@@ -364,18 +406,22 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     const container = scrollRef.current
     if (!container) return
     const handleMarkClick = (e: MouseEvent) => {
-      const mark = (e.target as HTMLElement).closest('mark[data-annotation-id]') as HTMLElement | null
+      const mark = (e.target as HTMLElement).closest(
+        'mark[data-annotation-id]',
+      ) as HTMLElement | null
       if (!mark || mark.dataset.type !== 'note') return
-      const annotation = annot.annotations.find(a => a.id === mark.dataset.annotationId)
+      const annotation = annot.annotations.find((a) => a.id === mark.dataset.annotationId)
       if (!annotation?.note_text) return
       const rect = mark.getBoundingClientRect()
       setNotePopup({ x: rect.left + rect.width / 2, y: rect.top, annotation })
     }
     const handleContextMenu = (e: MouseEvent) => {
-      const mark = (e.target as HTMLElement).closest('mark[data-annotation-id]') as HTMLElement | null
+      const mark = (e.target as HTMLElement).closest(
+        'mark[data-annotation-id]',
+      ) as HTMLElement | null
       if (!mark) return
       e.preventDefault()
-      const annotation = annot.annotations.find(a => a.id === mark.dataset.annotationId)
+      const annotation = annot.annotations.find((a) => a.id === mark.dataset.annotationId)
       if (!annotation) return
       const rect = mark.getBoundingClientRect()
       setNotePopup(null)
@@ -392,8 +438,12 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
   // ── In-content search ────────────────────────────────────────────
 
   const contentKey = continuousMode ? 0 : currentChapter
-  const { matchCount, currentMatch, goNext: hlNext, goPrev: hlPrev } =
-    useTextHighlight(scrollRef, showSearch ? searchQuery : '', contentKey)
+  const {
+    matchCount,
+    currentMatch,
+    goNext: hlNext,
+    goPrev: hlPrev,
+  } = useTextHighlight(scrollRef, showSearch ? searchQuery : '', contentKey)
 
   function openSearch() {
     setShowSearch(true)
@@ -409,23 +459,29 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
   useEffect(() => {
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current)
-      if (posTimer.current)  clearTimeout(posTimer.current)
+      if (posTimer.current) clearTimeout(posTimer.current)
     }
   }, [])
 
-  const scheduleSaveProgress = useCallback((position: number) => {
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => {
-      libraryService.updateProgress(item.id, position)
-    }, SAVE_DEBOUNCE_MS)
-  }, [item.id])
+  const scheduleSaveProgress = useCallback(
+    (position: number) => {
+      if (saveTimer.current) clearTimeout(saveTimer.current)
+      saveTimer.current = setTimeout(() => {
+        libraryService.updateProgress(item.id, position)
+      }, SAVE_DEBOUNCE_MS)
+    },
+    [item.id],
+  )
 
-  const scheduleSaveScrollPos = useCallback((chapter: number, scrollY: number) => {
-    if (posTimer.current) clearTimeout(posTimer.current)
-    posTimer.current = setTimeout(() => {
-      libraryService.saveScrollPos(item.id, chapter, scrollY)
-    }, SAVE_DEBOUNCE_MS)
-  }, [item.id])
+  const scheduleSaveScrollPos = useCallback(
+    (chapter: number, scrollY: number) => {
+      if (posTimer.current) clearTimeout(posTimer.current)
+      posTimer.current = setTimeout(() => {
+        libraryService.saveScrollPos(item.id, chapter, scrollY)
+      }, SAVE_DEBOUNCE_MS)
+    },
+    [item.id],
+  )
 
   // ── Single-page (article) mode ────────────────────────────────────
 
@@ -448,8 +504,11 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
         }
       })
     })
-    return () => { cancelled = true; cancelAnimationFrame(outer) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(outer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // intentionally run once on mount
 
   const handleSingleScroll = useCallback(() => {
@@ -459,7 +518,10 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     setNotePopup(null)
     setContextMenu(null)
     const now = Date.now()
-    if (now - activityThrottleRef.current >= 1000) { activityThrottleRef.current = now; recordActivity() }
+    if (now - activityThrottleRef.current >= 1000) {
+      activityThrottleRef.current = now
+      recordActivity()
+    }
     const scrollable = el.scrollHeight - el.clientHeight
     const frac = scrollable > 0 ? el.scrollTop / scrollable : 1
     setReadingProgress(Math.round(frac * 100))
@@ -488,7 +550,10 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
         }
       })
     })
-    return () => { cancelled = true; cancelAnimationFrame(outer) }
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(outer)
+    }
   }, [currentChapter, chapters, continuousMode])
 
   const handlePagedScroll = useCallback(() => {
@@ -496,7 +561,10 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     const el = scrollRef.current
     if (!el) return
     const now = Date.now()
-    if (now - activityThrottleRef.current >= 1000) { activityThrottleRef.current = now; recordActivity() }
+    if (now - activityThrottleRef.current >= 1000) {
+      activityThrottleRef.current = now
+      recordActivity()
+    }
     scheduleSaveScrollPos(currentChapterRef.current, el.scrollTop)
   }, [chapters, continuousMode, scheduleSaveScrollPos, recordActivity])
 
@@ -519,8 +587,11 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
         }
       })
     })
-    return () => { cancelled = true; cancelAnimationFrame(outer) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(outer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [continuousMode])
 
   const handleContinuousScroll = useCallback(() => {
@@ -528,7 +599,10 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
     const el = scrollRef.current
     if (!el) return
     const now = Date.now()
-    if (now - activityThrottleRef.current >= 1000) { activityThrottleRef.current = now; recordActivity() }
+    if (now - activityThrottleRef.current >= 1000) {
+      activityThrottleRef.current = now
+      recordActivity()
+    }
 
     // Detect current chapter from scroll position.
     // Walk chapters in order; the current chapter is the last one whose top
@@ -592,29 +666,44 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
 
       // f — toggle fullscreen
       if (e.key === 'f') {
-        if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {})
+        if (!document.fullscreenElement)
+          document.documentElement.requestFullscreen().catch(() => {})
         else document.exitFullscreen().catch(() => {})
         return
       }
 
       // j / k — smooth scroll
-      if (e.key === 'j') { scrollRef.current?.scrollBy({ top: 80, behavior: 'smooth' }); return }
-      if (e.key === 'k') { scrollRef.current?.scrollBy({ top: -80, behavior: 'smooth' }); return }
+      if (e.key === 'j') {
+        scrollRef.current?.scrollBy({ top: 80, behavior: 'smooth' })
+        return
+      }
+      if (e.key === 'k') {
+        scrollRef.current?.scrollBy({ top: -80, behavior: 'smooth' })
+        return
+      }
 
       // [ / ] — prev/next chapter (also ArrowLeft/ArrowRight)
-      if (e.key === '[' || e.key === 'ArrowLeft')  { e.preventDefault(); goToChapter(currentChapterRef.current - 1); return }
-      if (e.key === ']' || e.key === 'ArrowRight') { e.preventDefault(); goToChapter(currentChapterRef.current + 1); return }
+      if (e.key === '[' || e.key === 'ArrowLeft') {
+        e.preventDefault()
+        goToChapter(currentChapterRef.current - 1)
+        return
+      }
+      if (e.key === ']' || e.key === 'ArrowRight') {
+        e.preventDefault()
+        goToChapter(currentChapterRef.current + 1)
+        return
+      }
     }
 
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapters, continuousMode])
 
   // ── Combined scroll handler ───────────────────────────────────────
 
   const handleScroll = useCallback(() => {
-    if (!chapters)      return handleSingleScroll()
+    if (!chapters) return handleSingleScroll()
     if (continuousMode) return handleContinuousScroll()
     return handlePagedScroll()
   }, [chapters, continuousMode, handleSingleScroll, handleContinuousScroll, handlePagedScroll])
@@ -622,11 +711,11 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
   // ── CSS custom properties via inline style on shell ──────────────
 
   const shellStyle: React.CSSProperties = {
-    '--reader-font-size':    `${fontSize}px`,
-    '--reader-font-family':  FONT_FAMILIES[fontFamily],
-    '--reader-line-height':  String(lineHeight),
+    '--reader-font-size': `${fontSize}px`,
+    '--reader-font-family': FONT_FAMILIES[fontFamily],
+    '--reader-line-height': String(lineHeight),
     '--reader-para-spacing': `${lineHeight * 0.7}em`,
-    '--reader-max-width':    `${maxWidth}px`,
+    '--reader-max-width': `${maxWidth}px`,
   } as React.CSSProperties
 
   // ── Render ───────────────────────────────────────────────────────
@@ -635,7 +724,7 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
 
   const noteEditorModal = noteEditorState && (
     <div className="note-editor-overlay" onClick={() => setNoteEditorState(null)}>
-      <div className="note-editor-modal" onClick={e => e.stopPropagation()}>
+      <div className="note-editor-modal" onClick={(e) => e.stopPropagation()}>
         <div className="note-editor-header">
           {noteEditorState.existingId ? 'Edit note' : 'Add note'}
         </div>
@@ -647,18 +736,34 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
         <textarea
           className="note-editor-textarea"
           value={noteText}
-          onChange={e => setNoteText(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveNote() }
-            if (e.key === 'Escape') { setNoteEditorState(null); setNoteText('') }
+          onChange={(e) => setNoteText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              saveNote()
+            }
+            if (e.key === 'Escape') {
+              setNoteEditorState(null)
+              setNoteText('')
+            }
           }}
           autoFocus
           rows={4}
           placeholder="Write a note…"
         />
         <div className="note-editor-actions">
-          <button className="annot-save-btn" onClick={saveNote}>Save</button>
-          <button className="annot-cancel-btn" onClick={() => { setNoteEditorState(null); setNoteText('') }}>Cancel</button>
+          <button className="annot-save-btn" onClick={saveNote}>
+            Save
+          </button>
+          <button
+            className="annot-cancel-btn"
+            onClick={() => {
+              setNoteEditorState(null)
+              setNoteText('')
+            }}
+          >
+            Cancel
+          </button>
         </div>
       </div>
     </div>
@@ -666,7 +771,7 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
 
   const bookmarksPanel = showBookmarks && (
     <BookmarksPanel
-      bookmarks={annot.annotations.filter(a => a.type === 'bookmark')}
+      bookmarks={annot.annotations.filter((a) => a.type === 'bookmark')}
       contentType={item.content_type}
       onJump={handleJumpToAnnotation}
       onDelete={annot.deleteAnnotation}
@@ -688,7 +793,9 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
 
   const header = (
     <header className="reader-header">
-      <button className="epub-back-btn" onClick={onBack}>← Library</button>
+      <button className="epub-back-btn" onClick={onBack}>
+        ← Library
+      </button>
 
       {showSearch ? (
         <SearchBar
@@ -711,12 +818,14 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
             onClick={() => goToChapter(currentChapter - 1)}
             disabled={currentChapter === 0}
             aria-label="Previous chapter"
-          >‹</button>
+          >
+            ‹
+          </button>
 
           <div className="epub-chapter-dropdown-wrapper">
             <button
               className="epub-chapter-btn"
-              onClick={() => setShowChapterList(s => !s)}
+              onClick={() => setShowChapterList((s) => !s)}
               title="Jump to chapter"
             >
               {currentChapter + 1}. {ch.title} ▾
@@ -730,7 +839,10 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
                     <button
                       key={i}
                       className={`epub-chapter-item${i === currentChapter ? ' active' : ''}`}
-                      onClick={() => { goToChapter(i); setShowChapterList(false) }}
+                      onClick={() => {
+                        goToChapter(i)
+                        setShowChapterList(false)
+                      }}
                     >
                       {i + 1}. {c.title}
                     </button>
@@ -745,7 +857,9 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
             onClick={() => goToChapter(currentChapter + 1)}
             disabled={currentChapter === chapters.length - 1}
             aria-label="Next chapter"
-          >›</button>
+          >
+            ›
+          </button>
         </div>
       )}
 
@@ -766,9 +880,18 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
           onClick={openSearch}
           aria-label="Search in content"
           title="Search (⌘F)"
-          style={{ marginLeft: (contentStale || chapters) ? '8px' : 'auto' }}
+          style={{ marginLeft: contentStale || chapters ? '8px' : 'auto' }}
         >
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
+          <svg
+            viewBox="0 0 16 16"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
             <circle cx="6.5" cy="6.5" r="4.5" />
             <line x1="10.5" y1="10.5" x2="14" y2="14" />
           </svg>
@@ -794,36 +917,45 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
 
       <button
         className={`epub-top-btn${showBookmarks ? ' active' : ''}`}
-        onClick={() => { setShowBookmarks(s => !s); setShowPanel(false) }}
+        onClick={() => {
+          setShowBookmarks((s) => !s)
+          setShowPanel(false)
+        }}
         aria-label="Bookmarks"
         title="Bookmarks"
         style={{ marginLeft: '4px' }}
       >
         <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-          <path d="M2 2h12v12l-4-2.5L6 14V2z" stroke="currentColor" strokeWidth="1.5"/>
-          <line x1="5" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.2"/>
-          <line x1="5" y1="9" x2="9" y2="9" stroke="currentColor" strokeWidth="1.2"/>
+          <path d="M2 2h12v12l-4-2.5L6 14V2z" stroke="currentColor" strokeWidth="1.5" />
+          <line x1="5" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.2" />
+          <line x1="5" y1="9" x2="9" y2="9" stroke="currentColor" strokeWidth="1.2" />
         </svg>
       </button>
 
       <button
         className={`epub-top-btn${showPanel ? ' active' : ''}`}
-        onClick={() => { setShowPanel(s => !s); setShowBookmarks(false) }}
+        onClick={() => {
+          setShowPanel((s) => !s)
+          setShowBookmarks(false)
+        }}
         aria-label="Annotations"
         title="Annotations"
         style={{ marginLeft: '4px' }}
       >
         <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-          <rect x="1" y="3" width="14" height="2" rx="1" fill="currentColor" opacity="0.5"/>
-          <rect x="1" y="7" width="10" height="2" rx="1" fill="currentColor" opacity="0.5"/>
-          <rect x="1" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.5"/>
+          <rect x="1" y="3" width="14" height="2" rx="1" fill="currentColor" opacity="0.5" />
+          <rect x="1" y="7" width="10" height="2" rx="1" fill="currentColor" opacity="0.5" />
+          <rect x="1" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.5" />
         </svg>
       </button>
 
       <div className="epub-settings-wrapper" style={{ marginLeft: '8px' }}>
         <button
           className={`epub-top-btn${showSettings ? ' active' : ''}`}
-          onClick={() => { setShowSettings(s => !s); setShowSearch(false) }}
+          onClick={() => {
+            setShowSettings((s) => !s)
+            setShowSearch(false)
+          }}
           aria-label="Reader settings"
         >
           Aa
@@ -836,16 +968,20 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
               <div className="epub-settings-row">
                 <span className="epub-settings-label">Text size</span>
                 <div className="epub-settings-group">
-                  <button className="epub-settings-btn" onClick={() => adjustFontSize(-1)}>A−</button>
+                  <button className="epub-settings-btn" onClick={() => adjustFontSize(-1)}>
+                    A−
+                  </button>
                   <span className="epub-settings-size-display">{fontSize}</span>
-                  <button className="epub-settings-btn" onClick={() => adjustFontSize(+1)}>A+</button>
+                  <button className="epub-settings-btn" onClick={() => adjustFontSize(+1)}>
+                    A+
+                  </button>
                 </div>
               </div>
 
               <div className="epub-settings-row">
                 <span className="epub-settings-label">Font</span>
                 <div className="epub-settings-group">
-                  {(['serif', 'sans', 'mono'] as FontFamily[]).map(ff => (
+                  {(['serif', 'sans', 'mono'] as FontFamily[]).map((ff) => (
                     <button
                       key={ff}
                       className={`epub-settings-btn${fontFamily === ff ? ' active' : ''}`}
@@ -860,7 +996,7 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
               <div className="epub-settings-row">
                 <span className="epub-settings-label">Spacing</span>
                 <div className="epub-settings-group">
-                  {([1.4, 1.75, 2.1] as const).map(v => (
+                  {([1.4, 1.75, 2.1] as const).map((v) => (
                     <button
                       key={v}
                       className={`epub-settings-btn${lineHeight === v ? ' active' : ''}`}
@@ -875,7 +1011,7 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
               <div className="epub-settings-row">
                 <span className="epub-settings-label">Width</span>
                 <div className="epub-settings-group">
-                  {([560, 680, 800] as const).map(v => (
+                  {([560, 680, 800] as const).map((v) => (
                     <button
                       key={v}
                       className={`epub-settings-btn${maxWidth === v ? ' active' : ''}`}
@@ -890,7 +1026,7 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
               <div className="epub-settings-row">
                 <span className="epub-settings-label">Theme</span>
                 <div className="epub-settings-group">
-                  {(['dark', 'light', 'sepia'] as HtmlTheme[]).map(t => (
+                  {(['dark', 'light', 'sepia'] as HtmlTheme[]).map((t) => (
                     <button
                       key={t}
                       className={`epub-settings-btn${theme === t ? ' active' : ''}`}
@@ -935,7 +1071,12 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
       <div className={`html-reader-shell html-theme-${theme}`} style={shellStyle}>
         {header}
         <div className="reader-with-panel">
-          <div ref={scrollRef} className="html-reader" style={{ flex: 1, minWidth: 0 }} onScroll={handleScroll}>
+          <div
+            ref={scrollRef}
+            className="html-reader"
+            style={{ flex: 1, minWidth: 0 }}
+            onScroll={handleScroll}
+          >
             {chapters.map((c, i) => (
               <div key={i}>
                 {i > 0 && (
@@ -944,9 +1085,11 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
                   </div>
                 )}
                 <div id={`chapter-${i}`}>
-                  {c.html
-                    ? <div dangerouslySetInnerHTML={{ __html: c.html }} />
-                    : <div className="chapter-loading">Loading chapter…</div>}
+                  {c.html ? (
+                    <div dangerouslySetInnerHTML={{ __html: c.html }} />
+                  ) : (
+                    <div className="chapter-loading">Loading chapter…</div>
+                  )}
                 </div>
               </div>
             ))}
@@ -974,7 +1117,10 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
             x={contextMenu.x}
             y={contextMenu.y}
             annotation={contextMenu.annotation}
-            onDelete={id => { annot.deleteAnnotation(id); setContextMenu(null) }}
+            onDelete={(id) => {
+              annot.deleteAnnotation(id)
+              setContextMenu(null)
+            }}
             onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
             onClose={() => setContextMenu(null)}
           />
@@ -990,10 +1136,17 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
       <div className={`html-reader-shell html-theme-${theme}`} style={shellStyle}>
         {header}
         <div className="reader-with-panel">
-          <div ref={scrollRef} className="html-reader" style={{ flex: 1, minWidth: 0 }} onScroll={handleScroll}>
-            {ch.html
-              ? <div dangerouslySetInnerHTML={{ __html: ch.html }} />
-              : <div className="chapter-loading">Loading chapter…</div>}
+          <div
+            ref={scrollRef}
+            className="html-reader"
+            style={{ flex: 1, minWidth: 0 }}
+            onScroll={handleScroll}
+          >
+            {ch.html ? (
+              <div dangerouslySetInnerHTML={{ __html: ch.html }} />
+            ) : (
+              <div className="chapter-loading">Loading chapter…</div>
+            )}
             <nav className="chapter-nav">
               <button
                 className="chapter-nav-btn chapter-nav-prev"
@@ -1037,7 +1190,10 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
             x={contextMenu.x}
             y={contextMenu.y}
             annotation={contextMenu.annotation}
-            onDelete={id => { annot.deleteAnnotation(id); setContextMenu(null) }}
+            onDelete={(id) => {
+              annot.deleteAnnotation(id)
+              setContextMenu(null)
+            }}
             onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
             onClose={() => setContextMenu(null)}
           />
@@ -1084,7 +1240,10 @@ export default function HtmlReader({ item, content, onBack, lazyChapterCount, co
           x={contextMenu.x}
           y={contextMenu.y}
           annotation={contextMenu.annotation}
-          onDelete={id => { annot.deleteAnnotation(id); setContextMenu(null) }}
+          onDelete={(id) => {
+            annot.deleteAnnotation(id)
+            setContextMenu(null)
+          }}
           onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
           onClose={() => setContextMenu(null)}
         />

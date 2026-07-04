@@ -24,6 +24,7 @@ jobs:
       # load the native better-sqlite3 binary, so building it here is wasted time.
       - run: npm ci --ignore-scripts
       - run: npm run lint
+      - run: npm run format:check
       - run: npm run typecheck
 
   test:

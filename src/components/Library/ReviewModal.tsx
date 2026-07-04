@@ -11,9 +11,9 @@ interface Props {
 
 export default function ReviewModal({ item, onClose, onSave }: Props) {
   const [editing, setEditing] = useState(!item.review)
-  const [text, setText]       = useState(item.review ?? '')
-  const [rating, setRating]   = useState<number | null>(item.rating ?? null)
-  const [saving, setSaving]   = useState(false)
+  const [text, setText] = useState(item.review ?? '')
+  const [rating, setRating] = useState<number | null>(item.rating ?? null)
+  const [saving, setSaving] = useState(false)
 
   async function save() {
     setSaving(true)
@@ -40,7 +40,7 @@ export default function ReviewModal({ item, onClose, onSave }: Props) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal review-modal" onClick={e => e.stopPropagation()}>
+      <div className="modal review-modal" onClick={(e) => e.stopPropagation()}>
         <div className="review-modal-header">
           <div className="review-modal-header-row">
             <div>
@@ -53,8 +53,21 @@ export default function ReviewModal({ item, onClose, onSave }: Props) {
               )}
             </div>
             {!editing && (
-              <button className="review-modal-edit-btn" onClick={() => setEditing(true)} title="Edit review">
-                <svg viewBox="0 0 12 12" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+              <button
+                className="review-modal-edit-btn"
+                onClick={() => setEditing(true)}
+                title="Edit review"
+              >
+                <svg
+                  viewBox="0 0 12 12"
+                  width="13"
+                  height="13"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <path d="M8.5 1.5l2 2-6 6H2.5v-2l6-6z" />
                 </svg>
               </button>
@@ -71,12 +84,14 @@ export default function ReviewModal({ item, onClose, onSave }: Props) {
             <textarea
               className="review-modal-textarea"
               value={text}
-              onChange={e => setText(e.target.value)}
+              onChange={(e) => setText(e.target.value)}
               placeholder="Write your thoughts…"
               autoFocus
             />
             <div className="modal-actions">
-              <button onClick={cancel} disabled={saving}>Cancel</button>
+              <button onClick={cancel} disabled={saving}>
+                Cancel
+              </button>
               <button className="btn-primary" onClick={save} disabled={saving}>
                 {saving ? 'Saving…' : 'Save'}
               </button>

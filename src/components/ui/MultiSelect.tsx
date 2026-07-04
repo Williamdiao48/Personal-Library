@@ -1,16 +1,11 @@
 import { useRef } from 'react'
-import {
-  Listbox,
-  ListboxButton,
-  ListboxOptions,
-  ListboxOption,
-} from '@headlessui/react'
+import { Listbox, ListboxButton, ListboxOptions, ListboxOption } from '@headlessui/react'
 import type { SelectOption } from './CustomSelect'
 
 interface Props {
-  label:    string
-  options:  SelectOption[]
-  values:   string[]
+  label: string
+  options: SelectOption[]
+  values: string[]
   onChange: (values: string[]) => void
 }
 
@@ -27,18 +22,21 @@ export default function MultiSelect({ label, options, values, onChange }: Props)
 
   let triggerText = 'All'
   if (values.length === 1) {
-    triggerText = options.find(o => o.value === values[0])?.label ?? 'All'
+    triggerText = options.find((o) => o.value === values[0])?.label ?? 'All'
   } else if (values.length > 1) {
     triggerText = `${values.length} selected`
   }
 
-  const singleColor = values.length === 1
-    ? options.find(o => o.value === values[0])?.color
-    : undefined
+  const singleColor =
+    values.length === 1 ? options.find((o) => o.value === values[0])?.color : undefined
 
   return (
     <div className="custom-select-wrapper">
-      {label && <span className="custom-select-label" aria-hidden="true">{label}</span>}
+      {label && (
+        <span className="custom-select-label" aria-hidden="true">
+          {label}
+        </span>
+      )}
 
       <Listbox value={values} onChange={onChange} multiple>
         {({ open }) => (
@@ -47,7 +45,7 @@ export default function MultiSelect({ label, options, values, onChange }: Props)
               <div
                 className="custom-select-backdrop"
                 aria-hidden="true"
-                onMouseDown={e => {
+                onMouseDown={(e) => {
                   e.preventDefault()
                   triggerRef.current?.click()
                   blurTrigger()
@@ -87,20 +85,15 @@ export default function MultiSelect({ label, options, values, onChange }: Props)
               </svg>
             </ListboxButton>
 
-            <ListboxOptions
-              anchor="bottom start"
-              className="custom-select-options"
-            >
-              {options.map(opt => (
+            <ListboxOptions anchor="bottom start" className="custom-select-options">
+              {options.map((opt) => (
                 <ListboxOption
                   key={opt.value}
                   value={opt.value}
                   className={({ focus, selected: sel }) =>
-                    [
-                      'custom-select-option',
-                      focus ? 'focused'  : '',
-                      sel   ? 'selected' : '',
-                    ].filter(Boolean).join(' ')
+                    ['custom-select-option', focus ? 'focused' : '', sel ? 'selected' : '']
+                      .filter(Boolean)
+                      .join(' ')
                   }
                 >
                   {({ selected: sel }) => (

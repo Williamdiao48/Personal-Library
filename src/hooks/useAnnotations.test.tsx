@@ -57,7 +57,12 @@ describe('useAnnotations hook', () => {
       await result.current.createBookmark(0.5)
     })
     expect(svc.create).toHaveBeenCalledWith(
-      expect.objectContaining({ item_id: 'item1', type: 'bookmark', position: 0.5, chapter_index: 0 }),
+      expect.objectContaining({
+        item_id: 'item1',
+        type: 'bookmark',
+        position: 0.5,
+        chapter_index: 0,
+      }),
     )
     expect(result.current.annotations.map((a) => a.id)).toContain('bm')
   })

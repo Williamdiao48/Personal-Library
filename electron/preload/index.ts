@@ -3,73 +3,87 @@ import { contextBridge, ipcRenderer } from 'electron'
 // This is the only surface the renderer can touch.
 // Every capability must be explicitly listed here.
 contextBridge.exposeInMainWorld('api', {
-
   // Library
   library: {
-    getAll:         ()                                              => ipcRenderer.invoke('library:getAll'),
-    getById:        (id: string)                                   => ipcRenderer.invoke('library:getById', id),
-    softDelete:        (id: string)  => ipcRenderer.invoke('library:softDelete', id),
-    restore:           (id: string)  => ipcRenderer.invoke('library:restore', id),
-    getTrashed:        ()            => ipcRenderer.invoke('library:getTrashed'),
-    permanentlyDelete: (id: string)  => ipcRenderer.invoke('library:permanentlyDelete', id),
-    emptyTrash:        ()            => ipcRenderer.invoke('library:emptyTrash'),
-    updateProgress: (id: string, pos: number)                      => ipcRenderer.invoke('library:updateProgress', id, pos),
-    saveScrollPos:  (id: string, chapter: number, scrollY: number) => ipcRenderer.invoke('library:saveScrollPos', id, chapter, scrollY),
-    search:         (query: string)                                => ipcRenderer.invoke('library:search', query),
-    getAllItemTags:  ()                                             => ipcRenderer.invoke('library:getAllItemTags'),
-    setCover:       (id: string, data: ArrayBuffer, ext: string)   => ipcRenderer.invoke('library:setCover', id, data, ext),
-    pickCover:      (id: string)                                   => ipcRenderer.invoke('library:pickCover', id),
-    setAuthor:        (id: string, author: string | null)          => ipcRenderer.invoke('library:setAuthor', id, author),
-    setTitle:         (id: string, title: string)                  => ipcRenderer.invoke('library:setTitle', id, title),
-    setStatus:        (id: string, status: string | null)          => ipcRenderer.invoke('library:setStatus', id, status),
-    setRating:        (id: string, rating: number | null)          => ipcRenderer.invoke('library:setRating', id, rating),
-    setReview:        (id: string, review: string | null)          => ipcRenderer.invoke('library:setReview', id, review),
-    refresh:          (id: string)                                 => ipcRenderer.invoke('library:refresh', id),
-    findBySourceUrl:  (url: string)                                => ipcRenderer.invoke('library:findBySourceUrl', url),
+    getAll: () => ipcRenderer.invoke('library:getAll'),
+    getById: (id: string) => ipcRenderer.invoke('library:getById', id),
+    softDelete: (id: string) => ipcRenderer.invoke('library:softDelete', id),
+    restore: (id: string) => ipcRenderer.invoke('library:restore', id),
+    getTrashed: () => ipcRenderer.invoke('library:getTrashed'),
+    permanentlyDelete: (id: string) => ipcRenderer.invoke('library:permanentlyDelete', id),
+    emptyTrash: () => ipcRenderer.invoke('library:emptyTrash'),
+    updateProgress: (id: string, pos: number) =>
+      ipcRenderer.invoke('library:updateProgress', id, pos),
+    saveScrollPos: (id: string, chapter: number, scrollY: number) =>
+      ipcRenderer.invoke('library:saveScrollPos', id, chapter, scrollY),
+    search: (query: string) => ipcRenderer.invoke('library:search', query),
+    getAllItemTags: () => ipcRenderer.invoke('library:getAllItemTags'),
+    setCover: (id: string, data: ArrayBuffer, ext: string) =>
+      ipcRenderer.invoke('library:setCover', id, data, ext),
+    pickCover: (id: string) => ipcRenderer.invoke('library:pickCover', id),
+    setAuthor: (id: string, author: string | null) =>
+      ipcRenderer.invoke('library:setAuthor', id, author),
+    setTitle: (id: string, title: string) => ipcRenderer.invoke('library:setTitle', id, title),
+    setStatus: (id: string, status: string | null) =>
+      ipcRenderer.invoke('library:setStatus', id, status),
+    setRating: (id: string, rating: number | null) =>
+      ipcRenderer.invoke('library:setRating', id, rating),
+    setReview: (id: string, review: string | null) =>
+      ipcRenderer.invoke('library:setReview', id, review),
+    refresh: (id: string) => ipcRenderer.invoke('library:refresh', id),
+    findBySourceUrl: (url: string) => ipcRenderer.invoke('library:findBySourceUrl', url),
   },
 
   // Tags
   tags: {
-    getAll:        ()                                  => ipcRenderer.invoke('tags:getAll'),
-    getForItem:    (itemId: string)                   => ipcRenderer.invoke('tags:getForItem', itemId),
-    setForItem:    (itemId: string, tagIds: string[]) => ipcRenderer.invoke('tags:setForItem', itemId, tagIds),
-    create:        (name: string, color: string)      => ipcRenderer.invoke('tags:create', name, color),
-    delete:        (id: string)                       => ipcRenderer.invoke('tags:delete', id),
-    rename:        (id: string, name: string)         => ipcRenderer.invoke('tags:rename', id, name),
-    setColor:      (id: string, color: string)        => ipcRenderer.invoke('tags:setColor', id, color),
-    getItemCounts: ()                                 => ipcRenderer.invoke('tags:getItemCounts'),
+    getAll: () => ipcRenderer.invoke('tags:getAll'),
+    getForItem: (itemId: string) => ipcRenderer.invoke('tags:getForItem', itemId),
+    setForItem: (itemId: string, tagIds: string[]) =>
+      ipcRenderer.invoke('tags:setForItem', itemId, tagIds),
+    create: (name: string, color: string) => ipcRenderer.invoke('tags:create', name, color),
+    delete: (id: string) => ipcRenderer.invoke('tags:delete', id),
+    rename: (id: string, name: string) => ipcRenderer.invoke('tags:rename', id, name),
+    setColor: (id: string, color: string) => ipcRenderer.invoke('tags:setColor', id, color),
+    getItemCounts: () => ipcRenderer.invoke('tags:getItemCounts'),
   },
 
   // Capture
   capture: {
     // Fire-and-forget: returns a jobId immediately. Progress/completion/errors
     // are delivered asynchronously via onCaptureProgress/Complete/Error.
-    start:    (url: string, start?: number, end?: number) => ipcRenderer.invoke('capture:start', url, start, end),
-    fromFile: ()                                           => ipcRenderer.invoke('capture:fromFile'),
-    append:   (itemId: string, end: number)               => ipcRenderer.invoke('capture:append', itemId, end),
+    start: (url: string, start?: number, end?: number) =>
+      ipcRenderer.invoke('capture:start', url, start, end),
+    fromFile: () => ipcRenderer.invoke('capture:fromFile'),
+    append: (itemId: string, end: number) => ipcRenderer.invoke('capture:append', itemId, end),
   },
 
   // Reader
   reader: {
-    loadContent:       (relativePath: string)                => ipcRenderer.invoke('reader:loadContent', relativePath),
-    loadBinaryContent: (relativePath: string)                => ipcRenderer.invoke('reader:loadBinaryContent', relativePath),
-    loadEpub:          (relativePath: string)                => ipcRenderer.invoke('reader:loadEpub', relativePath),
-    getChapterCount:   (relativePath: string)                => ipcRenderer.invoke('reader:getChapterCount', relativePath),
-    loadChapter:       (relativePath: string, index: number) => ipcRenderer.invoke('reader:loadChapter', relativePath, index),
+    loadContent: (relativePath: string) => ipcRenderer.invoke('reader:loadContent', relativePath),
+    loadBinaryContent: (relativePath: string) =>
+      ipcRenderer.invoke('reader:loadBinaryContent', relativePath),
+    loadEpub: (relativePath: string) => ipcRenderer.invoke('reader:loadEpub', relativePath),
+    getChapterCount: (relativePath: string) =>
+      ipcRenderer.invoke('reader:getChapterCount', relativePath),
+    loadChapter: (relativePath: string, index: number) =>
+      ipcRenderer.invoke('reader:loadChapter', relativePath, index),
   },
 
   // Collections
   collections: {
-    getAll:               ()                               => ipcRenderer.invoke('collections:getAll'),
-    create:               (name: string)                  => ipcRenderer.invoke('collections:create', name),
-    delete:               (id: string)                    => ipcRenderer.invoke('collections:delete', id),
-    rename:               (id: string, name: string)      => ipcRenderer.invoke('collections:rename', id, name),
-    getAllItemCollections: ()                              => ipcRenderer.invoke('collections:getAllItemCollections'),
-    setForItem:           (itemId: string, ids: string[]) => ipcRenderer.invoke('collections:setForItem', itemId, ids),
-    getItems:             (id: string)                    => ipcRenderer.invoke('collections:getItems', id),
-    reorderItems:         (id: string, itemIds: string[]) => ipcRenderer.invoke('collections:reorderItems', id, itemIds),
-    addItem:              (id: string, itemId: string)    => ipcRenderer.invoke('collections:addItem', id, itemId),
-    removeItem:           (id: string, itemId: string)    => ipcRenderer.invoke('collections:removeItem', id, itemId),
+    getAll: () => ipcRenderer.invoke('collections:getAll'),
+    create: (name: string) => ipcRenderer.invoke('collections:create', name),
+    delete: (id: string) => ipcRenderer.invoke('collections:delete', id),
+    rename: (id: string, name: string) => ipcRenderer.invoke('collections:rename', id, name),
+    getAllItemCollections: () => ipcRenderer.invoke('collections:getAllItemCollections'),
+    setForItem: (itemId: string, ids: string[]) =>
+      ipcRenderer.invoke('collections:setForItem', itemId, ids),
+    getItems: (id: string) => ipcRenderer.invoke('collections:getItems', id),
+    reorderItems: (id: string, itemIds: string[]) =>
+      ipcRenderer.invoke('collections:reorderItems', id, itemIds),
+    addItem: (id: string, itemId: string) => ipcRenderer.invoke('collections:addItem', id, itemId),
+    removeItem: (id: string, itemId: string) =>
+      ipcRenderer.invoke('collections:removeItem', id, itemId),
   },
 
   // PDF → EPUB conversion
@@ -82,28 +96,31 @@ contextBridge.exposeInMainWorld('api', {
   stats: {
     recordSession: (itemId: string, startedAt: number, endedAt: number) =>
       ipcRenderer.invoke('stats:recordSession', itemId, startedAt, endedAt),
-    getSummary:    ()             => ipcRenderer.invoke('stats:getSummary'),
-    getTimeline:   (days: number) => ipcRenderer.invoke('stats:getTimeline', days),
-    getByItem:     ()             => ipcRenderer.invoke('stats:getByItem'),
-    getStreaks:    ()             => ipcRenderer.invoke('stats:getStreaks'),
+    getSummary: () => ipcRenderer.invoke('stats:getSummary'),
+    getTimeline: (days: number) => ipcRenderer.invoke('stats:getTimeline', days),
+    getByItem: () => ipcRenderer.invoke('stats:getByItem'),
+    getStreaks: () => ipcRenderer.invoke('stats:getStreaks'),
   },
 
   // Goals
   goals: {
-    getAll:     ()                                    => ipcRenderer.invoke('goals:getAll'),
-    create:     (payload: object)                     => ipcRenderer.invoke('goals:create', payload),
-    update:     (id: string, patch: object)           => ipcRenderer.invoke('goals:update', id, patch),
-    delete:     (id: string)                          => ipcRenderer.invoke('goals:delete', id),
-    addItem:    (goalId: string, itemId: string)      => ipcRenderer.invoke('goals:addItem', goalId, itemId),
-    removeItem:        (goalId: string, itemId: string)               => ipcRenderer.invoke('goals:removeItem', goalId, itemId),
-    upsertPeriodGoal:  (type: string, period: string, target: number | null) => ipcRenderer.invoke('goals:upsertPeriodGoal', type, period, target),
+    getAll: () => ipcRenderer.invoke('goals:getAll'),
+    create: (payload: object) => ipcRenderer.invoke('goals:create', payload),
+    update: (id: string, patch: object) => ipcRenderer.invoke('goals:update', id, patch),
+    delete: (id: string) => ipcRenderer.invoke('goals:delete', id),
+    addItem: (goalId: string, itemId: string) =>
+      ipcRenderer.invoke('goals:addItem', goalId, itemId),
+    removeItem: (goalId: string, itemId: string) =>
+      ipcRenderer.invoke('goals:removeItem', goalId, itemId),
+    upsertPeriodGoal: (type: string, period: string, target: number | null) =>
+      ipcRenderer.invoke('goals:upsertPeriodGoal', type, period, target),
   },
 
   // Auto-updater
   updater: {
     checkForUpdates: () => ipcRenderer.invoke('updater:checkForUpdates'),
-    downloadUpdate:  () => ipcRenderer.invoke('updater:downloadUpdate'),
-    quitAndInstall:  () => ipcRenderer.invoke('updater:quitAndInstall'),
+    downloadUpdate: () => ipcRenderer.invoke('updater:downloadUpdate'),
+    quitAndInstall: () => ipcRenderer.invoke('updater:quitAndInstall'),
 
     onUpdateAvailable: (callback: (info: { version: string }) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, info: { version: string }) => callback(info)
@@ -134,14 +151,11 @@ contextBridge.exposeInMainWorld('api', {
 
   // Annotations
   annotations: {
-    getForItem: (itemId: string) =>
-      ipcRenderer.invoke('annotations:getForItem', itemId),
-    create: (payload: object) =>
-      ipcRenderer.invoke('annotations:create', payload),
+    getForItem: (itemId: string) => ipcRenderer.invoke('annotations:getForItem', itemId),
+    create: (payload: object) => ipcRenderer.invoke('annotations:create', payload),
     updateNote: (id: string, noteText: string | null) =>
       ipcRenderer.invoke('annotations:updateNote', id, noteText),
-    delete: (id: string) =>
-      ipcRenderer.invoke('annotations:delete', id),
+    delete: (id: string) => ipcRenderer.invoke('annotations:delete', id),
     swapSortOrder: (id1: string, id2: string) =>
       ipcRenderer.invoke('annotations:swapSortOrder', id1, id2),
   },
@@ -167,16 +181,25 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('capture:progress', handler)
   },
 
-  onCaptureComplete: (callback: (payload: { jobId: string; result: { id: string; title: string; author: string | null; wordCount: number | null } }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, payload: typeof callback extends (p: infer P) => void ? P : never) =>
-      callback(payload)
+  onCaptureComplete: (
+    callback: (payload: {
+      jobId: string
+      result: { id: string; title: string; author: string | null; wordCount: number | null }
+    }) => void,
+  ) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: typeof callback extends (p: infer P) => void ? P : never,
+    ) => callback(payload)
     ipcRenderer.on('capture:complete', handler)
     return () => ipcRenderer.removeListener('capture:complete', handler)
   },
 
   onCaptureError: (callback: (payload: { jobId: string; error: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, payload: { jobId: string; error: string }) =>
-      callback(payload)
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: { jobId: string; error: string },
+    ) => callback(payload)
     ipcRenderer.on('capture:error', handler)
     return () => ipcRenderer.removeListener('capture:error', handler)
   },
@@ -185,5 +208,4 @@ contextBridge.exposeInMainWorld('api', {
   log: {
     writeError: (message: string) => ipcRenderer.invoke('log:writeError', message),
   },
-
 })

@@ -108,31 +108,41 @@ export function initDatabase(): void {
   const dbPath = join(userDataPath, 'library.db')
 
   db = new Database(dbPath)
-  db.pragma('journal_mode = WAL')   // write-ahead log: safer, faster concurrent reads
-  db.pragma('foreign_keys = ON')    // enforce FK constraints (ON DELETE CASCADE/SET NULL)
+  db.pragma('journal_mode = WAL') // write-ahead log: safer, faster concurrent reads
+  db.pragma('foreign_keys = ON') // enforce FK constraints (ON DELETE CASCADE/SET NULL)
   db.pragma('synchronous = NORMAL') // safe with WAL; skips unnecessary fsyncs vs FULL
-  db.pragma('cache_size = -32000')  // 32 MB page cache (default ~8 MB)
-  db.pragma('temp_store = MEMORY')  // temp B-trees/indexes stay in RAM
-  bringUpSchema(db)      // create tables (idempotent) + run pending migrations
+  db.pragma('cache_size = -32000') // 32 MB page cache (default ~8 MB)
+  db.pragma('temp_store = MEMORY') // temp B-trees/indexes stay in RAM
+  bringUpSchema(db) // create tables (idempotent) + run pending migrations
 
   // Permanently purge items that have been in trash for 30+ days.
   // Paths come from the DB (attacker-influenceable via backup import), so route
   // them through the F1 traversal guards; a throw is caught per-row so one bad
   // row can't abort startup or escape the sandbox.
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
-  const stale = db.prepare(
-    `SELECT id, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL AND deleted_at < ?`
-  ).all(cutoff) as { id: string; file_path: string; cover_path: string | null }[]
+  const stale = db
+    .prepare(
+      `SELECT id, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL AND deleted_at < ?`,
+    )
+    .all(cutoff) as { id: string; file_path: string; cover_path: string | null }[]
   for (const row of stale) {
-    try { unlinkSync(safeContentPath(row.file_path)) } catch {}
-    if (row.cover_path) { try { unlinkSync(safeUserDataPath(row.cover_path)) } catch {} }
+    try {
+      unlinkSync(safeContentPath(row.file_path))
+    } catch {}
+    if (row.cover_path) {
+      try {
+        unlinkSync(safeUserDataPath(row.cover_path))
+      } catch {}
+    }
     db.prepare('DELETE FROM items WHERE id = ?').run(row.id)
   }
 
   // Compact FTS5 segment trees on clean shutdown rather than startup.
   // On large libraries this can take 100–500 ms; deferring it avoids blocking launch.
   app.on('before-quit', () => {
-    try { db.exec("INSERT INTO items_fts(items_fts) VALUES('optimize')") } catch {}
+    try {
+      db.exec("INSERT INTO items_fts(items_fts) VALUES('optimize')")
+    } catch {}
   })
 }
 

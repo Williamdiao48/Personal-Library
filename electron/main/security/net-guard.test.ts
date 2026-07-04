@@ -10,23 +10,23 @@ describe('isPrivateAddress', () => {
     '172.31.255.255',
     '192.168.1.1',
     '169.254.169.254', // cloud metadata / link-local
-    '100.64.0.1',      // CGNAT
+    '100.64.0.1', // CGNAT
     '::1',
     '::',
     'fc00::1',
     'fd12:3456::1',
     'fe80::1',
-    'ff02::1',          // multicast
+    'ff02::1', // multicast
     '::ffff:127.0.0.1', // IPv4-mapped loopback
   ]
   const PUBLIC = [
     '8.8.8.8',
     '1.1.1.1',
-    '172.32.0.1',       // just outside 172.16/12
-    '172.15.255.255',   // just below 172.16/12
+    '172.32.0.1', // just outside 172.16/12
+    '172.15.255.255', // just below 172.16/12
     '93.184.216.34',
     '2606:4700:4700::1111',
-    '::ffff:8.8.8.8',   // IPv4-mapped public
+    '::ffff:8.8.8.8', // IPv4-mapped public
   ]
 
   it.each(PRIVATE)('flags %s as private', (ip) => {
@@ -59,7 +59,9 @@ describe('assertPublicHttpUrl (IP-literal hosts, no DNS)', () => {
   it('rejects private/loopback literal hosts', async () => {
     await expect(assertPublicHttpUrl('http://127.0.0.1/')).rejects.toThrow(/private/)
     await expect(assertPublicHttpUrl('http://[::1]/')).rejects.toThrow(/private/)
-    await expect(assertPublicHttpUrl('http://169.254.169.254/latest/meta-data')).rejects.toThrow(/private/)
+    await expect(assertPublicHttpUrl('http://169.254.169.254/latest/meta-data')).rejects.toThrow(
+      /private/,
+    )
   })
   it('rejects non-http schemes before resolving', async () => {
     await expect(assertPublicHttpUrl('file:///etc/passwd')).rejects.toThrow(/scheme/)

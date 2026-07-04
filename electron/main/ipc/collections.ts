@@ -4,7 +4,6 @@ import { all, run, getDb } from '../db'
 import type { Collection, Item } from '../../../src/types'
 
 export function registerCollectionHandlers(): void {
-
   ipcMain.handle('collections:getAll', () => {
     return all<Collection>('SELECT * FROM collections ORDER BY name')
   })
@@ -36,36 +35,44 @@ export function registerCollectionHandlers(): void {
   })
 
   ipcMain.handle('collections:getItems', (_e, collectionId: string) => {
-    return all<Item>(`
+    return all<Item>(
+      `
       SELECT i.*, p.scroll_position, p.last_read_at, p.scroll_chapter, p.scroll_y, p.status
       FROM items i
       JOIN collection_items ci ON ci.item_id = i.id
       LEFT JOIN progress p ON p.item_id = i.id
       WHERE ci.collection_id = ? AND i.deleted_at IS NULL
       ORDER BY ci.sort_order ASC NULLS LAST, ci.rowid ASC
-    `, [collectionId])
+    `,
+      [collectionId],
+    )
   })
 
   ipcMain.handle('collections:addItem', (_e, collectionId: string, itemId: string) => {
     const db = getDb()
     db.transaction(() => {
-      const row = db.prepare(
-        'SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM collection_items WHERE collection_id = ?'
-      ).get([collectionId]) as { max_order: number }
+      const row = db
+        .prepare(
+          'SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM collection_items WHERE collection_id = ?',
+        )
+        .get([collectionId]) as { max_order: number }
       db.prepare(
-        'INSERT OR IGNORE INTO collection_items (collection_id, item_id, sort_order) VALUES (?, ?, ?)'
+        'INSERT OR IGNORE INTO collection_items (collection_id, item_id, sort_order) VALUES (?, ?, ?)',
       ).run(collectionId, itemId, row.max_order + 1)
     })()
   })
 
   ipcMain.handle('collections:removeItem', (_e, collectionId: string, itemId: string) => {
-    run('DELETE FROM collection_items WHERE collection_id = ? AND item_id = ?', [collectionId, itemId])
+    run('DELETE FROM collection_items WHERE collection_id = ? AND item_id = ?', [
+      collectionId,
+      itemId,
+    ])
   })
 
   ipcMain.handle('collections:reorderItems', (_e, collectionId: string, itemIds: string[]) => {
     const db = getDb()
     const stmt = db.prepare(
-      'UPDATE collection_items SET sort_order = ? WHERE collection_id = ? AND item_id = ?'
+      'UPDATE collection_items SET sort_order = ? WHERE collection_id = ? AND item_id = ?',
     )
     db.transaction(() => {
       itemIds.forEach((id, i) => stmt.run(i, collectionId, id))
@@ -74,14 +81,14 @@ export function registerCollectionHandlers(): void {
 
   ipcMain.handle('collections:setForItem', (_e, itemId: string, collectionIds: string[]) => {
     const db = getDb()
-    const existing = db.prepare(
-      'SELECT collection_id, sort_order FROM collection_items WHERE item_id = ?'
-    ).all([itemId]) as { collection_id: string; sort_order: number | null }[]
-    const savedOrders = new Map(existing.map(r => [r.collection_id, r.sort_order]))
+    const existing = db
+      .prepare('SELECT collection_id, sort_order FROM collection_items WHERE item_id = ?')
+      .all([itemId]) as { collection_id: string; sort_order: number | null }[]
+    const savedOrders = new Map(existing.map((r) => [r.collection_id, r.sort_order]))
 
     const deleteExisting = db.prepare('DELETE FROM collection_items WHERE item_id = ?')
     const insert = db.prepare(
-      'INSERT OR IGNORE INTO collection_items (collection_id, item_id, sort_order) VALUES (?, ?, ?)'
+      'INSERT OR IGNORE INTO collection_items (collection_id, item_id, sort_order) VALUES (?, ?, ?)',
     )
     db.transaction(() => {
       deleteExisting.run(itemId)

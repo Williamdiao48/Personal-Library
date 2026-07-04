@@ -3,10 +3,19 @@ import { useNavigate } from 'react-router-dom'
 import { libraryService } from '../../services/library'
 import type { Item } from '../../types'
 
-const PALETTE = ['#e57373','#f06292','#ba68c8','#7986cb','#4fc3f7','#4db6ac','#aed581','#ffb74d']
+const PALETTE = [
+  '#e57373',
+  '#f06292',
+  '#ba68c8',
+  '#7986cb',
+  '#4fc3f7',
+  '#4db6ac',
+  '#aed581',
+  '#ffb74d',
+]
 function coverColor(id: string): string {
   let h = 0
-  for (let i = 0; i < id.length; i++) h = Math.imul(31, h) + id.charCodeAt(i) | 0
+  for (let i = 0; i < id.length; i++) h = (Math.imul(31, h) + id.charCodeAt(i)) | 0
   return PALETTE[(h >>> 0) % PALETTE.length]
 }
 
@@ -19,7 +28,11 @@ function daysUntilPurge(ts: number): number {
 }
 
 function formatDate(ts: number): string {
-  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  return new Date(ts).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
 }
 
 interface TrashRowProps {
@@ -36,15 +49,26 @@ function TrashRow({ item, onRestore, onDeleteForever }: TrashRowProps) {
   const remaining = daysUntilPurge(deletedAt)
 
   async function handleDeleteForever() {
-    if (!confirming) { setConfirming(true); return }
+    if (!confirming) {
+      setConfirming(true)
+      return
+    }
     setBusy(true)
-    try { await onDeleteForever() }
-    finally { setBusy(false); setConfirming(false) }
+    try {
+      await onDeleteForever()
+    } finally {
+      setBusy(false)
+      setConfirming(false)
+    }
   }
 
   async function handleRestore() {
     setBusy(true)
-    try { await onRestore() } finally { setBusy(false) }
+    try {
+      await onRestore()
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -53,10 +77,11 @@ function TrashRow({ item, onRestore, onDeleteForever }: TrashRowProps) {
         className="trash-row-cover"
         style={!item.cover_path ? { background: coverColor(item.id) } : undefined}
       >
-        {item.cover_path
-          ? <img src={`library://${item.cover_path}`} alt="" draggable={false} />
-          : <span className="trash-row-cover-initial">{item.title[0]?.toUpperCase() ?? '?'}</span>
-        }
+        {item.cover_path ? (
+          <img src={`library://${item.cover_path}`} alt="" draggable={false} />
+        ) : (
+          <span className="trash-row-cover-initial">{item.title[0]?.toUpperCase() ?? '?'}</span>
+        )}
       </div>
 
       <div className="trash-row-info">
@@ -69,8 +94,7 @@ function TrashRow({ item, onRestore, onDeleteForever }: TrashRowProps) {
             {' · '}
             {remaining > 0
               ? `${remaining} day${remaining === 1 ? '' : 's'} until permanent deletion`
-              : 'Will be purged on next launch'
-            }
+              : 'Will be purged on next launch'}
             {' · '}
             {formatDate(deletedAt)}
           </span>
@@ -78,11 +102,7 @@ function TrashRow({ item, onRestore, onDeleteForever }: TrashRowProps) {
       </div>
 
       <div className="trash-row-actions">
-        <button
-          className="trash-btn trash-btn--restore"
-          onClick={handleRestore}
-          disabled={busy}
-        >
+        <button className="trash-btn trash-btn--restore" onClick={handleRestore} disabled={busy}>
           Restore
         </button>
         <button
@@ -114,23 +134,27 @@ export default function TrashView() {
   const [emptyBusy, setEmptyBusy] = useState(false)
 
   useEffect(() => {
-    libraryService.getTrashed()
+    libraryService
+      .getTrashed()
       .then(setItems)
       .finally(() => setLoading(false))
   }, [])
 
   async function handleRestore(id: string) {
     await libraryService.restore(id)
-    setItems(prev => prev.filter(i => i.id !== id))
+    setItems((prev) => prev.filter((i) => i.id !== id))
   }
 
   async function handleDeleteForever(id: string) {
     await libraryService.permanentlyDelete(id)
-    setItems(prev => prev.filter(i => i.id !== id))
+    setItems((prev) => prev.filter((i) => i.id !== id))
   }
 
   async function handleEmptyTrash() {
-    if (!emptyConfirming) { setEmptyConfirming(true); return }
+    if (!emptyConfirming) {
+      setEmptyConfirming(true)
+      return
+    }
     setEmptyBusy(true)
     try {
       await libraryService.emptyTrash()
@@ -151,28 +175,29 @@ export default function TrashView() {
         <h1 className="trash-title">Trash</h1>
         <span className="trash-header-spacer" />
         <span className="trash-purge-note">Permanently deleted after 30 days</span>
-        {items.length > 0 && (
-          emptyConfirming
-            ? <>
-                <button
-                  className="trash-btn trash-btn--danger"
-                  onClick={handleEmptyTrash}
-                  disabled={emptyBusy}
-                >
-                  Empty Trash ({items.length})
-                </button>
-                <button
-                  className="trash-btn trash-btn--cancel"
-                  onClick={() => setEmptyConfirming(false)}
-                  disabled={emptyBusy}
-                >
-                  Cancel
-                </button>
-              </>
-            : <button className="trash-btn" onClick={() => setEmptyConfirming(true)}>
-                Empty Trash
+        {items.length > 0 &&
+          (emptyConfirming ? (
+            <>
+              <button
+                className="trash-btn trash-btn--danger"
+                onClick={handleEmptyTrash}
+                disabled={emptyBusy}
+              >
+                Empty Trash ({items.length})
               </button>
-        )}
+              <button
+                className="trash-btn trash-btn--cancel"
+                onClick={() => setEmptyConfirming(false)}
+                disabled={emptyBusy}
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button className="trash-btn" onClick={() => setEmptyConfirming(true)}>
+              Empty Trash
+            </button>
+          ))}
       </header>
 
       {loading ? (
@@ -180,12 +205,14 @@ export default function TrashView() {
       ) : items.length === 0 ? (
         <div className="trash-empty">
           <span>Trash is empty</span>
-          <button className="trash-back-btn" onClick={() => navigate('/')}>← Back to Library</button>
+          <button className="trash-back-btn" onClick={() => navigate('/')}>
+            ← Back to Library
+          </button>
         </div>
       ) : (
         <div className="trash-body">
           <div className="trash-list">
-            {items.map(item => (
+            {items.map((item) => (
               <TrashRow
                 key={item.id}
                 item={item}
