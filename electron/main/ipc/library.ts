@@ -20,6 +20,20 @@ function contentHash(text: string): string {
   return `${text.length}:${h >>> 0}`
 }
 
+/**
+ * SEC-2: bound an untrusted rating into the valid domain before it is persisted.
+ * The StarRating UI only ever emits null or 0.5..5, but this handler is a trust
+ * boundary — a buggy/compromised renderer must not be able to write garbage.
+ *   - null / undefined / non-number / non-finite (NaN, ±Infinity) → null (unrated)
+ *   - otherwise: snap to nearest 0.5, then clamp to [0, 5]
+ */
+export function clampRating(rating: unknown): number | null {
+  if (rating === null || rating === undefined) return null
+  if (typeof rating !== 'number' || !Number.isFinite(rating)) return null
+  const snapped = Math.round(rating * 2) / 2 // nearest 0.5
+  return Math.min(5, Math.max(0, snapped)) // clamp into [0, 5]
+}
+
 export function registerLibraryHandlers(): void {
 
   ipcMain.handle('library:getAll', () => {
@@ -256,7 +270,7 @@ export function registerLibraryHandlers(): void {
   })
 
   ipcMain.handle('library:setRating', (_e, id: string, rating: number | null) => {
-    run('UPDATE items SET rating = ?, date_modified = ? WHERE id = ?', [rating, Date.now(), id])
+    run('UPDATE items SET rating = ?, date_modified = ? WHERE id = ?', [clampRating(rating), Date.now(), id])
   })
 
   ipcMain.handle('library:setReview', (_e, id: string, review: string | null) => {
