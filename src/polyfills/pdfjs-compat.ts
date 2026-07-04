@@ -11,10 +11,15 @@ if (typeof (Promise as unknown as { try?: unknown }).try !== 'function') {
   Object.defineProperty(Promise, 'try', {
     value<T>(fn: (...a: unknown[]) => T | PromiseLike<T>, ...args: unknown[]): Promise<T> {
       return new Promise<T>((resolve, reject) => {
-        try { resolve(fn(...args)) } catch (e) { reject(e) }
+        try {
+          resolve(fn(...args))
+        } catch (e) {
+          reject(e)
+        }
       })
     },
-    writable: true, configurable: true,
+    writable: true,
+    configurable: true,
   })
 }
 
@@ -27,7 +32,8 @@ if (typeof (Uint8Array.prototype as unknown as { toHex?: unknown }).toHex !== 'f
       for (let i = 0; i < this.length; i++) out += this[i].toString(16).padStart(2, '0')
       return out
     },
-    writable: true, configurable: true,
+    writable: true,
+    configurable: true,
   })
 }
 
@@ -40,7 +46,8 @@ if (typeof (Uint8Array.prototype as unknown as { toBase64?: unknown }).toBase64 
       for (let i = 0; i < this.length; i++) binary += String.fromCharCode(this[i])
       return btoa(binary)
     },
-    writable: true, configurable: true,
+    writable: true,
+    configurable: true,
   })
 }
 
@@ -54,6 +61,7 @@ if (typeof (Uint8Array as unknown as { fromBase64?: unknown }).fromBase64 !== 'f
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
       return bytes
     },
-    writable: true, configurable: true,
+    writable: true,
+    configurable: true,
   })
 }

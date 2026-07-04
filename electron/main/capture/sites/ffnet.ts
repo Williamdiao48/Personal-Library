@@ -23,7 +23,7 @@ function extractChapter(doc: Document, chapterNum: number): { html: string; text
   // multi-chapter file splitting (extractChapterDivs in capture/index.ts
   // depends on div.chapter surviving to the saved HTML).
   const content = sanitize(doc.querySelector('#storytext')?.innerHTML ?? '')
-  const text    = doc.querySelector('#storytext')?.textContent ?? ''
+  const text = doc.querySelector('#storytext')?.textContent ?? ''
 
   const html = `<div class="chapter">
 <h2 class="chapter-title">${escHtml(chapterTitle)}</h2>
@@ -55,8 +55,10 @@ export async function captureFfnet(
   const ch1Html = await fetchPageWithBrowser(ch1Url)
   const ch1Doc = new JSDOM(ch1Html, { url: ch1Url }).window.document
 
-  const title  = ch1Doc.querySelector('#profile_top b.xcontrast_txt')?.textContent?.trim() ?? 'Unknown Story'
-  const author = ch1Doc.querySelector('#profile_top a.xcontrast_txt[href*="/u/"]')?.textContent?.trim() ?? null
+  const title =
+    ch1Doc.querySelector('#profile_top b.xcontrast_txt')?.textContent?.trim() ?? 'Unknown Story'
+  const author =
+    ch1Doc.querySelector('#profile_top a.xcontrast_txt[href*="/u/"]')?.textContent?.trim() ?? null
 
   // Chapter count: cross-check two sources and take the larger one.
   //
@@ -66,13 +68,14 @@ export async function captureFfnet(
   //    present even before any JS executes, so it's always reliable.
   //
   // Taking the max defends against JS-incomplete selects that under-count.
-  const selectCount  = ch1Doc.querySelector('select#chap_select')?.querySelectorAll('option').length ?? 0
-  const metaText     = ch1Doc.querySelector('#profile_top')?.textContent ?? ''
-  const metaCount    = parseInt(/Chapters:\s*(\d+)/i.exec(metaText)?.[1] ?? '0', 10)
+  const selectCount =
+    ch1Doc.querySelector('select#chap_select')?.querySelectorAll('option').length ?? 0
+  const metaText = ch1Doc.querySelector('#profile_top')?.textContent ?? ''
+  const metaCount = parseInt(/Chapters:\s*(\d+)/i.exec(metaText)?.[1] ?? '0', 10)
   const chapterCount = Math.max(selectCount, metaCount) || 1
 
   const effectiveStart = range?.start ?? 1
-  const effectiveEnd   = range ? Math.min(range.end, chapterCount) : chapterCount
+  const effectiveEnd = range ? Math.min(range.end, chapterCount) : chapterCount
 
   const chapterHtmlParts: string[] = []
   const chapterTextParts: string[] = []
@@ -90,31 +93,37 @@ export async function captureFfnet(
   // each chapter takes ~150–400ms instead of ~2000ms (8–10× faster).
   const rangeStart = Math.max(effectiveStart, 2)
   if (effectiveEnd >= rangeStart) {
-    const remainingUrls = Array.from({ length: effectiveEnd - rangeStart + 1 }, (_, i) =>
-      `https://www.fanfiction.net/s/${storyId}/${rangeStart + i}/${slug}`
+    const remainingUrls = Array.from(
+      { length: effectiveEnd - rangeStart + 1 },
+      (_, i) => `https://www.fanfiction.net/s/${storyId}/${rangeStart + i}/${slug}`,
     )
     // maxConsecutiveFailures=5: tolerate brief blips but bail fast once CF
     // consistently rate-limits so the browser batch-refetch takes over without
     // waiting 12+ seconds per chapter on the retry backoff.
-    const pages = await fetchPagesWithSession(remainingUrls, 200, (idx) => {
-      onProgress?.(`Fetching chapter ${rangeStart + idx} of ${effectiveEnd}…`)
-    }, 5)
+    const pages = await fetchPagesWithSession(
+      remainingUrls,
+      200,
+      (idx) => {
+        onProgress?.(`Fetching chapter ${rangeStart + idx} of ${effectiveEnd}…`)
+      },
+      5,
+    )
 
     // CF soft-blocks return 200 OK with a challenge page that has no #storytext.
     // Parse all pages first, collect blocked indices, then re-fetch them all in
     // a single fetchPagesSequential call — one shared BrowserWindow is far cheaper
     // than spawning a new window per chapter.
-    const parsedDocs = pages.map((html, i) =>
-      new JSDOM(html, { url: remainingUrls[i] }).window.document
+    const parsedDocs = pages.map(
+      (html, i) => new JSDOM(html, { url: remainingUrls[i] }).window.document,
     )
 
     const blockedIndices = parsedDocs
       .map((doc, i) => (doc.querySelector('#storytext') ? -1 : i))
-      .filter(i => i >= 0)
+      .filter((i) => i >= 0)
 
     if (blockedIndices.length > 0) {
       onProgress?.(`Re-fetching ${blockedIndices.length} blocked chapter(s)…`)
-      const blockedUrls = blockedIndices.map(i => remainingUrls[i])
+      const blockedUrls = blockedIndices.map((i) => remainingUrls[i])
       const rePages = await fetchPagesSequential(blockedUrls, 150, (j) => {
         onProgress?.(`Re-fetching chapter ${blockedIndices[j] + rangeStart} of ${effectiveEnd}…`)
       })

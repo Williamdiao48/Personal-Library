@@ -26,7 +26,7 @@ function computeContentHash(text: string): string {
   let h = 0
   const sample = text.length > 4000 ? text.slice(0, 2000) + text.slice(-2000) : text
   for (let i = 0; i < sample.length; i++) {
-    h = Math.imul(31, h) + sample.charCodeAt(i) | 0
+    h = (Math.imul(31, h) + sample.charCodeAt(i)) | 0
   }
   return `${text.length}:${h >>> 0}`
 }
@@ -38,7 +38,10 @@ export interface CaptureResult {
   wordCount: number | null
 }
 
-export interface ChapterRange { start: number; end: number }
+export interface ChapterRange {
+  start: number
+  end: number
+}
 
 function getContentDir(): string {
   const dir = join(app.getPath('userData'), 'content')
@@ -92,13 +95,13 @@ async function dispatchCapture(
   if (!article) throw new Error('Could not extract readable content from this page.')
 
   return {
-    title:       article.title,
-    author:      article.byline ?? null,
-    html:        sanitize(article.content),
+    title: article.title,
+    author: article.byline ?? null,
+    html: sanitize(article.content),
     textContent: article.textContent ?? '',
-    coverUrl:    dom.window.document
-      .querySelector('meta[property="og:image"]')
-      ?.getAttribute('content') ?? undefined,
+    coverUrl:
+      dom.window.document.querySelector('meta[property="og:image"]')?.getAttribute('content') ??
+      undefined,
   }
 }
 
@@ -126,7 +129,7 @@ async function saveToLibrary(
 
   // Download cover before the transaction (network I/O, fails safely)
   const coverPath = ogImageUrl ? await downloadCover(ogImageUrl, sourceUrl, contentDir, id) : null
-  const wordCount   = textContent.split(/\s+/).filter(Boolean).length
+  const wordCount = textContent.split(/\s+/).filter(Boolean).length
   const contentHash = computeContentHash(textContent)
   const now = Date.now()
 
@@ -154,20 +157,45 @@ async function saveToLibrary(
         writtenFiles.push(join(contentDir, filePath))
       }
 
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, content_hash, date_saved, date_modified, chapter_start, chapter_end)
         VALUES (?, ?, ?, ?, 'article', ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, title, author, sourceUrl, filePath, coverPath, wordCount, contentHash, now, now, range?.start ?? null, range?.end ?? null)
+      `,
+      ).run(
+        id,
+        title,
+        author,
+        sourceUrl,
+        filePath,
+        coverPath,
+        wordCount,
+        contentHash,
+        now,
+        now,
+        range?.start ?? null,
+        range?.end ?? null,
+      )
 
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO items_fts (rowid, title, author, content)
         SELECT rowid, title, author, ? FROM items WHERE id = ?
-      `).run(textContent, id)
+      `,
+      ).run(textContent, id)
     })()
   } catch (err) {
     // Roll back any files written before the transaction failed
-    for (const f of writtenFiles) { try { unlinkSync(f) } catch {} }
-    if (coverPath) { try { unlinkSync(join(app.getPath('userData'), coverPath)) } catch {} }
+    for (const f of writtenFiles) {
+      try {
+        unlinkSync(f)
+      } catch {}
+    }
+    if (coverPath) {
+      try {
+        unlinkSync(join(app.getPath('userData'), coverPath))
+      } catch {}
+    }
     throw err
   }
 
@@ -180,7 +208,7 @@ function extractChapterDivs(html: string): string[] {
   const dom = new JSDOM(html)
   const divs = Array.from(dom.window.document.querySelectorAll('div.chapter'))
   if (divs.length === 0) return []
-  return divs.map(d => (d as Element).outerHTML)
+  return divs.map((d) => (d as Element).outerHTML)
 }
 
 // ── In-place refresh ───────────────────────────────────────────────────────
@@ -204,12 +232,12 @@ export async function refreshContent(
 // Returns null for unsupported parsers (ffnet, universal, generic).
 export async function getChapterCount(url: string): Promise<number | null> {
   const { hostname } = new URL(url)
-  if (hostname.includes('archiveofourown.org'))  return getAo3ChapterCount(url)
-  if (hostname.includes('royalroad.com'))        return getRoyalRoadChapterCount(url)
-  if (hostname.includes('wattpad.com'))          return getWattpadChapterCount(url)
-  if (hostname.includes('scribblehub.com'))      return getScribbleHubChapterCount(url)
+  if (hostname.includes('archiveofourown.org')) return getAo3ChapterCount(url)
+  if (hostname.includes('royalroad.com')) return getRoyalRoadChapterCount(url)
+  if (hostname.includes('wattpad.com')) return getWattpadChapterCount(url)
+  if (hostname.includes('scribblehub.com')) return getScribbleHubChapterCount(url)
   if (hostname.includes('sufficientvelocity.com') || hostname.includes('spacebattles.com'))
-                                                 return getXenForoChapterCount(url)
+    return getXenForoChapterCount(url)
   return null // ffnet requires a BrowserWindow — not worth it for a count check
 }
 
@@ -226,18 +254,20 @@ export async function appendChapters(
   getContentDir() // ensure <userData>/content exists; paths resolved via safeContentPath
 
   type Row = {
-    rowid:         number
-    source_url:    string | null
-    file_path:     string
+    rowid: number
+    source_url: string | null
+    file_path: string
     chapter_start: number | null
-    chapter_end:   number | null
-    word_count:    number | null
-    title:         string
-    author:        string | null
+    chapter_end: number | null
+    word_count: number | null
+    title: string
+    author: string | null
   }
-  const item = db.prepare(
-    'SELECT rowid, source_url, file_path, chapter_start, chapter_end, word_count, title, author FROM items WHERE id = ?'
-  ).get(itemId) as Row | undefined
+  const item = db
+    .prepare(
+      'SELECT rowid, source_url, file_path, chapter_start, chapter_end, word_count, title, author FROM items WHERE id = ?',
+    )
+    .get(itemId) as Row | undefined
 
   if (!item) throw new Error('Item not found.')
   if (!item.source_url) throw new Error('This item has no source URL.')
@@ -247,11 +277,10 @@ export async function appendChapters(
   if (newEnd < appendStart) throw new Error(`New end (${newEnd}) must be ≥ ${appendStart}.`)
 
   onProgress?.(`Fetching chapters ${appendStart}–${newEnd}…`)
-  const newContent = await dispatchCapture(
-    item.source_url,
-    onProgress,
-    { start: appendStart, end: newEnd },
-  )
+  const newContent = await dispatchCapture(item.source_url, onProgress, {
+    start: appendStart,
+    end: newEnd,
+  })
 
   // Determine whether this item uses the new per-chapter file format
   const isMultiChapterFormat = item.file_path.match(/-ch(\d+)\.html$/) !== null
@@ -267,13 +296,18 @@ export async function appendChapters(
       try {
         readFileSync(safeContentPath(`${uuidBase}-ch${chCount}.html`), 'utf8')
         chCount++
-      } catch { break }
+      } catch {
+        break
+      }
     }
 
     // Read existing text from all chapter files for FTS update
     for (let i = 0; i < chCount; i++) {
       try {
-        const chHtml = readFileSync(safeContentPath(`${uuidBase}-ch${chCount - 1 - i}.html`), 'utf8')
+        const chHtml = readFileSync(
+          safeContentPath(`${uuidBase}-ch${chCount - 1 - i}.html`),
+          'utf8',
+        )
         existingText += new JSDOM(chHtml).window.document.body?.textContent ?? ''
         existingText += ' '
       } catch {}
@@ -283,7 +317,11 @@ export async function appendChapters(
     const newChapterDivs = extractChapterDivs(newContent.html)
     if (newChapterDivs.length > 0) {
       for (let i = 0; i < newChapterDivs.length; i++) {
-        writeFileSync(safeContentPath(`${uuidBase}-ch${chCount + i}.html`), newChapterDivs[i], 'utf8')
+        writeFileSync(
+          safeContentPath(`${uuidBase}-ch${chCount + i}.html`),
+          newChapterDivs[i],
+          'utf8',
+        )
       }
     } else {
       // Fallback: treat entire new HTML as a single additional chapter
@@ -296,15 +334,18 @@ export async function appendChapters(
     const now = Date.now()
     db.transaction(() => {
       db.prepare(
-        `INSERT INTO items_fts(items_fts, rowid, title, author, content) VALUES('delete', ?, ?, ?, ?)`
+        `INSERT INTO items_fts(items_fts, rowid, title, author, content) VALUES('delete', ?, ?, ?, ?)`,
       ).run(item.rowid, item.title, item.author ?? '', existingText.trim())
 
-      db.prepare(
-        `INSERT INTO items_fts(rowid, title, author, content) VALUES(?, ?, ?, ?)`
-      ).run(item.rowid, item.title, item.author ?? '', combinedText)
+      db.prepare(`INSERT INTO items_fts(rowid, title, author, content) VALUES(?, ?, ?, ?)`).run(
+        item.rowid,
+        item.title,
+        item.author ?? '',
+        combinedText,
+      )
 
       db.prepare(
-        'UPDATE items SET chapter_end = ?, word_count = ?, date_modified = ? WHERE id = ?'
+        'UPDATE items SET chapter_end = ?, word_count = ?, date_modified = ? WHERE id = ?',
       ).run(newEnd, newWordCount, now, itemId)
     })()
 
@@ -323,15 +364,18 @@ export async function appendChapters(
   const now = Date.now()
   db.transaction(() => {
     db.prepare(
-      `INSERT INTO items_fts(items_fts, rowid, title, author, content) VALUES('delete', ?, ?, ?, ?)`
+      `INSERT INTO items_fts(items_fts, rowid, title, author, content) VALUES('delete', ?, ?, ?, ?)`,
     ).run(item.rowid, item.title, item.author ?? '', existingText)
 
-    db.prepare(
-      `INSERT INTO items_fts(rowid, title, author, content) VALUES(?, ?, ?, ?)`
-    ).run(item.rowid, item.title, item.author ?? '', combinedText)
+    db.prepare(`INSERT INTO items_fts(rowid, title, author, content) VALUES(?, ?, ?, ?)`).run(
+      item.rowid,
+      item.title,
+      item.author ?? '',
+      combinedText,
+    )
 
     db.prepare(
-      'UPDATE items SET chapter_end = ?, word_count = ?, date_modified = ? WHERE id = ?'
+      'UPDATE items SET chapter_end = ?, word_count = ?, date_modified = ? WHERE id = ?',
     ).run(newEnd, newWordCount, now, itemId)
   })()
 
@@ -343,7 +387,7 @@ export async function appendChapters(
 export async function captureFile(filePath: string): Promise<CaptureResult> {
   const ext = extname(filePath).slice(1).toLowerCase()
   if (ext === 'epub') return captureEpub(filePath)
-  if (ext === 'pdf')  return capturePdf(filePath)
+  if (ext === 'pdf') return capturePdf(filePath)
   throw new Error(`Unsupported file type: .${ext}`)
 }
 
@@ -354,13 +398,22 @@ async function captureEpub(filePath: string): Promise<CaptureResult> {
   // Parse metadata + text in the sandboxed worker (F7). A parse crash/hang
   // rejects here rather than taking down the main process; we then import the
   // (still-copied) file with fallback metadata and null word count.
-  let meta:      { title: string | null; author: string | null; coverBuffer: Buffer | null; coverExt: string | null }
-    = { title: null, author: null, coverBuffer: null, coverExt: null }
+  let meta: {
+    title: string | null
+    author: string | null
+    coverBuffer: Buffer | null
+    coverExt: string | null
+  } = { title: null, author: null, coverBuffer: null, coverExt: null }
   let wordCount: number | null = null
   let plainText = ''
   try {
     const parsed = await parseEpub(filePath)
-    meta = { title: parsed.title, author: parsed.author, coverBuffer: parsed.coverBuffer, coverExt: parsed.coverExt }
+    meta = {
+      title: parsed.title,
+      author: parsed.author,
+      coverBuffer: parsed.coverBuffer,
+      coverExt: parsed.coverExt,
+    }
     plainText = parsed.plainText
     wordCount = parsed.wordCount
   } catch {
@@ -390,19 +443,29 @@ async function captureEpub(filePath: string): Promise<CaptureResult> {
   const db = getDb()
   try {
     db.transaction(() => {
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, date_saved, date_modified)
         VALUES (?, ?, ?, NULL, 'epub', ?, ?, ?, ?, ?)
-      `).run(id, title, author, destFileName, coverPath, wordCount, now, now)
+      `,
+      ).run(id, title, author, destFileName, coverPath, wordCount, now, now)
 
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO items_fts (rowid, title, author, content)
         SELECT rowid, title, author, ? FROM items WHERE id = ?
-      `).run(plainText, id)
+      `,
+      ).run(plainText, id)
     })()
   } catch (err) {
-    try { unlinkSync(destPath) } catch {}
-    if (coverFilePath) { try { unlinkSync(coverFilePath) } catch {} }
+    try {
+      unlinkSync(destPath)
+    } catch {}
+    if (coverFilePath) {
+      try {
+        unlinkSync(coverFilePath)
+      } catch {}
+    }
     throw err
   }
 
@@ -434,10 +497,10 @@ async function capturePdf(filePath: string): Promise<CaptureResult> {
     // (The audited CVE-2024-4367 is already fixed in the bundled pdfjs 5.4.x;
     // these flags are defense-in-depth against future font/eval/XFA issues.)
     const parser = new PDFParse({
-      data:            buffer,
-      isEvalSupported: false,  // no eval() in the pdf.js worker
-      disableFontFace: true,   // no external font fetching
-      enableXfa:       false,  // no XFA form scripting
+      data: buffer,
+      isEvalSupported: false, // no eval() in the pdf.js worker
+      disableFontFace: true, // no external font fetching
+      enableXfa: false, // no XFA form scripting
     })
     try {
       const { text } = await parser.getText()
@@ -453,18 +516,24 @@ async function capturePdf(filePath: string): Promise<CaptureResult> {
   const db = getDb()
   try {
     db.transaction(() => {
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, date_saved, date_modified)
         VALUES (?, ?, NULL, NULL, 'pdf', ?, NULL, ?, ?, ?)
-      `).run(id, title, destFileName, wordCount, now, now)
+      `,
+      ).run(id, title, destFileName, wordCount, now, now)
 
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO items_fts (rowid, title, author, content)
         SELECT rowid, title, author, ? FROM items WHERE id = ?
-      `).run(plainText, id)
+      `,
+      ).run(plainText, id)
     })()
   } catch (err) {
-    try { unlinkSync(destPath) } catch {}
+    try {
+      unlinkSync(destPath)
+    } catch {}
     throw err
   }
 
@@ -477,7 +546,7 @@ async function downloadCover(
   ogImageUrl: string,
   pageUrl: string,
   contentDir: string,
-  id: string
+  id: string,
 ): Promise<string | null> {
   try {
     const absoluteUrl = new URL(ogImageUrl, pageUrl).href
@@ -488,12 +557,13 @@ async function downloadCover(
     // try/catch turns any rejection into "no cover" (non-fatal).
     const res = await safeFetch(absoluteUrl, {
       signal: AbortSignal.timeout(6000),
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PersonalLibrary/1.0; personal-use)' }
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PersonalLibrary/1.0; personal-use)' },
     })
     if (!res.ok) return null
 
     const contentType = res.headers.get('content-type') ?? ''
-    const ext = extFromContentType(contentType) ?? (extname(new URL(absoluteUrl).pathname).slice(1) || 'jpg')
+    const ext =
+      extFromContentType(contentType) ?? (extname(new URL(absoluteUrl).pathname).slice(1) || 'jpg')
     const allowedExts = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif'])
     if (!allowedExts.has(ext)) return null
 
@@ -508,10 +578,9 @@ async function downloadCover(
 
 function extFromContentType(ct: string): string | null {
   if (ct.includes('jpeg') || ct.includes('jpg')) return 'jpg'
-  if (ct.includes('png'))  return 'png'
-  if (ct.includes('gif'))  return 'gif'
+  if (ct.includes('png')) return 'png'
+  if (ct.includes('gif')) return 'gif'
   if (ct.includes('webp')) return 'webp'
   if (ct.includes('avif')) return 'avif'
   return null
 }
-

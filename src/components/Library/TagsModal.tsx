@@ -13,16 +13,22 @@ interface Props {
   onClose: () => void
 }
 
-export default function TagsModal({ itemId, itemTitle, allTags: initialAllTags, itemTagIds: initialItemTagIds, onClose }: Props) {
-  const [allTags, setAllTags]           = useState(initialAllTags)
-  const [selectedIds, setSelectedIds]   = useState(new Set(initialItemTagIds))
-  const [newName, setNewName]           = useState('')
-  const [newColor, setNewColor]         = useState(DEFAULT_COLOR)
-  const [creating, setCreating]         = useState(false)
-  const [saving, setSaving]             = useState(false)
+export default function TagsModal({
+  itemId,
+  itemTitle,
+  allTags: initialAllTags,
+  itemTagIds: initialItemTagIds,
+  onClose,
+}: Props) {
+  const [allTags, setAllTags] = useState(initialAllTags)
+  const [selectedIds, setSelectedIds] = useState(new Set(initialItemTagIds))
+  const [newName, setNewName] = useState('')
+  const [newColor, setNewColor] = useState(DEFAULT_COLOR)
+  const [creating, setCreating] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   function toggleTag(id: string) {
-    setSelectedIds(prev => {
+    setSelectedIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
@@ -36,8 +42,8 @@ export default function TagsModal({ itemId, itemTitle, allTags: initialAllTags, 
     setCreating(true)
     try {
       const tag = await tagService.create(newName.trim(), newColor)
-      setAllTags(prev => [...prev, tag].sort((a, b) => a.name.localeCompare(b.name)))
-      setSelectedIds(prev => new Set([...prev, tag.id]))
+      setAllTags((prev) => [...prev, tag].sort((a, b) => a.name.localeCompare(b.name)))
+      setSelectedIds((prev) => new Set([...prev, tag.id]))
       setNewName('')
     } finally {
       setCreating(false)
@@ -56,7 +62,7 @@ export default function TagsModal({ itemId, itemTitle, allTags: initialAllTags, 
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal tags-modal" onClick={e => e.stopPropagation()}>
+      <div className="modal tags-modal" onClick={(e) => e.stopPropagation()}>
         <div className="tags-modal-header">
           <h2>Tags</h2>
           <p className="tags-modal-subtitle">{itemTitle}</p>
@@ -66,7 +72,7 @@ export default function TagsModal({ itemId, itemTitle, allTags: initialAllTags, 
           {allTags.length === 0 ? (
             <p className="tags-modal-empty">No tags yet. Create one below.</p>
           ) : (
-            allTags.map(tag => (
+            allTags.map((tag) => (
               <div key={tag.id} className="tags-modal-row">
                 <label className="tags-modal-check">
                   <input
@@ -94,7 +100,7 @@ export default function TagsModal({ itemId, itemTitle, allTags: initialAllTags, 
               className="tags-modal-input"
               placeholder="Tag name"
               value={newName}
-              onChange={e => setNewName(e.target.value)}
+              onChange={(e) => setNewName(e.target.value)}
               maxLength={40}
             />
             <button type="submit" className="btn-primary" disabled={creating || !newName.trim()}>
@@ -104,7 +110,9 @@ export default function TagsModal({ itemId, itemTitle, allTags: initialAllTags, 
         </form>
 
         <div className="modal-actions">
-          <button onClick={onClose} disabled={saving}>Cancel</button>
+          <button onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
           <button className="btn-primary" onClick={save} disabled={saving}>
             {saving ? 'Saving…' : 'Save'}
           </button>

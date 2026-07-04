@@ -4,9 +4,9 @@ import { BrowserWindow, session as electronSession } from 'electron'
 export interface SiteContent {
   title: string
   author: string | null
-  html: string        // sanitized HTML to store
+  html: string // sanitized HTML to store
   textContent: string // plain text for FTS and word count
-  coverUrl?: string | null  // absolute URL of a cover image to download (optional)
+  coverUrl?: string | null // absolute URL of a cover image to download (optional)
 }
 
 // Explicit hardened prefs for the hidden capture windows (F6). These load
@@ -24,8 +24,9 @@ const CAPTURE_WINDOW_PREFS: Electron.WebPreferences = {
 }
 
 export const BROWSER_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'User-Agent':
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'en-US,en;q=0.9',
 }
 
@@ -191,7 +192,7 @@ export function fetchPagesSequential(
 
             // Brief pause before the next request to avoid rate-limiting
             if (index + 1 < urls.length) {
-              await new Promise<void>(r => setTimeout(r, delayMs))
+              await new Promise<void>((r) => setTimeout(r, delayMs))
             }
 
             loadNext(index + 1)
@@ -250,10 +251,10 @@ export async function fetchPagesWithSession(
 
     let html = ''
     try {
-      const res = await warmSession.fetch(urls[i], {
+      const res = (await warmSession.fetch(urls[i], {
         headers: BROWSER_HEADERS,
         signal: AbortSignal.timeout(10_000),
-      }) as Response
+      })) as Response
 
       if (res.ok) {
         html = await res.text()
@@ -275,7 +276,7 @@ export async function fetchPagesWithSession(
     results.push(html)
 
     if (i < urls.length - 1 && delayMs > 0) {
-      await new Promise<void>(r => setTimeout(r, delayMs))
+      await new Promise<void>((r) => setTimeout(r, delayMs))
     }
   }
 

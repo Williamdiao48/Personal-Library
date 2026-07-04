@@ -1,53 +1,69 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 
-export type Theme       = 'dark' | 'darker' | 'light' | 'sepia' | 'ivory' | 'slate' | 'lavender' | 'ocean' | 'nord' | 'rose' | 'forest' | 'high-contrast' | 'dusk' | 'midnight' | 'sand'
+export type Theme =
+  | 'dark'
+  | 'darker'
+  | 'light'
+  | 'sepia'
+  | 'ivory'
+  | 'slate'
+  | 'lavender'
+  | 'ocean'
+  | 'nord'
+  | 'rose'
+  | 'forest'
+  | 'high-contrast'
+  | 'dusk'
+  | 'midnight'
+  | 'sand'
 export type GridDensity = 'compact' | 'normal' | 'comfortable'
-export type SortBy      = 'date_saved' | 'last_read' | 'title' | 'word_count' | 'progress' | 'rating_high' | 'rating_low'
+export type SortBy =
+  'date_saved' | 'last_read' | 'title' | 'word_count' | 'progress' | 'rating_high' | 'rating_low'
 
 export interface CustomTheme {
-  id:        string
-  name:      string
+  id: string
+  name: string
   // seed colors the user picks
-  bg:        string
-  accent:    string
-  isLight:   boolean
+  bg: string
+  accent: string
+  isLight: boolean
   // derived on save
   bgSurface: string
-  bgHover:   string
-  border:    string
-  text:      string
+  bgHover: string
+  border: string
+  text: string
   textMuted: string
   accentDim: string
   coverScrim: string
 }
 
 export interface AppSettings {
-  theme:        string   // Theme id (built-in name or custom UUID)
-  showAuthors:  boolean
+  theme: string // Theme id (built-in name or custom UUID)
+  showAuthors: boolean
   showProgress: boolean
-  gridDensity:  GridDensity
-  defaultSort:  SortBy
+  gridDensity: GridDensity
+  defaultSort: SortBy
   customThemes: CustomTheme[]
 }
 
 const CUSTOM_THEME_VARS: Array<[keyof CustomTheme, string]> = [
-  ['bg',        '--bg'],
+  ['bg', '--bg'],
   ['bgSurface', '--bg-surface'],
-  ['bgHover',   '--bg-hover'],
-  ['border',    '--border'],
-  ['text',      '--text'],
+  ['bgHover', '--bg-hover'],
+  ['border', '--border'],
+  ['text', '--text'],
   ['textMuted', '--text-muted'],
-  ['accent',    '--accent'],
+  ['accent', '--accent'],
   ['accentDim', '--accent-dim'],
-  ['coverScrim','--cover-scrim'],
+  ['coverScrim', '--cover-scrim'],
 ]
 
 const DEFAULTS: AppSettings = {
-  theme:        'dark',
-  showAuthors:  true,
+  theme: 'dark',
+  showAuthors: true,
   showProgress: true,
-  gridDensity:  'normal',
-  defaultSort:  'date_saved',
+  gridDensity: 'normal',
+  defaultSort: 'date_saved',
   customThemes: [],
 }
 
@@ -69,13 +85,13 @@ function applyToDOM(settings: AppSettings) {
   const html = document.documentElement
   html.dataset.density = settings.gridDensity
 
-  if (settings.showAuthors)  delete html.dataset.hideAuthors
-  else                       html.dataset.hideAuthors = ''
+  if (settings.showAuthors) delete html.dataset.hideAuthors
+  else html.dataset.hideAuthors = ''
 
   if (settings.showProgress) delete html.dataset.hideProgress
-  else                       html.dataset.hideProgress = ''
+  else html.dataset.hideProgress = ''
 
-  const customTheme = settings.customThemes.find(t => t.id === settings.theme)
+  const customTheme = settings.customThemes.find((t) => t.id === settings.theme)
   if (customTheme) {
     html.dataset.theme = 'custom'
     html.dataset.themeMode = customTheme.isLight ? 'light' : 'dark'
@@ -92,7 +108,7 @@ function applyToDOM(settings: AppSettings) {
 }
 
 interface SettingsContextValue {
-  settings:       AppSettings
+  settings: AppSettings
   updateSettings: (patch: Partial<AppSettings>) => void
 }
 
@@ -110,7 +126,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   }, [settings])
 
   function updateSettings(patch: Partial<AppSettings>) {
-    setSettings(prev => {
+    setSettings((prev) => {
       const next = { ...prev, ...patch }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
       return next

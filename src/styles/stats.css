@@ -29,7 +29,9 @@
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 5px;
-  transition: color 0.12s, background 0.12s;
+  transition:
+    color 0.12s,
+    background 0.12s;
 }
 
 .stats-back-btn:hover {
@@ -269,9 +271,18 @@
   letter-spacing: 0.04em;
 }
 
-.stats-type-article { background: #1a3a4a; color: #5bcfef; }
-.stats-type-epub    { background: #2a3520; color: #7ec86a; }
-.stats-type-pdf     { background: #3a2020; color: #e07070; }
+.stats-type-article {
+  background: #1a3a4a;
+  color: #5bcfef;
+}
+.stats-type-epub {
+  background: #2a3520;
+  color: #7ec86a;
+}
+.stats-type-pdf {
+  background: #3a2020;
+  color: #e07070;
+}
 
 /* ── Progress bar ───────────────────────────────────────────────────────── */
 
@@ -363,12 +374,24 @@
   flex-shrink: 0;
 }
 
-.stats-heatmap-day-future { background: transparent; }
-.stats-heatmap-day-0 { background: var(--border); }
-.stats-heatmap-day-1 { background: color-mix(in srgb, var(--accent) 25%, var(--border)); }
-.stats-heatmap-day-2 { background: color-mix(in srgb, var(--accent) 50%, var(--border)); }
-.stats-heatmap-day-3 { background: color-mix(in srgb, var(--accent) 75%, var(--border)); }
-.stats-heatmap-day-4 { background: var(--accent); }
+.stats-heatmap-day-future {
+  background: transparent;
+}
+.stats-heatmap-day-0 {
+  background: var(--border);
+}
+.stats-heatmap-day-1 {
+  background: color-mix(in srgb, var(--accent) 25%, var(--border));
+}
+.stats-heatmap-day-2 {
+  background: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.stats-heatmap-day-3 {
+  background: color-mix(in srgb, var(--accent) 75%, var(--border));
+}
+.stats-heatmap-day-4 {
+  background: var(--accent);
+}
 
 .stats-heatmap-legend {
   display: flex;
@@ -394,7 +417,9 @@
   padding: 3px 10px;
   border-radius: 5px;
   cursor: pointer;
-  transition: color 0.12s, border-color 0.12s;
+  transition:
+    color 0.12s,
+    border-color 0.12s;
 }
 .stats-goals-edit-btn:hover {
   color: var(--text);
@@ -436,7 +461,9 @@
   cursor: pointer;
   padding: 0;
 }
-.stats-goals-inline-btn:hover { text-decoration: underline; }
+.stats-goals-inline-btn:hover {
+  text-decoration: underline;
+}
 
 .stats-goals-editor {
   display: flex;
@@ -529,7 +556,9 @@
   cursor: pointer;
   transition: opacity 0.12s;
 }
-.stats-goals-save-btn:hover { opacity: 0.85; }
+.stats-goals-save-btn:hover {
+  opacity: 0.85;
+}
 
 .stats-goals-cancel-btn {
   background: none;
@@ -540,7 +569,9 @@
   font-size: 13px;
   cursor: pointer;
 }
-.stats-goals-cancel-btn:hover { color: var(--text); }
+.stats-goals-cancel-btn:hover {
+  color: var(--text);
+}
 
 /* ── Period goal card (wraps all 4 slots) ───────────────────────────────── */
 
@@ -615,7 +646,9 @@
 .stats-period-slot--empty {
   border-style: dashed;
   cursor: pointer;
-  transition: border-color 0.12s, background 0.12s;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
   justify-content: center;
   min-height: 80px;
 }
@@ -656,7 +689,10 @@
   font-size: 13px;
   padding: 4px 8px;
 }
-.stats-period-slot-input:focus { outline: none; border-color: var(--accent); }
+.stats-period-slot-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 
 .stats-period-slot-unit {
   font-size: 11px;
@@ -669,7 +705,6 @@
   gap: 4px;
   flex-wrap: wrap;
 }
-
 
 /* ── Reading list cards ──────────────────────────────────────────────────── */
 
@@ -732,7 +767,9 @@
   flex-shrink: 0;
   transition: opacity 0.12s;
 }
-.stats-goal-card-delete:hover { opacity: 1; }
+.stats-goal-card-delete:hover {
+  opacity: 1;
+}
 
 .stats-goal-list-items {
   display: flex;
@@ -748,7 +785,9 @@
   font-size: 13px;
   border-bottom: 1px solid var(--border);
 }
-.stats-goal-list-item:last-child { border-bottom: none; }
+.stats-goal-list-item:last-child {
+  border-bottom: none;
+}
 
 .stats-goal-list-item--done .stats-goal-list-item-title {
   color: var(--text-muted);
@@ -761,7 +800,9 @@
   flex-shrink: 0;
   width: 14px;
 }
-.stats-goal-list-item--done .stats-goal-list-check { color: var(--accent); }
+.stats-goal-list-item--done .stats-goal-list-check {
+  color: var(--accent);
+}
 
 .stats-goal-list-item-info {
   display: flex;
@@ -811,8 +852,12 @@
   flex-shrink: 0;
   transition: opacity 0.12s;
 }
-.stats-goal-list-item:hover .stats-goal-list-remove { opacity: 0.5; }
-.stats-goal-list-remove:hover { opacity: 1 !important; }
+.stats-goal-list-item:hover .stats-goal-list-remove {
+  opacity: 0.5;
+}
+.stats-goal-list-remove:hover {
+  opacity: 1 !important;
+}
 
 /* Search / add-book input at card bottom */
 .stats-goal-list-search-wrap {
@@ -834,7 +879,9 @@
   border-radius: 0 0 10px 10px;
   display: block;
 }
-.stats-goal-list-search::placeholder { color: var(--text-muted); }
+.stats-goal-list-search::placeholder {
+  color: var(--text-muted);
+}
 
 .stats-goal-list-search-results {
   position: absolute;
@@ -847,7 +894,7 @@
   max-height: 200px;
   overflow-y: auto;
   z-index: 10;
-  box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
 }
 
 .stats-goal-item-picker-row {
@@ -862,7 +909,9 @@
   text-align: left;
   transition: background 0.1s;
 }
-.stats-goal-item-picker-row:hover { background: var(--bg-hover); }
+.stats-goal-item-picker-row:hover {
+  background: var(--bg-hover);
+}
 
 .stats-goal-item-picker-title {
   font-size: 13px;

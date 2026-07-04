@@ -6,53 +6,48 @@ import type { StatsSummary, DailyReading, ItemStats, StreakInfo } from '../../..
 // Generous server-side safety cap. The client already trims idle time using
 // activity-based segmentation; this is only a last-resort guard against
 // clock skew or bugs sending absurd durations.
-const SESSION_MAX_MS  = 6 * 60 * 60 * 1_000  // 6 hours
+const SESSION_MAX_MS = 6 * 60 * 60 * 1_000 // 6 hours
 // Sessions shorter than this are discarded — filters out accidental opens.
-const SESSION_MIN_MS  = 5_000                  // 5 seconds
+const SESSION_MIN_MS = 5_000 // 5 seconds
 
 export function registerStatsHandlers(): void {
-
   // ── Record a reading session ───────────────────────────────────
   // Called by the renderer on unmount (or when the tab is hidden).
   // startedAt / endedAt are unix milliseconds from Date.now().
 
-  ipcMain.handle('stats:recordSession', (
-    _e,
-    itemId: string,
-    startedAt: number,
-    endedAt: number,
-  ) => {
-    const raw      = endedAt - startedAt
-    const duration = Math.min(raw, SESSION_MAX_MS)
-    if (duration < SESSION_MIN_MS) return   // too short to be meaningful
+  ipcMain.handle(
+    'stats:recordSession',
+    (_e, itemId: string, startedAt: number, endedAt: number) => {
+      const raw = endedAt - startedAt
+      const duration = Math.min(raw, SESSION_MAX_MS)
+      if (duration < SESSION_MIN_MS) return // too short to be meaningful
 
-    run(
-      `INSERT INTO reading_sessions (id, item_id, started_at, ended_at, duration)
+      run(
+        `INSERT INTO reading_sessions (id, item_id, started_at, ended_at, duration)
        VALUES (?, ?, ?, ?, ?)`,
-      [randomUUID(), itemId, startedAt, endedAt, duration],
-    )
-  })
+        [randomUUID(), itemId, startedAt, endedAt, duration],
+      )
+    },
+  )
 
   // ── Aggregate totals ───────────────────────────────────────────
 
   ipcMain.handle('stats:getSummary', (): StatsSummary => {
-    const totalMs = get<{ v: number }>(
-      `SELECT COALESCE(SUM(duration), 0) AS v FROM reading_sessions`,
-    )?.v ?? 0
+    const totalMs =
+      get<{ v: number }>(`SELECT COALESCE(SUM(duration), 0) AS v FROM reading_sessions`)?.v ?? 0
 
-    const itemsStarted = get<{ v: number }>(
-      `SELECT COUNT(DISTINCT item_id) AS v FROM reading_sessions`,
-    )?.v ?? 0
+    const itemsStarted =
+      get<{ v: number }>(`SELECT COUNT(DISTINCT item_id) AS v FROM reading_sessions`)?.v ?? 0
 
-    const itemsFinished = get<{ v: number }>(
-      `SELECT COUNT(*) AS v FROM progress WHERE scroll_position >= 1`,
-    )?.v ?? 0
+    const itemsFinished =
+      get<{ v: number }>(`SELECT COUNT(*) AS v FROM progress WHERE scroll_position >= 1`)?.v ?? 0
 
     // Estimated words read: word_count × high-water scroll position per item.
     // max_scroll_position is the furthest point ever reached, so rewinding
     // to re-read an earlier chapter doesn't deflate the count.
     // Falls back to scroll_position for rows written before migration 11.
-    const wordsRead = get<{ v: number }>(`
+    const wordsRead =
+      get<{ v: number }>(`
       SELECT COALESCE(
         SUM(CAST(i.word_count * MIN(COALESCE(p.max_scroll_position, p.scroll_position, 0), 1.0) AS INTEGER)),
         0
@@ -71,7 +66,8 @@ export function registerStatsHandlers(): void {
 
   ipcMain.handle('stats:getTimeline', (_e, days: number): DailyReading[] => {
     const cutoff = Date.now() - days * 24 * 60 * 60 * 1_000
-    return all<DailyReading>(`
+    return all<DailyReading>(
+      `
       SELECT
         date(started_at / 1000, 'unixepoch', 'localtime') AS date,
         SUM(duration) AS totalMs
@@ -79,7 +75,9 @@ export function registerStatsHandlers(): void {
       WHERE started_at >= ?
       GROUP BY date
       ORDER BY date
-    `, [cutoff])
+    `,
+      [cutoff],
+    )
   })
 
   // ── Per-item breakdown ─────────────────────────────────────────
@@ -136,16 +134,16 @@ export function registerStatsHandlers(): void {
 
     if (rows.length === 0) return { currentStreak: 0, longestStreak: 0 }
 
-    const days = rows.map(r => r.day)
+    const days = rows.map((r) => r.day)
 
     // Longest streak: scan sorted days for the longest consecutive run
     let longest = 1
-    let run     = 1
+    let run = 1
     for (let i = 1; i < days.length; i++) {
       const prev = new Date(days[i - 1] + 'T12:00:00')
-      const curr = new Date(days[i]     + 'T12:00:00')
+      const curr = new Date(days[i] + 'T12:00:00')
       const diff = Math.round((curr.getTime() - prev.getTime()) / 86_400_000)
-      run     = diff === 1 ? run + 1 : 1
+      run = diff === 1 ? run + 1 : 1
       longest = Math.max(longest, run)
     }
 
@@ -156,10 +154,10 @@ export function registerStatsHandlers(): void {
     const localDateStr = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
-    const daySet   = new Set(days)
-    const today    = new Date()
+    const daySet = new Set(days)
+    const today = new Date()
     const todayStr = localDateStr(today)
-    const check    = new Date(today)
+    const check = new Date(today)
     if (!daySet.has(todayStr)) check.setDate(check.getDate() - 1)
 
     let current = 0

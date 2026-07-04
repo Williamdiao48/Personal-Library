@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 
-const MARK_CLASS        = 'search-mark'
+const MARK_CLASS = 'search-mark'
 const MARK_ACTIVE_CLASS = 'search-mark-active'
 
 /**
@@ -26,12 +26,12 @@ export function useTextHighlight(
   contentKey?: string | number,
   onActivate?: (mark: HTMLElement) => void,
 ) {
-  const [matchCount,    setMatchCount]    = useState(0)
-  const [currentMatch,  setCurrentMatch]  = useState(0)
-  const marksRef    = useRef<HTMLElement[]>([])
-  const currentRef  = useRef(0)
+  const [matchCount, setMatchCount] = useState(0)
+  const [currentMatch, setCurrentMatch] = useState(0)
+  const marksRef = useRef<HTMLElement[]>([])
+  const currentRef = useRef(0)
   const onActivateRef = useRef(onActivate)
-  onActivateRef.current = onActivate  // keep ref in sync without adding it to effect deps
+  onActivateRef.current = onActivate // keep ref in sync without adding it to effect deps
 
   // Re-highlight whenever query or content changes
   useEffect(() => {
@@ -143,7 +143,7 @@ function applyHighlights(container: HTMLElement, query: string): HTMLElement[] {
   while ((node = walker.nextNode())) textNodes.push(node as Text)
 
   for (const textNode of textNodes) {
-    const text  = textNode.textContent ?? ''
+    const text = textNode.textContent ?? ''
     const found = findAll(text, lower)
     if (found.length === 0) continue
 

@@ -18,13 +18,13 @@ export default function CollectionsModal({
   onClose,
 }: Props) {
   const [allCollections, setAllCollections] = useState(initialAllCollections)
-  const [selectedIds, setSelectedIds]       = useState(new Set(initialItemCollectionIds))
-  const [newName, setNewName]               = useState('')
-  const [creating, setCreating]             = useState(false)
-  const [saving, setSaving]                 = useState(false)
+  const [selectedIds, setSelectedIds] = useState(new Set(initialItemCollectionIds))
+  const [newName, setNewName] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   function toggle(id: string) {
-    setSelectedIds(prev => {
+    setSelectedIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
@@ -38,8 +38,8 @@ export default function CollectionsModal({
     setCreating(true)
     try {
       const col = await collectionService.create(newName.trim())
-      setAllCollections(prev => [...prev, col].sort((a, b) => a.name.localeCompare(b.name)))
-      setSelectedIds(prev => new Set([...prev, col.id]))
+      setAllCollections((prev) => [...prev, col].sort((a, b) => a.name.localeCompare(b.name)))
+      setSelectedIds((prev) => new Set([...prev, col.id]))
       setNewName('')
     } finally {
       setCreating(false)
@@ -58,7 +58,7 @@ export default function CollectionsModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal tags-modal" onClick={e => e.stopPropagation()}>
+      <div className="modal tags-modal" onClick={(e) => e.stopPropagation()}>
         <div className="tags-modal-header">
           <h2>Collections</h2>
           <p className="tags-modal-subtitle">{itemTitle}</p>
@@ -68,7 +68,7 @@ export default function CollectionsModal({
           {allCollections.length === 0 ? (
             <p className="tags-modal-empty">No collections yet. Create one below.</p>
           ) : (
-            allCollections.map(col => (
+            allCollections.map((col) => (
               <div key={col.id} className="tags-modal-row">
                 <label className="tags-modal-check">
                   <input
@@ -91,7 +91,7 @@ export default function CollectionsModal({
               className="tags-modal-input"
               placeholder="Collection name"
               value={newName}
-              onChange={e => setNewName(e.target.value)}
+              onChange={(e) => setNewName(e.target.value)}
               maxLength={60}
             />
             <button type="submit" className="btn-primary" disabled={creating || !newName.trim()}>
@@ -101,7 +101,9 @@ export default function CollectionsModal({
         </form>
 
         <div className="modal-actions">
-          <button onClick={onClose} disabled={saving}>Cancel</button>
+          <button onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
           <button className="btn-primary" onClick={save} disabled={saving}>
             {saving ? 'Saving…' : 'Save'}
           </button>

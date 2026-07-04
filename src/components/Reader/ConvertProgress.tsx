@@ -1,8 +1,8 @@
 interface Props {
-  step:        string
-  pct:         number
-  error:       string | null
-  onCancel:    () => void
+  step: string
+  pct: number
+  error: string | null
+  onCancel: () => void
   onOpenEpub?: () => void
 }
 
@@ -12,7 +12,6 @@ export default function ConvertProgress({ step, pct, error, onCancel, onOpenEpub
   return (
     <div className="convert-overlay">
       <div className="convert-modal">
-
         <h3 className="convert-title">Converting to EPUB</h3>
 
         {error ? (
@@ -39,7 +38,6 @@ export default function ConvertProgress({ step, pct, error, onCancel, onOpenEpub
             {done ? 'Stay here' : error ? 'Close' : 'Cancel'}
           </button>
         </div>
-
       </div>
     </div>
   )

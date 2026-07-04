@@ -19,8 +19,8 @@ interface TagRowProps {
 }
 
 function TagRow({ tag, count, onRename, onSetColor, onDelete, onNavigate }: TagRowProps) {
-  const [editingName, setEditingName]     = useState(false)
-  const [nameValue, setNameValue]         = useState(tag.name)
+  const [editingName, setEditingName] = useState(false)
+  const [nameValue, setNameValue] = useState(tag.name)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -37,7 +37,7 @@ function TagRow({ tag, count, onRename, onSetColor, onDelete, onNavigate }: TagR
 
   return (
     <div className="tag-row">
-      <ColorInput value={tag.color} onChange={color => onSetColor(tag.id, color)} size={20} />
+      <ColorInput value={tag.color} onChange={(color) => onSetColor(tag.id, color)} size={20} />
 
       <div className="tag-row-name-wrap">
         {editingName ? (
@@ -45,15 +45,22 @@ function TagRow({ tag, count, onRename, onSetColor, onDelete, onNavigate }: TagR
             ref={inputRef}
             className="tag-row-name-input"
             value={nameValue}
-            onChange={e => setNameValue(e.target.value)}
+            onChange={(e) => setNameValue(e.target.value)}
             onBlur={commitRename}
-            onKeyDown={e => {
+            onKeyDown={(e) => {
               if (e.key === 'Enter') commitRename()
-              if (e.key === 'Escape') { setEditingName(false); setNameValue(tag.name) }
+              if (e.key === 'Escape') {
+                setEditingName(false)
+                setNameValue(tag.name)
+              }
             }}
           />
         ) : (
-          <button className="tag-row-name" onClick={() => setEditingName(true)} title="Click to rename">
+          <button
+            className="tag-row-name"
+            onClick={() => setEditingName(true)}
+            title="Click to rename"
+          >
             {tag.name}
           </button>
         )}
@@ -72,8 +79,12 @@ function TagRow({ tag, count, onRename, onSetColor, onDelete, onNavigate }: TagR
           <span className="tag-row-confirm-text">
             {count > 0 ? `Remove from ${count} item${count !== 1 ? 's' : ''}?` : 'Delete?'}
           </span>
-          <button className="tag-row-confirm-yes" onClick={() => onDelete(tag.id)}>Delete</button>
-          <button className="tag-row-confirm-no" onClick={() => setConfirmDelete(false)}>Cancel</button>
+          <button className="tag-row-confirm-yes" onClick={() => onDelete(tag.id)}>
+            Delete
+          </button>
+          <button className="tag-row-confirm-no" onClick={() => setConfirmDelete(false)}>
+            Cancel
+          </button>
         </div>
       ) : (
         <button
@@ -94,16 +105,16 @@ function TagRow({ tag, count, onRename, onSetColor, onDelete, onNavigate }: TagR
 export default function TagsView() {
   const navigate = useNavigate()
 
-  const [tags, setTags]                   = useState<Tag[]>([])
-  const [itemCounts, setItemCounts]       = useState<Record<string, number>>({})
-  const [allCollections, setAllCollections]             = useState<Collection[]>([])
+  const [tags, setTags] = useState<Tag[]>([])
+  const [itemCounts, setItemCounts] = useState<Record<string, number>>({})
+  const [allCollections, setAllCollections] = useState<Collection[]>([])
   const [collectionItemCounts, setCollectionItemCounts] = useState<Record<string, number>>({})
-  const [allLibraryItems, setAllLibraryItems]           = useState<import('../../types').Item[]>([])
-  const [trashedCount, setTrashedCount]   = useState(0)
-  const [loading, setLoading]             = useState(true)
+  const [allLibraryItems, setAllLibraryItems] = useState<import('../../types').Item[]>([])
+  const [trashedCount, setTrashedCount] = useState(0)
+  const [loading, setLoading] = useState(true)
 
   // New tag form
-  const [newName, setNewName]   = useState('')
+  const [newName, setNewName] = useState('')
   const [newColor, setNewColor] = useState(DEFAULT_COLOR)
   const [creating, setCreating] = useState(false)
 
@@ -115,54 +126,68 @@ export default function TagsView() {
       collectionService.getAllItemCollections(),
       libraryService.getAll(),
       libraryService.getTrashed(),
-    ]).then(([allTags, counts, cols, itemCols, allItems, trashed]) => {
-      setTags(allTags)
-      setAllLibraryItems(allItems)
-      setTrashedCount(trashed.length)
+    ])
+      .then(([allTags, counts, cols, itemCols, allItems, trashed]) => {
+        setTags(allTags)
+        setAllLibraryItems(allItems)
+        setTrashedCount(trashed.length)
 
-      const countsMap: Record<string, number> = {}
-      for (const { tag_id, count } of counts) countsMap[tag_id] = count
-      setItemCounts(countsMap)
+        const countsMap: Record<string, number> = {}
+        for (const { tag_id, count } of counts) countsMap[tag_id] = count
+        setItemCounts(countsMap)
 
-      setAllCollections(cols)
-      const colCounts: Record<string, number> = {}
-      for (const { collection_id } of itemCols) colCounts[collection_id] = (colCounts[collection_id] ?? 0) + 1
-      setCollectionItemCounts(colCounts)
-    }).finally(() => setLoading(false))
+        setAllCollections(cols)
+        const colCounts: Record<string, number> = {}
+        for (const { collection_id } of itemCols)
+          colCounts[collection_id] = (colCounts[collection_id] ?? 0) + 1
+        setCollectionItemCounts(colCounts)
+      })
+      .finally(() => setLoading(false))
   }, [])
 
-  const sidebarAuthors = useMemo(() =>
-    [...new Set(allLibraryItems.map(i => i.author).filter((a): a is string => !!a))].sort()
-  , [allLibraryItems])
+  const sidebarAuthors = useMemo(
+    () => [...new Set(allLibraryItems.map((i) => i.author).filter((a): a is string => !!a))].sort(),
+    [allLibraryItems],
+  )
 
   const sidebarAuthorCounts = useMemo(() => {
     const counts: Record<string, number> = {}
-    for (const item of allLibraryItems) if (item.author) counts[item.author] = (counts[item.author] ?? 0) + 1
+    for (const item of allLibraryItems)
+      if (item.author) counts[item.author] = (counts[item.author] ?? 0) + 1
     return counts
   }, [allLibraryItems])
 
   const handleCollectionCreate = useCallback(async (name: string) => {
     const col = await collectionService.create(name)
-    setAllCollections(prev => [...prev, col].sort((a, b) => a.name.localeCompare(b.name)))
+    setAllCollections((prev) => [...prev, col].sort((a, b) => a.name.localeCompare(b.name)))
   }, [])
 
   const handleCollectionDelete = useCallback(async (colId: string) => {
     await collectionService.delete(colId)
-    setAllCollections(prev => prev.filter(c => c.id !== colId))
+    setAllCollections((prev) => prev.filter((c) => c.id !== colId))
   }, [])
 
   const handleCollectionRename = useCallback(async (colId: string, name: string) => {
     await collectionService.rename(colId, name)
-    setAllCollections(prev => prev.map(c => c.id === colId ? { ...c, name } : c))
+    setAllCollections((prev) => prev.map((c) => (c.id === colId ? { ...c, name } : c)))
   }, [])
 
-  const collectionMgmt = useMemo(() => ({
-    collections: allCollections,
-    itemCounts:  collectionItemCounts,
-    onCreate:    handleCollectionCreate,
-    onDelete:    handleCollectionDelete,
-    onRename:    handleCollectionRename,
-  }), [allCollections, collectionItemCounts, handleCollectionCreate, handleCollectionDelete, handleCollectionRename])
+  const collectionMgmt = useMemo(
+    () => ({
+      collections: allCollections,
+      itemCounts: collectionItemCounts,
+      onCreate: handleCollectionCreate,
+      onDelete: handleCollectionDelete,
+      onRename: handleCollectionRename,
+    }),
+    [
+      allCollections,
+      collectionItemCounts,
+      handleCollectionCreate,
+      handleCollectionDelete,
+      handleCollectionRename,
+    ],
+  )
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
@@ -170,7 +195,7 @@ export default function TagsView() {
     setCreating(true)
     try {
       const tag = await tagService.create(newName.trim(), newColor)
-      setTags(prev => [...prev, tag].sort((a, b) => a.name.localeCompare(b.name)))
+      setTags((prev) => [...prev, tag].sort((a, b) => a.name.localeCompare(b.name)))
       setNewName('')
       setNewColor(DEFAULT_COLOR)
     } finally {
@@ -180,18 +205,26 @@ export default function TagsView() {
 
   function handleRename(id: string, name: string) {
     tagService.rename(id, name)
-    setTags(prev => prev.map(t => t.id === id ? { ...t, name } : t).sort((a, b) => a.name.localeCompare(b.name)))
+    setTags((prev) =>
+      prev
+        .map((t) => (t.id === id ? { ...t, name } : t))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    )
   }
 
   function handleSetColor(id: string, color: string) {
     tagService.setColor(id, color)
-    setTags(prev => prev.map(t => t.id === id ? { ...t, color } : t))
+    setTags((prev) => prev.map((t) => (t.id === id ? { ...t, color } : t)))
   }
 
   function handleDelete(id: string) {
     tagService.delete(id)
-    setTags(prev => prev.filter(t => t.id !== id))
-    setItemCounts(prev => { const next = { ...prev }; delete next[id]; return next })
+    setTags((prev) => prev.filter((t) => t.id !== id))
+    setItemCounts((prev) => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
   }
 
   return (
@@ -210,7 +243,10 @@ export default function TagsView() {
           <h1>
             Tags
             {!loading && (
-              <span className="collection-count"> · {tags.length} {tags.length === 1 ? 'tag' : 'tags'}</span>
+              <span className="collection-count">
+                {' '}
+                · {tags.length} {tags.length === 1 ? 'tag' : 'tags'}
+              </span>
             )}
           </h1>
         </header>
@@ -218,12 +254,14 @@ export default function TagsView() {
         <div className="tags-view-body">
           {/* Tag list */}
           {loading ? (
-            <div className="library-state-center"><p className="state-text">Loading…</p></div>
+            <div className="library-state-center">
+              <p className="state-text">Loading…</p>
+            </div>
           ) : tags.length === 0 ? (
             <div className="tags-empty">No tags yet. Create one below.</div>
           ) : (
             <div className="tags-list">
-              {tags.map(tag => (
+              {tags.map((tag) => (
                 <TagRow
                   key={tag.id}
                   tag={tag}
@@ -231,7 +269,7 @@ export default function TagsView() {
                   onRename={handleRename}
                   onSetColor={handleSetColor}
                   onDelete={handleDelete}
-                  onNavigate={id => navigate(`/?tag=${id}`)}
+                  onNavigate={(id) => navigate(`/?tag=${id}`)}
                 />
               ))}
             </div>
@@ -251,10 +289,14 @@ export default function TagsView() {
                   type="text"
                   placeholder="Tag name"
                   value={newName}
-                  onChange={e => setNewName(e.target.value)}
+                  onChange={(e) => setNewName(e.target.value)}
                   maxLength={40}
                 />
-                <button type="submit" className="btn-primary" disabled={creating || !newName.trim()}>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={creating || !newName.trim()}
+                >
                   {creating ? 'Creating…' : '+ Create'}
                 </button>
               </div>

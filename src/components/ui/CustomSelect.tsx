@@ -1,10 +1,5 @@
 import { useRef } from 'react'
-import {
-  Listbox,
-  ListboxButton,
-  ListboxOptions,
-  ListboxOption,
-} from '@headlessui/react'
+import { Listbox, ListboxButton, ListboxOptions, ListboxOption } from '@headlessui/react'
 
 export interface SelectOption {
   value: string
@@ -13,12 +8,12 @@ export interface SelectOption {
 }
 
 interface Props {
-  label:               string
-  options:             SelectOption[]
-  value:               string
-  onChange:            (value: string) => void
+  label: string
+  options: SelectOption[]
+  value: string
+  onChange: (value: string) => void
   includePlaceholder?: boolean
-  placeholder?:        string
+  placeholder?: string
 }
 
 export default function CustomSelect({
@@ -33,7 +28,7 @@ export default function CustomSelect({
     ? [{ value: '', label: placeholder }, ...options]
     : options
 
-  const selected   = displayOptions.find(o => o.value === value) ?? displayOptions[0]
+  const selected = displayOptions.find((o) => o.value === value) ?? displayOptions[0]
   const triggerRef = useRef<HTMLButtonElement>(null)
 
   // Remove focus ring after any close so the trigger doesn't stay highlighted.
@@ -53,12 +48,15 @@ export default function CustomSelect({
 
   return (
     <div className="custom-select-wrapper">
-      {label && <span className="custom-select-label" aria-hidden="true">{label}</span>}
+      {label && (
+        <span className="custom-select-label" aria-hidden="true">
+          {label}
+        </span>
+      )}
 
       <Listbox value={value} onChange={handleChange}>
         {({ open }) => (
           <div className="custom-select">
-
             {/* Full-screen backdrop when the dropdown is open.
                 Catches clicks anywhere — including Electron's -webkit-app-region:drag
                 areas like the sidebar — which the normal click-outside handler misses. */}
@@ -66,8 +64,8 @@ export default function CustomSelect({
               <div
                 className="custom-select-backdrop"
                 aria-hidden="true"
-                onMouseDown={e => {
-                  e.preventDefault()          // keep focus on trigger; we'll blur manually
+                onMouseDown={(e) => {
+                  e.preventDefault() // keep focus on trigger; we'll blur manually
                   triggerRef.current?.click() // toggle-close the listbox
                   blurTrigger()
                 }}
@@ -106,20 +104,15 @@ export default function CustomSelect({
               </svg>
             </ListboxButton>
 
-            <ListboxOptions
-              anchor="bottom start"
-              className="custom-select-options"
-            >
-              {displayOptions.map(opt => (
+            <ListboxOptions anchor="bottom start" className="custom-select-options">
+              {displayOptions.map((opt) => (
                 <ListboxOption
                   key={opt.value === '' ? '__placeholder__' : opt.value}
                   value={opt.value}
                   className={({ focus, selected: sel }) =>
-                    [
-                      'custom-select-option',
-                      focus ? 'focused'  : '',
-                      sel   ? 'selected' : '',
-                    ].filter(Boolean).join(' ')
+                    ['custom-select-option', focus ? 'focused' : '', sel ? 'selected' : '']
+                      .filter(Boolean)
+                      .join(' ')
                   }
                 >
                   {({ selected: sel }) => (

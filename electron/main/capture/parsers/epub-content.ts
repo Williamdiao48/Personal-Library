@@ -7,22 +7,27 @@ import {
   ZIP_TOTAL_MAX_BYTES,
 } from '../../security/validation'
 
-export interface EpubChapter { title: string; html: string }
-export interface EpubBook    { chapters: EpubChapter[] }
+export interface EpubChapter {
+  title: string
+  html: string
+}
+export interface EpubBook {
+  chapters: EpubChapter[]
+}
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const IMAGE_MAX_BYTES = 5 * 1_048_576  // skip images larger than 5 MB
+const IMAGE_MAX_BYTES = 5 * 1_048_576 // skip images larger than 5 MB
 
 // SVG intentionally excluded: SVG data URIs can embed event handlers,
 // <foreignObject> HTML, and external resource references. Although Chromium
 // sandboxes scripts inside <img src="data:image/svg+xml,...">, excluding SVG
 // entirely is zero-cost defence-in-depth (books rarely embed SVG images).
 const MIME_BY_EXT: Record<string, string> = {
-  jpg:  'image/jpeg',
+  jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
-  png:  'image/png',
-  gif:  'image/gif',
+  png: 'image/png',
+  gif: 'image/gif',
   webp: 'image/webp',
 }
 
@@ -36,7 +41,7 @@ const SAFE_IMG_DATA_PREFIXES = [
 ] as const
 
 function isSafeImgDataUri(src: string): boolean {
-  return SAFE_IMG_DATA_PREFIXES.some(p => src.startsWith(p))
+  return SAFE_IMG_DATA_PREFIXES.some((p) => src.startsWith(p))
 }
 
 /** Clamp a colspan/rowspan attribute string to [1, 20]. */
@@ -64,22 +69,59 @@ function clampSpanAttr(value: string): string {
 //               check that the data URI uses a safe image MIME type.
 const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
   allowedTags: [
-    'p', 'br', 'hr',
-    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-    'ul', 'ol', 'li', 'dl', 'dt', 'dd',
-    'strong', 'em', 'b', 'i', 'u', 's', 'del', 'ins',
-    'sup', 'sub', 'mark', 'ruby', 'rt', 'rp',
-    'blockquote', 'pre', 'code',
-    'a', 'img',
-    'figure', 'figcaption',
-    'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
-    'div', 'span', 'section', 'article',
+    'p',
+    'br',
+    'hr',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    'ul',
+    'ol',
+    'li',
+    'dl',
+    'dt',
+    'dd',
+    'strong',
+    'em',
+    'b',
+    'i',
+    'u',
+    's',
+    'del',
+    'ins',
+    'sup',
+    'sub',
+    'mark',
+    'ruby',
+    'rt',
+    'rp',
+    'blockquote',
+    'pre',
+    'code',
+    'a',
+    'img',
+    'figure',
+    'figcaption',
+    'table',
+    'thead',
+    'tbody',
+    'tfoot',
+    'tr',
+    'th',
+    'td',
+    'div',
+    'span',
+    'section',
+    'article',
   ],
   allowedAttributes: {
-    a:   ['href', 'title', 'data-epub-chapter', 'data-epub-fragment'],
+    a: ['href', 'title', 'data-epub-chapter', 'data-epub-fragment'],
     img: ['src', 'alt', 'title'],
-    th:  ['colspan', 'rowspan'],
-    td:  ['colspan', 'rowspan'],
+    th: ['colspan', 'rowspan'],
+    td: ['colspan', 'rowspan'],
     // class and id are intentionally absent — see security note above.
   },
   // Only data: URIs for img (images are inlined before sanitization).
@@ -128,14 +170,14 @@ function extractBookTitle(opfContent: string): string {
 /** Decode common HTML entities so text comparisons work even after sanitization. */
 function decodeEntities(s: string): string {
   return s
-    .replace(/&nbsp;/gi,  ' ')
-    .replace(/&amp;/gi,   '&')
-    .replace(/&lt;/gi,    '<')
-    .replace(/&gt;/gi,    '>')
-    .replace(/&quot;/gi,  '"')
-    .replace(/&apos;/gi,  "'")
-    .replace(/&#39;/gi,   "'")
-    .replace(/&#160;/gi,  ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&#39;/gi, "'")
+    .replace(/&#160;/gi, ' ')
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
     .replace(/&#x([\da-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
 }
@@ -164,18 +206,29 @@ function stripLeadingTitleNodes(body: HTMLElement, bookTitle: string): void {
   while (node) {
     if (node.nodeType === 3 /* TEXT_NODE */) {
       const text = node.textContent ?? ''
-      if (text.trim() === '') { node = node.nextSibling; continue }  // skip layout whitespace
-      if (normaliseText(text) === target) { const next = node.nextSibling; node.remove(); node = next; continue }
-      return  // leading text that isn't the title → real content, stop
+      if (text.trim() === '') {
+        node = node.nextSibling
+        continue
+      } // skip layout whitespace
+      if (normaliseText(text) === target) {
+        const next = node.nextSibling
+        node.remove()
+        node = next
+        continue
+      }
+      return // leading text that isn't the title → real content, stop
     }
     if (node.nodeType === 1 /* ELEMENT_NODE */) {
       const el = node as Element
       if (TITLE_HEADER_TAGS.has(el.tagName) && normaliseText(el.textContent ?? '') === target) {
-        const next = node.nextSibling; el.remove(); node = next; continue
+        const next = node.nextSibling
+        el.remove()
+        node = next
+        continue
       }
-      return  // leading element that isn't a title header → real content, stop
+      return // leading element that isn't a title header → real content, stop
     }
-    node = node.nextSibling  // comments / other nodes — skip over
+    node = node.nextSibling // comments / other nodes — skip over
   }
 }
 
@@ -204,7 +257,10 @@ function filename(path: string): string {
 
 // ── OPF parsing ────────────────────────────────────────────────────────────
 
-interface ManifestItem { href: string; mediaType: string }
+interface ManifestItem {
+  href: string
+  mediaType: string
+}
 
 function parseManifest(opfContent: string): Map<string, ManifestItem> {
   const map = new Map<string, ManifestItem>()
@@ -212,9 +268,9 @@ function parseManifest(opfContent: string): Map<string, ManifestItem> {
   let m: RegExpExecArray | null
   while ((m = itemRegex.exec(opfContent)) !== null) {
     const tag = m[0]
-    const id       = /\bid="([^"]+)"/.exec(tag)?.[1]
-    const href     = /\bhref="([^"]+)"/.exec(tag)?.[1]
-    const mtype    = /\bmedia-type="([^"]+)"/.exec(tag)?.[1] ?? ''
+    const id = /\bid="([^"]+)"/.exec(tag)?.[1]
+    const href = /\bhref="([^"]+)"/.exec(tag)?.[1]
+    const mtype = /\bmedia-type="([^"]+)"/.exec(tag)?.[1] ?? ''
     if (id && href) map.set(id, { href, mediaType: mtype })
   }
   return map
@@ -253,7 +309,11 @@ function buildTitleMap(
     if (!item.mediaType.includes('xhtml')) continue
     const navZipPath = resolveZipPath(opfDir, item.href)
     let navText: string | null
-    try { navText = readEntryTextCapped(zip, navZipPath) } catch { continue }
+    try {
+      navText = readEntryTextCapped(zip, navZipPath)
+    } catch {
+      continue
+    }
     if (!navText) continue
     if (!navText.includes('epub:type="toc"') && !navText.includes("epub:type='toc'")) continue
 
@@ -261,7 +321,7 @@ function buildTitleMap(
     const linkRegex = /<a\s[^>]*href=["']([^"'#][^"']*)["'][^>]*>([^<]+)<\/a>/gi
     let lm: RegExpExecArray | null
     while ((lm = linkRegex.exec(navText)) !== null) {
-      const fn  = filename(lm[1])
+      const fn = filename(lm[1])
       const ttl = lm[2].trim()
       if (fn && ttl) titleMap.set(fn, ttl)
     }
@@ -273,7 +333,11 @@ function buildTitleMap(
     if (!item.mediaType.includes('ncx')) continue
     const ncxZipPath = resolveZipPath(opfDir, item.href)
     let ncxText: string | null
-    try { ncxText = readEntryTextCapped(zip, ncxZipPath) } catch { continue }
+    try {
+      ncxText = readEntryTextCapped(zip, ncxZipPath)
+    } catch {
+      continue
+    }
     if (!ncxText) continue
 
     // Match <navPoint> blocks: extract content src and navLabel text
@@ -281,8 +345,8 @@ function buildTitleMap(
     let pm: RegExpExecArray | null
     while ((pm = pointRegex.exec(ncxText)) !== null) {
       const block = pm[0]
-      const src   = /<content\s[^>]*src="([^"]+)"/.exec(block)?.[1]
-      const text  = /<navLabel[\s\S]*?<text[^>]*>([^<]+)<\/text>/.exec(block)?.[1]?.trim()
+      const src = /<content\s[^>]*src="([^"]+)"/.exec(block)?.[1]
+      const text = /<navLabel[\s\S]*?<text[^>]*>([^<]+)<\/text>/.exec(block)?.[1]?.trim()
       if (src && text) titleMap.set(filename(src), text)
     }
     if (titleMap.size > 0) return titleMap
@@ -331,16 +395,30 @@ function inlineImageNodes(doc: Document, xhtmlDir: string, zip: AdmZip): void {
     // strip src entirely (defence-in-depth: never leave an http:// tracking URL).
     const zipPath = resolveZipPath(xhtmlDir, src)
     const entry = zipPath ? zip.getEntry(zipPath) : null
-    if (!zipPath || !entry) { img.removeAttribute('src'); continue }
+    if (!zipPath || !entry) {
+      img.removeAttribute('src')
+      continue
+    }
 
     // Reject a decompression-bomb image before materializing it.
-    try { assertEntryInflateOk(entry) } catch { img.removeAttribute('src'); continue }
+    try {
+      assertEntryInflateOk(entry)
+    } catch {
+      img.removeAttribute('src')
+      continue
+    }
     const data = entry.getData()
-    if (data.length > IMAGE_MAX_BYTES) { img.removeAttribute('src'); continue }
+    if (data.length > IMAGE_MAX_BYTES) {
+      img.removeAttribute('src')
+      continue
+    }
 
-    const ext  = zipPath.split('.').pop()?.toLowerCase() ?? ''
+    const ext = zipPath.split('.').pop()?.toLowerCase() ?? ''
     const mime = MIME_BY_EXT[ext]
-    if (!mime) { img.removeAttribute('src'); continue }
+    if (!mime) {
+      img.removeAttribute('src')
+      continue
+    }
 
     img.setAttribute('src', `data:${mime};base64,${data.toString('base64')}`)
   }
@@ -365,12 +443,16 @@ function inlineImageNodes(doc: Document, xhtmlDir: string, zip: AdmZip): void {
  * (the sanitizer allows these attrs to survive our rewrite, so it can't be relied
  * on to strip attacker-supplied values).
  */
-function rewriteLinkNodes(doc: Document, xhtmlDir: string, spineHrefToIndex: Map<string, number>): void {
+function rewriteLinkNodes(
+  doc: Document,
+  xhtmlDir: string,
+  spineHrefToIndex: Map<string, number>,
+): void {
   for (const a of doc.querySelectorAll('a')) {
     const href = a.getAttribute('href')
-    if (href === null) continue  // <a id="..."> section marker — leave untouched
+    if (href === null) continue // <a id="..."> section marker — leave untouched
 
-    const hashIdx  = href.indexOf('#')
+    const hashIdx = href.indexOf('#')
     const pathPart = hashIdx >= 0 ? href.slice(0, hashIdx) : href
     const fragment = hashIdx >= 0 ? href.slice(hashIdx + 1) : ''
 
@@ -383,13 +465,13 @@ function rewriteLinkNodes(doc: Document, xhtmlDir: string, spineHrefToIndex: Map
     a.removeAttribute('data-epub-fragment')
 
     if (!pathPart) {
-      a.setAttribute('data-epub-fragment', fragment)  // pure same-chapter fragment
+      a.setAttribute('data-epub-fragment', fragment) // pure same-chapter fragment
       continue
     }
 
-    const resolved   = resolveZipPath(xhtmlDir, pathPart)
+    const resolved = resolveZipPath(xhtmlDir, pathPart)
     const chapterIdx = resolved ? spineHrefToIndex.get(resolved) : undefined
-    if (chapterIdx === undefined) continue  // non-spine dead link — href already stripped
+    if (chapterIdx === undefined) continue // non-spine dead link — href already stripped
 
     a.setAttribute('data-epub-chapter', String(chapterIdx))
     if (fragment) a.setAttribute('data-epub-fragment', fragment)
@@ -399,10 +481,10 @@ function rewriteLinkNodes(doc: Document, xhtmlDir: string, spineHrefToIndex: Map
 // ── Chapter transform (DOM-based, sanitize last) ────────────────────────────
 
 export interface ChapterContext {
-  xhtmlDir:         string
-  zip:              AdmZip
+  xhtmlDir: string
+  zip: AdmZip
   spineHrefToIndex: Map<string, number>
-  bookTitle:        string
+  bookTitle: string
 }
 
 /**
@@ -437,14 +519,12 @@ export function extractEpubContent(filePath: string): EpubBook {
   const opfPath = /full-path="([^"]+\.opf)"/i.exec(containerXml)?.[1]
   if (!opfPath) throw new Error('Invalid EPUB: cannot find OPF file in container.xml')
 
-  const opfDir = opfPath.includes('/')
-    ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1)
-    : ''
+  const opfDir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1) : ''
 
   const opfContent = readEntryTextCapped(zip, opfPath) ?? ''
 
   // 2. Parse manifest and spine
-  const manifest   = parseManifest(opfContent)
+  const manifest = parseManifest(opfContent)
   const spineHrefs = parseSpine(opfContent, manifest)
   if (spineHrefs.length === 0) throw new Error('EPUB spine is empty — no readable content found.')
 
@@ -470,11 +550,9 @@ export function extractEpubContent(filePath: string): EpubBook {
   let totalInflated = 0
 
   for (let i = 0; i < spineHrefs.length; i++) {
-    const href       = spineHrefs[i]
-    const zipPath    = resolveZipPath(opfDir, href)
-    const xhtmlDir   = zipPath.includes('/')
-      ? zipPath.slice(0, zipPath.lastIndexOf('/') + 1)
-      : ''
+    const href = spineHrefs[i]
+    const zipPath = resolveZipPath(opfDir, href)
+    const xhtmlDir = zipPath.includes('/') ? zipPath.slice(0, zipPath.lastIndexOf('/') + 1) : ''
 
     const entry = zip.getEntry(zipPath)
     if (!entry) {
@@ -491,7 +569,7 @@ export function extractEpubContent(filePath: string): EpubBook {
     const xhtml = entry.getData().toString('utf8')
 
     // Determine chapter title
-    const fn    = filename(href)
+    const fn = filename(href)
     const title = titleMap.get(fn) ?? extractTitleFromXhtml(xhtml, i)
 
     // Parse once, rewrite images + internal links on the DOM, strip running-header
