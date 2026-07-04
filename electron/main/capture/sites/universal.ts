@@ -50,7 +50,7 @@ const TOC_LINK_TEXT_RE = /^\s*(table\s+of\s+contents?|chapter\s+list|index|toc)\
 
 // ── URL utilities ─────────────────────────────────────────────────────────────
 
-function resolveUrl(href: string, base: string): string {
+export function resolveUrl(href: string, base: string): string {
   try {
     return new URL(href, base).href
   } catch {
@@ -60,7 +60,7 @@ function resolveUrl(href: string, base: string): string {
 
 // Normalises a URL for deduplication: lowercase host, strip trailing slash and
 // fragment so that /chapter/3 and /chapter/3/ and /chapter/3#top all match.
-function normalizeUrl(url: string): string {
+export function normalizeUrl(url: string): string {
   try {
     const u = new URL(url)
     return u.origin.toLowerCase() + u.pathname.replace(/\/$/, '') + u.search
@@ -71,7 +71,7 @@ function normalizeUrl(url: string): string {
 
 // ── Page type detection ───────────────────────────────────────────────────────
 
-function probePageType(doc: Document, url: string): PageType {
+export function probePageType(doc: Document, url: string): PageType {
   // Chapter signals are checked first — they are more specific than TOC signals.
 
   // Semantic HTML5 pagination links in <head>
@@ -136,11 +136,11 @@ function looksLikeTocByUrlAndLinks(doc: Document, url: string): boolean {
 
 // ── Navigation link detection ─────────────────────────────────────────────────
 
-function findNextLink(doc: Document, baseUrl: string): string | null {
+export function findNextLink(doc: Document, baseUrl: string): string | null {
   return findNavLink(doc, baseUrl, NEXT_TEXT_RE, 'next')
 }
 
-function findPrevLink(doc: Document, baseUrl: string): string | null {
+export function findPrevLink(doc: Document, baseUrl: string): string | null {
   return findNavLink(doc, baseUrl, PREV_TEXT_RE, 'prev')
 }
 
@@ -181,7 +181,7 @@ function findNavLink(
 // Searches for a link back to the work's table of contents. Looks for:
 //   1. An explicit "Table of Contents" / "Chapter List" text link.
 //   2. A breadcrumb ancestor whose path is a strict prefix of the current path.
-function findTocLink(doc: Document, currentUrl: string): string | null {
+export function findTocLink(doc: Document, currentUrl: string): string | null {
   for (const a of Array.from(doc.querySelectorAll('a[href]'))) {
     if (TOC_LINK_TEXT_RE.test((a.textContent ?? '').trim())) {
       const href = a.getAttribute('href')!
@@ -210,7 +210,7 @@ function findTocLink(doc: Document, currentUrl: string): string | null {
 
 // Extracts an ordered list of chapter URLs from a TOC page.
 // Only returns same-origin links whose anchor text matches chapter naming.
-function extractTocLinks(doc: Document, tocUrl: string): string[] {
+export function extractTocLinks(doc: Document, tocUrl: string): string[] {
   const { origin, pathname } = new URL(tocUrl)
   const seen = new Set<string>()
   const links: string[] = []
@@ -240,7 +240,7 @@ function extractTocLinks(doc: Document, tocUrl: string): string[] {
 // (e.g. /chapter/3, /ch-3, /episode/5/title-slug), returns a builder that
 // constructs any chapter's URL by substituting the number. Returns null when
 // the URL does not match, signalling the caller to fall back to link-walking.
-function detectNumericChapter(url: string): NumericChapterUrl | null {
+export function detectNumericChapter(url: string): NumericChapterUrl | null {
   const { origin, pathname, search } = new URL(url)
   const m = CHAPTER_KEYWORD_NUM_RE.exec(pathname)
   if (!m) return null
@@ -255,7 +255,7 @@ function detectNumericChapter(url: string): NumericChapterUrl | null {
 
 // Reads the total chapter count from a chapter page — from a <select> dropdown
 // (used on FF.net, some webnovel sites) or from "X chapters" in metadata text.
-function extractChapterCount(doc: Document): number | null {
+export function extractChapterCount(doc: Document): number | null {
   for (const sel of Array.from(doc.querySelectorAll('select'))) {
     const count = sel.querySelectorAll('option').length
     if (count >= 2) return count
@@ -274,7 +274,7 @@ function extractChapterCount(doc: Document): number | null {
 
 // Strips "Chapter N: ..." suffixes from og:title or <title> to recover the
 // series name when arriving at an individual chapter page.
-function extractSeriesTitle(doc: Document, fallback: string): string {
+export function extractSeriesTitle(doc: Document, fallback: string): string {
   const candidates = [
     doc.querySelector('meta[property="og:title"]')?.getAttribute('content'),
     doc.querySelector('title')?.textContent,
@@ -287,7 +287,7 @@ function extractSeriesTitle(doc: Document, fallback: string): string {
   return fallback
 }
 
-function extractAuthor(doc: Document): string | null {
+export function extractAuthor(doc: Document): string | null {
   const meta = doc.querySelector('meta[name="author"]')?.getAttribute('content')?.trim()
   if (meta) return meta
 
@@ -301,7 +301,7 @@ function extractAuthor(doc: Document): string | null {
   return null
 }
 
-function extractCoverUrl(doc: Document): string | null {
+export function extractCoverUrl(doc: Document): string | null {
   const og = doc.querySelector('meta[property="og:image"]')?.getAttribute('content')
   // Reject obviously generic site-wide images
   if (og && !/logo|icon|default|placeholder|avatar/i.test(og)) return og
@@ -317,7 +317,7 @@ function escHtml(s: string): string {
 // Extracts readable content from a chapter page.
 // Re-serialises to a fresh JSDOM so Readability (which mutates its input) does
 // not corrupt the document we still need for metadata extraction.
-function readChapterPage(doc: Document, url: string, n: number): ChapterData | null {
+export function readChapterPage(doc: Document, url: string, n: number): ChapterData | null {
   let article: ReturnType<Readability['parse']>
   try {
     const fresh = new JSDOM(doc.documentElement.outerHTML, { url }).window.document
