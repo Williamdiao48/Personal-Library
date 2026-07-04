@@ -8,7 +8,7 @@ import {
   tagItem,
   type TestDb,
 } from '../../../test/db/harness'
-import { registerLibraryHandlers } from './library'
+import { registerLibraryHandlers, clampRating } from './library'
 import type { Item } from '../../../src/types'
 
 let db: TestDb
@@ -132,10 +132,45 @@ describe('library IPC — metadata edits', () => {
     expect(row.date_modified).toBeGreaterThan(1)
   })
 
-  // SEC-2: setRating does NOT clamp to [0,5]/0.5 at the handler (relies on the
-  // StarRating UI). Documented as an open hardening item — flip to a real test
-  // if/when the clamp is added.
-  it.todo('SEC-2: setRating should clamp rating to [0,5] with 0.5 granularity')
+  // SEC-2: clampRating pins an untrusted rating into [0,5] at 0.5 granularity.
+  // Unit-level table of edge cases (the pure helper) …
+  it('SEC-2: clampRating snaps to 0.5 and clamps to [0,5]', () => {
+    expect(clampRating(6)).toBe(5) // above max
+    expect(clampRating(-1)).toBe(0) // below min
+    expect(clampRating(2.7)).toBe(2.5) // snap down to nearest 0.5
+    expect(clampRating(4.9)).toBe(5) // snap up, still in range
+    expect(clampRating(0.5)).toBe(0.5) // valid value passes through
+    expect(clampRating(3)).toBe(3) // valid whole star passes through
+    expect(clampRating(null)).toBeNull() // un-rate is legitimate
+    expect(clampRating(undefined)).toBeNull()
+    expect(clampRating(NaN)).toBeNull() // no sensible numeric target
+    expect(clampRating(Infinity)).toBeNull()
+    expect(clampRating(-Infinity)).toBeNull()
+    expect(clampRating('5' as unknown)).toBeNull() // non-number → unrated
+  })
+
+  // … and the actual security assertion: the clamp fires at the IPC boundary,
+  // so a renderer sending garbage cannot corrupt items.rating.
+  it('regression SEC-2: setRating clamps to [0,5]/0.5 at the IPC boundary', async () => {
+    seedItem(db, { id: 's' })
+    const ratingOf = () =>
+      (db.prepare('SELECT rating FROM items WHERE id = ?').get('s') as { rating: number | null }).rating
+
+    await invoke('library:setRating', 's', 99) // way out of range
+    expect(ratingOf()).toBe(5)
+
+    await invoke('library:setRating', 's', -4)
+    expect(ratingOf()).toBe(0)
+
+    await invoke('library:setRating', 's', 3.3) // off-granularity
+    expect(ratingOf()).toBe(3.5)
+
+    await invoke('library:setRating', 's', NaN as unknown as number)
+    expect(ratingOf()).toBeNull()
+
+    await invoke('library:setRating', 's', 4) // valid input is untouched
+    expect(ratingOf()).toBe(4)
+  })
 })
 
 describe('library IPC — tags', () => {
