@@ -7,3 +7,11 @@ playwright-report/
 *.tsbuildinfo
 package-lock.json
 build/
+
+# Markdown: hand-authored structure (diagrams, tables, aligned ASCII) a formatter
+# would wreck. Keeps docs — incl. the in-flight security.md and scratch *.md — out.
+*.md
+
+# Untracked local tooling config — not source, don't format.
+.mcp.json
+.claude/
