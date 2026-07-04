@@ -2,12 +2,33 @@ import { ipcMain, dialog } from 'electron'
 import { randomUUID } from 'crypto'
 import { captureUrl, captureFile, appendChapters } from '../capture'
 
+/**
+ * True only for parseable http(s) URLs. `capture:start` is a trust boundary —
+ * mirror handleProtocolUrl in index.ts and refuse non-web schemes (file:,
+ * javascript:, data:, …) before they ever reach the capture pipeline.
+ */
+export function isHttpUrl(raw: unknown): boolean {
+  if (typeof raw !== 'string') return false
+  try {
+    const { protocol } = new URL(raw)
+    return protocol === 'http:' || protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 export function registerCaptureHandlers(): void {
   // Background capture — returns a jobId immediately and runs the capture
   // concurrently. Progress, completion, and errors are pushed to the renderer
   // as one-way IPC events so the UI stays responsive during long fetches.
   ipcMain.handle('capture:start', (event, url: string, start?: number, end?: number) => {
     const jobId = randomUUID()
+    // SEC-3: reject non-http(s) URLs at the boundary. Still returns a jobId and
+    // reports the failure through the same capture:error channel the UI listens on.
+    if (!isHttpUrl(url)) {
+      event.sender.send('capture:error', { jobId, error: 'Only http(s) URLs can be captured.' })
+      return jobId
+    }
     const range = start != null && end != null ? { start, end } : undefined
 
     captureUrl(
