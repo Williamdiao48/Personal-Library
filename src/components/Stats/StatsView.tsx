@@ -16,7 +16,8 @@ import '../../styles/stats.css'
 
 // ── Time formatting ────────────────────────────────────────────────────────
 
-function formatDuration(ms: number): string {
+// Exported for unit testing; the view itself imports them locally.
+export function formatDuration(ms: number): string {
   if (ms < 60_000) return `${Math.round(ms / 1_000)}s`
   if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`
   const h = Math.floor(ms / 3_600_000)
@@ -24,13 +25,13 @@ function formatDuration(ms: number): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`
 }
 
-function formatWords(n: number): string {
+export function formatWords(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`
   return String(n)
 }
 
-function formatDate(ts: number): string {
+export function formatDate(ts: number): string {
   return new Date(ts).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
@@ -41,7 +42,7 @@ function formatDate(ts: number): string {
 // ── Timeline helpers ───────────────────────────────────────────────────────
 
 /** Fill a sparse timeline so every one of the last N days has an entry. */
-function fillTimeline(sparse: DailyReading[], days: number): DailyReading[] {
+export function fillTimeline(sparse: DailyReading[], days: number): DailyReading[] {
   const byDate = new Map(sparse.map((d) => [d.date, d.totalMs]))
   const result: DailyReading[] = []
   for (let i = days - 1; i >= 0; i--) {
@@ -63,7 +64,7 @@ const DAY_LABEL_W = 24 // px
 
 type HeatmapDay = { date: string; totalMs: number; isFuture: boolean }
 
-function buildHeatmapGrid(filledData: DailyReading[]): {
+export function buildHeatmapGrid(filledData: DailyReading[]): {
   weeks: HeatmapDay[][]
   monthLabels: { label: string; col: number }[]
 } {
@@ -108,7 +109,7 @@ function buildHeatmapGrid(filledData: DailyReading[]): {
   return { weeks, monthLabels }
 }
 
-function heatLevel(ms: number): 0 | 1 | 2 | 3 | 4 {
+export function heatLevel(ms: number): 0 | 1 | 2 | 3 | 4 {
   if (ms === 0) return 0
   if (ms < 15 * 60_000) return 1
   if (ms < 30 * 60_000) return 2
