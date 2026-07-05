@@ -52,7 +52,7 @@ interface Props {
 }
 
 /** Extract individual chapters from a legacy, single-file multi-chapter document. */
-function parseChapters(html: string): Chapter[] | null {
+export function parseChapters(html: string): Chapter[] | null {
   const doc = new DOMParser().parseFromString(html, 'text/html')
   const divs = Array.from(doc.querySelectorAll('.chapter'))
   if (divs.length < 2) return null
@@ -63,7 +63,7 @@ function parseChapters(html: string): Chapter[] | null {
 }
 
 /** Extract title + body from a single per-chapter file (one .chapter div per file). */
-function parseSingleChapter(html: string, index: number): Chapter {
+export function parseSingleChapter(html: string, index: number): Chapter {
   const doc = new DOMParser().parseFromString(html, 'text/html')
   const div = doc.querySelector('.chapter')
   if (!div) return { html, title: `Chapter ${index + 1}` }
