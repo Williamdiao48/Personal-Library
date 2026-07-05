@@ -61,6 +61,27 @@ interface XAnim {
   xEnd: number // incoming div's final (post-slide) translateX
 }
 
+/** Recover a highlight mark's logical column (page) index within a CSS-multicolumn
+ *  chapter: undo the current page's transform offset, floor-divide by column width,
+ *  and clamp into [0, totalPages-1]. Callers guard `colWidth > 0` before invoking. */
+export function columnForMark(
+  markLeft: number,
+  outerLeft: number,
+  page: number,
+  colWidth: number,
+  totalPages: number,
+): number {
+  const logicalX = markLeft - outerLeft + page * colWidth
+  return Math.max(0, Math.min(Math.floor(logicalX / colWidth), totalPages - 1))
+}
+
+/** Pages a chapter occupies: rendered width over the viewport column width,
+ *  rounded, floored at 1. Guards a zero/negative width to avoid Infinity/NaN. */
+export function pageCount(scrollWidth: number, colWidth: number): number {
+  if (colWidth <= 0) return 1
+  return Math.max(1, Math.round(scrollWidth / colWidth))
+}
+
 export default function EpubReader({ item, onBack }: Props) {
   const { recordActivity } = useReadingSession(item.id)
 
@@ -154,8 +175,13 @@ export default function EpubReader({ item, onBack }: Props) {
     // Adding back the current page offset recovers the logical column position.
     const markRect = mark.getBoundingClientRect()
     const outerRect = outer.getBoundingClientRect()
-    const logicalX = markRect.left - outerRect.left + pageRef.current * w
-    const target = Math.max(0, Math.min(Math.floor(logicalX / w), totalPagesRef.current - 1))
+    const target = columnForMark(
+      markRect.left,
+      outerRect.left,
+      pageRef.current,
+      w,
+      totalPagesRef.current,
+    )
     if (target !== pageRef.current) {
       pageRef.current = target
       setPage(target)
@@ -206,10 +232,12 @@ export default function EpubReader({ item, onBack }: Props) {
             const w = outerWidthRef.current
             const markRect = mark.getBoundingClientRect()
             const outerRect = outer.getBoundingClientRect()
-            const logicalX = markRect.left - outerRect.left + pageRef.current * w
-            const target = Math.max(
-              0,
-              Math.min(Math.floor(logicalX / w), totalPagesRef.current - 1),
+            const target = columnForMark(
+              markRect.left,
+              outerRect.left,
+              pageRef.current,
+              w,
+              totalPagesRef.current,
             )
             if (target !== pageRef.current) {
               pageRef.current = target
@@ -285,8 +313,13 @@ export default function EpubReader({ item, onBack }: Props) {
         const w = outerWidthRef.current
         const markRect = mark.getBoundingClientRect()
         const outerRect = outer.getBoundingClientRect()
-        const logicalX = markRect.left - outerRect.left + pageRef.current * w
-        const target = Math.max(0, Math.min(Math.floor(logicalX / w), totalPagesRef.current - 1))
+        const target = columnForMark(
+          markRect.left,
+          outerRect.left,
+          pageRef.current,
+          w,
+          totalPagesRef.current,
+        )
         if (target !== pageRef.current) {
           pageRef.current = target
           setPage(target)
@@ -403,7 +436,7 @@ export default function EpubReader({ item, onBack }: Props) {
       const content = contentRef.current
       if (!content) return
 
-      const pages = Math.max(1, Math.round(content.scrollWidth / outerWidth))
+      const pages = pageCount(content.scrollWidth, outerWidth)
       totalPagesRef.current = pages
       setTotalPages(pages)
 
@@ -483,7 +516,7 @@ export default function EpubReader({ item, onBack }: Props) {
       const deadline = performance.now() + 8 // ≤8 ms per frame
       while (i < chapters.length && performance.now() < deadline) {
         el.innerHTML = chapters[i].html
-        counts[i] = Math.max(1, Math.round(el.scrollWidth / outerWidth))
+        counts[i] = pageCount(el.scrollWidth, outerWidth)
         i++
       }
       if (i < chapters.length) {
@@ -523,7 +556,7 @@ export default function EpubReader({ item, onBack }: Props) {
         const el = xRef.current
         if (!el) return
         const w = outerWidthRef.current
-        const pages = Math.max(1, Math.round(el.scrollWidth / w))
+        const pages = pageCount(el.scrollWidth, w)
         const last = pages - 1
         updateXAnim({
           ...xAnim,
