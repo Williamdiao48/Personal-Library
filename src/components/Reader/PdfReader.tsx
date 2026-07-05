@@ -4,7 +4,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
 
 // TextItem is not re-exported from pdfjs-dist's main entry in v5
-type TextItem = {
+export type TextItem = {
   str: string
   dir: string
   transform: number[]
@@ -57,11 +57,11 @@ function loadSavedViewMode(): ViewMode {
 }
 
 /** Snap any page number to the left side of its two-page spread (always odd). */
-function toSpreadStart(page: number): number {
+export function toSpreadStart(page: number): number {
   return page % 2 === 0 ? page - 1 : page
 }
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -69,14 +69,14 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
-function median(nums: number[]): number {
+export function median(nums: number[]): number {
   if (nums.length === 0) return 12
   const s = [...nums].sort((a, b) => a - b)
   const m = Math.floor(s.length / 2)
   return s.length % 2 !== 0 ? s[m] : (s[m - 1] + s[m]) / 2
 }
 
-interface PdfLine {
+export interface PdfLine {
   text: string // joined text of all items on this line
   y: number // baseline Y coordinate
   minX: number // X of the first non-whitespace item (detects indentation)
@@ -84,7 +84,7 @@ interface PdfLine {
 }
 
 /** Group raw pdfjs text items into visual lines with metadata. */
-function buildPdfLines(textItems: TextItem[]): PdfLine[] {
+export function buildPdfLines(textItems: TextItem[]): PdfLine[] {
   // Sort: top-to-bottom (descending Y), left-to-right within each line
   const sorted = [...textItems].sort((a, b) => {
     const dy = b.transform[5] - a.transform[5]
@@ -182,13 +182,13 @@ function buildPdfLines(textItems: TextItem[]): PdfLine[] {
 
 // ── Chapter boundary detection ───────────────────────────────────────────────
 
-interface ChapterBoundary {
+export interface ChapterBoundary {
   title: string
   startPage: number // 1-based
 }
 
 /** Return the first n non-empty line texts from a page's text items, skipping running header/footer lines. */
-function getFirstLines(
+export function getFirstLines(
   items: (TextItem | { type: string })[],
   n = 3,
   excluded = new Set<string>(),
@@ -209,7 +209,7 @@ function getFirstLines(
 }
 
 /** Extract the visible text that overlaps a link annotation's bounding rect. */
-function extractTitleFromRect(
+export function extractTitleFromRect(
   textItems: TextItem[],
   rect: [number, number, number, number],
 ): string {
@@ -226,7 +226,7 @@ function extractTitleFromRect(
     .trim()
 }
 
-interface TocCandidate {
+export interface TocCandidate {
   textItems: TextItem[]
   links: Array<{ dest: unknown; rect: [number, number, number, number] }>
 }
@@ -236,7 +236,7 @@ interface TocCandidate {
  * with the most internal navigation links (the TOC page).
  * Returns null if no suitable TOC page is found.
  */
-async function tryAnnotationChapters(
+export async function tryAnnotationChapters(
   doc: PDFDocumentProxy,
   candidate: TocCandidate | null,
 ): Promise<ChapterBoundary[] | null> {
@@ -278,7 +278,7 @@ async function tryAnnotationChapters(
  * Stage 1 — extract chapter boundaries from the PDF's embedded outline (bookmarks).
  * Returns null if the PDF has no outline or fewer than 2 resolvable entries.
  */
-async function tryOutlineChapters(doc: PDFDocumentProxy): Promise<ChapterBoundary[] | null> {
+export async function tryOutlineChapters(doc: PDFDocumentProxy): Promise<ChapterBoundary[] | null> {
   try {
     const outline = await doc.getOutline()
     if (!outline || outline.length === 0) return null
@@ -357,7 +357,10 @@ async function tryOutlineChapters(doc: PDFDocumentProxy): Promise<ChapterBoundar
  * Returns an empty Set for PDFs shorter than 6 pages — too few pages to
  * distinguish running text from coincidental repetition.
  */
-async function detectRunningText(doc: PDFDocumentProxy, numPages: number): Promise<Set<string>> {
+export async function detectRunningText(
+  doc: PDFDocumentProxy,
+  numPages: number,
+): Promise<Set<string>> {
   if (numPages < 6) return new Set()
 
   const SAMPLE = 8
@@ -418,7 +421,7 @@ async function detectRunningText(doc: PDFDocumentProxy, numPages: number): Promi
  *
  * All three signals are checked together; any one of them triggers a break.
  */
-function textItemsToHtml(
+export function textItemsToHtml(
   items: (TextItem | { type: string })[],
   pageNum: number,
   pageHeight: number,
