@@ -29,15 +29,17 @@ export default defineConfig({
         'src/workers/**',
       ],
       // Floors ratcheted to just under the achieved numbers so any coverage
-      // regression fails CI. Bumped after Tier-3 (renderer hooks) + Tier-4
-      // (ui components, contexts, Settings{Modal,View}, StatsView) suites landed
-      // (achieved: stmts/lines 37.99, funcs 69.44, branches 81.2). Only ever
-      // raise these — never lower to make a change pass.
+      // regression fails CI. Bumped after Tier-5 Batch D (HtmlReader, EpubReader,
+      // PdfReader engines) landed (achieved: stmts/lines 74.74, funcs 68.13,
+      // branches 81.52). Functions stays at 68 because rendering the big reader
+      // engines instruments many nested handlers the canvas/pdfjs paths never
+      // reach under jsdom (the V8 all:true gotcha), so the func denominator is
+      // large. Only ever raise these — never lower to make a change pass.
       thresholds: {
-        lines: 37,
+        lines: 74,
         functions: 68,
-        branches: 80,
-        statements: 37,
+        branches: 81,
+        statements: 74,
       },
     },
   },
