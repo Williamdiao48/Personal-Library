@@ -46,5 +46,6 @@ Thumbs.db
 # electron-builder cache
 .cache/
 
-# Internal docs — never publish
-ROADMAP.md
+# Internal docs — never publish (architecture/parser references, planning,
+# audits, and the development journal). See docs/internal/README.md.
+docs/internal/
