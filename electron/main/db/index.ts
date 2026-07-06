@@ -161,12 +161,43 @@ function runMigrations(database: Database.Database): void {
   for (let v = current + 1; v <= CURRENT_VERSION; v++) {
     database.transaction(() => {
       const sql = MIGRATIONS[v]
-      if (sql) database.exec(sql)
+      if (sql) execMigration(database, sql)
       // SQLite pragmas don't accept bound parameters for user_version;
       // v is always a loop-counter integer so direct interpolation is safe.
       database.pragma(`user_version = ${v}`)
     })()
   }
+}
+
+// Run a migration's SQL, tolerating "duplicate column name" errors so the app
+// self-heals databases created by the broken v0.5.1 baseline. That release's
+// SCHEMA baked in several migration-added columns (progress.scroll_chapter/
+// scroll_y/status, items.deleted_at, annotations.sort_order) yet still shipped
+// the ALTER-ADD migrations, so a DB it created has those columns present but
+// user_version=0. Re-running the ADD COLUMN migrations against it would throw
+// `duplicate column name` and crash startup. The happy path (fresh install or
+// already-migrated DB) runs the whole migration in one exec; only when a column
+// already exists do we fall back to statement-by-statement, skipping the ADDs
+// that are already satisfied while still applying the rest.
+function execMigration(database: Database.Database, sql: string): void {
+  try {
+    database.exec(sql)
+  } catch (err) {
+    if (!isDuplicateColumn(err)) throw err
+    for (const stmt of sql.split(';')) {
+      const trimmed = stmt.trim()
+      if (!trimmed) continue
+      try {
+        database.exec(trimmed)
+      } catch (e) {
+        if (!isDuplicateColumn(e)) throw e
+      }
+    }
+  }
+}
+
+function isDuplicateColumn(err: unknown): boolean {
+  return err instanceof Error && /duplicate column name/i.test(err.message)
 }
 
 export function getDb(): Database.Database {
