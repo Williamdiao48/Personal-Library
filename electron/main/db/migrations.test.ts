@@ -85,4 +85,42 @@ describe('database bring-up', () => {
     expect(db.pragma('user_version', { simple: true })).toBe(CURRENT_VERSION)
     db.close()
   })
+
+  // Regression for the production emergency: the broken v0.5.1 release baked
+  // migration-added columns into its SCHEMA baseline while still shipping the
+  // ALTER-ADD migrations. A DB it created has those columns AND user_version=0,
+  // so re-running migration 5 (`ADD COLUMN scroll_chapter`) threw
+  // `duplicate column name: scroll_chapter` and crashed startup. bringUpSchema
+  // must self-heal such a DB to head without throwing.
+  it('heals a database created by the broken v0.5.1 baseline', () => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    // Reproduce the v0.5.1 baseline's collision-prone columns, left at
+    // user_version 0 (migrations never completed on that release's fresh install).
+    db.exec(`
+      CREATE TABLE items (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, author TEXT, source_url TEXT,
+        content_type TEXT NOT NULL, file_path TEXT NOT NULL, word_count INTEGER,
+        cover_path TEXT, description TEXT, date_saved INTEGER NOT NULL,
+        date_modified INTEGER NOT NULL, deleted_at INTEGER
+      );
+      CREATE TABLE progress (
+        item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+        scroll_position REAL DEFAULT 0, last_read_at INTEGER,
+        scroll_chapter INTEGER DEFAULT NULL, scroll_y REAL DEFAULT 0,
+        status TEXT DEFAULT NULL
+      );
+    `)
+    expect(db.pragma('user_version', { simple: true })).toBe(0)
+
+    expect(() => bringUpSchema(db)).not.toThrow()
+    expect(db.pragma('user_version', { simple: true })).toBe(CURRENT_VERSION)
+
+    // Columns the broken baseline was MISSING must still get added by migrations.
+    expect(colsOf(db, 'items')).toEqual(
+      expect.arrayContaining(['derived_from', 'content_hash', 'rating', 'review']),
+    )
+    expect(colsOf(db, 'progress')).toContain('max_scroll_position')
+    db.close()
+  })
 })
