@@ -10,9 +10,12 @@ Go to the [**Releases page**](https://github.com/Williamdiao48/Personal-Library/
 
 | Platform | File | Notes |
 |---|---|---|
-| macOS | `Personal Library-x.x.x.dmg` | Apple Silicon |
+| macOS (Apple Silicon) | `Personal Library-x.x.x-arm64.dmg` | M1/M2/M3/M4 Macs |
+| macOS (Intel) | `Personal Library-x.x.x.dmg` | the one *without* `arm64` in the name |
 | Windows | `Personal Library Setup x.x.x.exe` | x64 installer |
 | Linux | `personal-library-x.x.x.AppImage` | x64 AppImage |
+
+Not sure which Mac you have? Click the Apple menu → **About This Mac** — it lists the chip.
 
 ---
 
