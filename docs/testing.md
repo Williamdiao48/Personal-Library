@@ -93,7 +93,7 @@ it('excludes trashed items', async () => {
 
 ## Regression-test convention
 
-Bugs from `report.md` are locked with tests named `regression BUG-N: …` (or
+Bugs found in code audits are locked with tests named `regression BUG-N: …` (or
 `SEC-N`). If a fix is reverted, the corresponding test fails. Open items that are
 not yet fixed are marked `it.todo(...)` (e.g. `SEC-2` rating clamp).
 
