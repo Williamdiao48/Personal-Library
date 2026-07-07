@@ -102,21 +102,28 @@ async function extractPdfText(filePath: string): Promise<string> {
 
 /**
  * Extract an item's readable plaintext (collapsed whitespace) for D8 Tier-B
- * embedding. Returns '' when there is no usable content (e.g. a scanned PDF);
- * callers gate on {@link MIN_CONTENT_CHARS} via {@link hasUsableContent}.
+ * embedding. Returns '' when there is no usable content — a scanned PDF, a
+ * missing/unreadable file, or a corrupt EPUB (extractEpubContent throws on a bad
+ * archive). Extraction failure is non-fatal by design: the item still embeds via
+ * Tier-A metadata, and a single bad file never aborts a backfill. Callers gate on
+ * {@link MIN_CONTENT_CHARS} via {@link hasUsableContent}.
  */
 export async function extractPlainText(item: EmbeddableItem): Promise<string> {
   let raw = ''
-  switch (item.content_type) {
-    case 'article':
-      raw = await extractArticleText(item.file_path)
-      break
-    case 'epub':
-      raw = extractEpubText(item.file_path)
-      break
-    case 'pdf':
-      raw = await extractPdfText(item.file_path)
-      break
+  try {
+    switch (item.content_type) {
+      case 'article':
+        raw = await extractArticleText(item.file_path)
+        break
+      case 'epub':
+        raw = extractEpubText(item.file_path)
+        break
+      case 'pdf':
+        raw = await extractPdfText(item.file_path)
+        break
+    }
+  } catch {
+    return '' // unreadable/corrupt file → degrade to Tier A
   }
   return collapse(raw)
 }

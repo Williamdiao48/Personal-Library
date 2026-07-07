@@ -103,6 +103,22 @@ describe('extractPlainText — epub', () => {
     expect(text).toContain('Spring thawed the northern pass')
     expect(text).not.toContain('<p>')
   })
+
+  it('degrades to "" on a corrupt EPUB (extractEpubContent throws) — never propagates', async () => {
+    const p = join(TMP, 'corrupt.epub')
+    writeFileSync(p, Buffer.from('not a real zip archive'))
+    await expect(extractPlainText({ content_type: 'epub', file_path: p })).resolves.toBe('')
+  })
+})
+
+describe('extractPlainText — graceful degradation', () => {
+  it('returns "" for a missing article file instead of throwing', async () => {
+    const text = await extractPlainText({
+      content_type: 'article',
+      file_path: join(TMP, 'does-not-exist.html'),
+    })
+    expect(text).toBe('')
+  })
 })
 
 describe('extractPlainText — pdf', () => {

@@ -76,18 +76,31 @@ let pipelinePromise: Promise<FeatureExtractor> | null = null
 // Serialize embed() calls so batches never overlap on the single ORT session.
 let tail: Promise<unknown> = Promise.resolve()
 
-async function loadPipeline(): Promise<FeatureExtractor> {
+/**
+ * Build a feature-extraction pipeline for a vendored model directory, using the
+ * exact dtype the app ships (int8 'q8'). Offline-only. Exported so a real-model
+ * test can exercise this same construction path (the mocked unit tests can't
+ * verify the actual artifact + config produce sane vectors).
+ */
+export async function createExtractor(
+  localModelPath: string,
+  device: 'cpu' | 'wasm' = 'cpu',
+): Promise<FeatureExtractor> {
   env.allowRemoteModels = false // offline: never hit the network
-  const { localModelPath, modelId } = resolveModelPaths({
+  env.localModelPath = localModelPath
+  const pipe = await pipeline('feature-extraction', MODEL_ID, { dtype: 'q8', device })
+  return pipe as unknown as FeatureExtractor
+}
+
+async function loadPipeline(): Promise<FeatureExtractor> {
+  const { localModelPath } = resolveModelPaths({
     isPackaged: app.isPackaged,
     appPath: app.getAppPath(),
     resourcesPath: process.resourcesPath,
   })
-  env.localModelPath = localModelPath
   const device = selectDevice(process.platform, process.arch)
-  console.log(`[embedder] loading ${modelId} from ${localModelPath} (device=${device})`)
-  const pipe = await pipeline('feature-extraction', modelId, { dtype: 'q8', device })
-  return pipe as unknown as FeatureExtractor
+  console.log(`[embedder] loading ${MODEL_ID} from ${localModelPath} (device=${device})`)
+  return createExtractor(localModelPath, device)
 }
 
 function getPipeline(): Promise<FeatureExtractor> {
