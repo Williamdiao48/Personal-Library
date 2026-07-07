@@ -47,6 +47,8 @@ export interface SeedItemOverrides {
   date_saved?: number
   date_modified?: number
   deleted_at?: number | null
+  review?: string | null
+  content_hash?: string | null
 }
 
 export function seedItem(db: TestDb, over: SeedItemOverrides = {}): string {
@@ -54,10 +56,10 @@ export function seedItem(db: TestDb, over: SeedItemOverrides = {}): string {
   db.prepare(
     `INSERT INTO items
        (id, title, author, source_url, content_type, file_path, word_count,
-        cover_path, description, date_saved, date_modified, deleted_at)
+        cover_path, description, date_saved, date_modified, deleted_at, review, content_hash)
      VALUES
        (@id, @title, @author, @source_url, @content_type, @file_path, @word_count,
-        @cover_path, @description, @date_saved, @date_modified, @deleted_at)`,
+        @cover_path, @description, @date_saved, @date_modified, @deleted_at, @review, @content_hash)`,
   ).run({
     id,
     title: over.title ?? 'Untitled',
@@ -71,6 +73,8 @@ export function seedItem(db: TestDb, over: SeedItemOverrides = {}): string {
     date_saved: over.date_saved ?? T0,
     date_modified: over.date_modified ?? T0,
     deleted_at: over.deleted_at ?? null,
+    review: over.review ?? null,
+    content_hash: over.content_hash ?? null,
   })
   return id
 }
