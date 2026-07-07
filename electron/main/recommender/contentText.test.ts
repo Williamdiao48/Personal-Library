@@ -52,6 +52,18 @@ describe('extractPlainText — article', () => {
     expect(text).not.toMatch(/\s{2,}/) // collapsed
   })
 
+  it('drops script/style bodies and decodes common HTML entities (no jsdom)', async () => {
+    const p = writeHtml(
+      'entities.html',
+      `<script>alert(1)</script><style>.x{color:red}</style><p>Tom &amp; Jerry said &quot;hi&quot;. ${LONG}</p>`,
+    )
+    const text = await extractPlainText({ content_type: 'article', file_path: p })
+    expect(text).not.toContain('alert') // script body removed
+    expect(text).not.toContain('color:red') // style body removed
+    expect(text).toContain('Tom & Jerry') // &amp; decoded
+    expect(text).toContain('"hi"') // &quot; decoded
+  })
+
   it('concatenates all -ch{N}.html chapters in order', async () => {
     // base path shared; probe starts at ch0 and stops at the first gap.
     const base = join(TMP, 'multi')

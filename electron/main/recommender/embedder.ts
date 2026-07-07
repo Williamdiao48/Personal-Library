@@ -16,6 +16,13 @@ export const MODEL_ID = 'bge-small-en-v1.5-int8'
 export const MODEL_VERSION = 'bge-small-en-v1.5-int8'
 /** Output dimensionality of bge-small. */
 export const EMBED_DIM = 384
+/**
+ * Max texts per onnxruntime inference. Peak memory is O(batch · seq²) (attention),
+ * so an unbounded batch of ~512-token chunks spikes RSS by ~700 MB and, across a
+ * backfill, aborts the native allocator (SIGTRAP). Sub-batching caps the peak;
+ * results are concatenated so the public contract (one vector per input) holds.
+ */
+export const MAX_BATCH = 8
 
 export interface Embedder {
   /** Identifies the model that produced a vector (for storage staleness). */
@@ -104,8 +111,13 @@ async function embed(texts: string[]): Promise<Float32Array[]> {
     const pipe = await getPipeline()
     // No bge query/passage prefix — symmetric convention (library items and
     // candidates are embedded identically), pooled+normalized by the model.
-    const output = await pipe(texts, { pooling: 'mean', normalize: true })
-    return output.tolist().map((row) => Float32Array.from(row))
+    // Sub-batch to bound peak native memory (see MAX_BATCH).
+    const out: Float32Array[] = []
+    for (let i = 0; i < texts.length; i += MAX_BATCH) {
+      const output = await pipe(texts.slice(i, i + MAX_BATCH), { pooling: 'mean', normalize: true })
+      for (const row of output.tolist()) out.push(Float32Array.from(row))
+    }
+    return out
   })
 }
 

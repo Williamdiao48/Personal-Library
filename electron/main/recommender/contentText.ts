@@ -1,6 +1,5 @@
 import { readFile } from 'fs/promises'
 import { readFileSync } from 'fs'
-import { JSDOM } from 'jsdom'
 import { PDFParse } from 'pdf-parse'
 import { safeContentPath } from '../security/paths'
 import { extractEpubContent } from '../capture/parsers/epub-content'
@@ -22,9 +21,23 @@ export interface EmbeddableItem {
  */
 export const MIN_CONTENT_CHARS = 200
 
-/** Strip HTML → text via the DOM (matches how capture/reader read body text). */
+/**
+ * Strip HTML → text with a lightweight O(n) tag-strip — deliberately NOT jsdom.
+ * We only need a bag of words to sample+embed, and a full DOM of a multi-MB
+ * item balloons RSS toward ~1 GB (a 2.2 MB fanfic pushed it to 958 MB), which
+ * across a backfill aborts the native allocator (observed as SIGTRAP). Stored
+ * article/EPUB HTML is already sanitized at capture, so a regex strip is safe.
+ */
 function htmlToText(html: string): string {
-  return new JSDOM(html).window.document.body?.textContent ?? ''
+  return html
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ') // drop script/style bodies
+    .replace(/<[^>]+>/g, ' ') // strip remaining tags
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
 }
 
 /** Collapse all runs of whitespace to single spaces and trim. */

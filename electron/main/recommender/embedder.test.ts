@@ -21,6 +21,7 @@ import {
   selectDevice,
   MODEL_ID,
   EMBED_DIM,
+  MAX_BATCH,
   __resetEmbedderForTest,
 } from './embedder'
 
@@ -115,5 +116,14 @@ describe('embedder.embed', () => {
   it('exposes modelVersion + dim metadata', () => {
     expect(embedder.dim).toBe(EMBED_DIM)
     expect(embedder.modelVersion).toBe(MODEL_ID)
+  })
+
+  it('sub-batches inputs larger than MAX_BATCH (bounds peak memory), preserving count', async () => {
+    const n = MAX_BATCH * 2 + 1 // 17 → slices of 8, 8, 1
+    const out = await embedder.embed(Array.from({ length: n }, (_, i) => `t${i}`))
+    expect(out).toHaveLength(n)
+    expect(mockPipe).toHaveBeenCalledTimes(3)
+    expect((mockPipe.mock.calls[0][0] as string[]).length).toBe(MAX_BATCH)
+    expect((mockPipe.mock.calls[2][0] as string[]).length).toBe(1)
   })
 })
