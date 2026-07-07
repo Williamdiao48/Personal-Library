@@ -8,17 +8,7 @@ import { refreshContent, appendChapters, getChapterCount } from '../capture'
 import { BROWSER_HEADERS } from '../capture/fetch'
 import { safeContentPath, safeUserDataPath } from '../security/paths'
 import type { Item, Tag, RefreshResult } from '../../../src/types'
-
-// Fast non-crypto hash: combines text length with a sample of beginning/end.
-// Good enough to detect any meaningful content change without crypto overhead.
-function contentHash(text: string): string {
-  let h = 0
-  const sample = text.length > 4000 ? text.slice(0, 2000) + text.slice(-2000) : text
-  for (let i = 0; i < sample.length; i++) {
-    h = (Math.imul(31, h) + sample.charCodeAt(i)) | 0
-  }
-  return `${text.length}:${h >>> 0}`
-}
+import { computeContentHash } from '../util/contentHash'
 
 /**
  * SEC-2: bound an untrusted rating into the valid domain before it is persisted.
@@ -406,7 +396,7 @@ export function registerLibraryHandlers(): void {
     )
 
     // ── Step 4: Content hash check — skip all I/O if nothing changed ───────
-    const newHash = contentHash(newText)
+    const newHash = computeContentHash(newText)
     if (newHash === item.content_hash) {
       return { changed: false, wordCount: item.word_count ?? 0 }
     }

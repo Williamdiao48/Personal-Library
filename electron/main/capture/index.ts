@@ -20,16 +20,7 @@ import { assertImportFile } from '../security/validation'
 import { assertHttpUrl, safeFetch } from '../security/net-guard'
 import { parseEpub } from '../workers/parse-host'
 import { PDFParse } from 'pdf-parse'
-
-// Fast non-crypto content hash — same algorithm as in library.ts.
-function computeContentHash(text: string): string {
-  let h = 0
-  const sample = text.length > 4000 ? text.slice(0, 2000) + text.slice(-2000) : text
-  for (let i = 0; i < sample.length; i++) {
-    h = (Math.imul(31, h) + sample.charCodeAt(i)) | 0
-  }
-  return `${text.length}:${h >>> 0}`
-}
+import { computeContentHash } from '../util/contentHash'
 
 export interface CaptureResult {
   id: string

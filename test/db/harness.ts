@@ -75,6 +75,27 @@ export function seedItem(db: TestDb, over: SeedItemOverrides = {}): string {
   return id
 }
 
+export interface SeedEmbeddingOverrides {
+  embedding?: Buffer
+  model_version?: string
+  content_hash?: string
+  embedded_at?: number
+}
+
+/** Insert an item_embeddings row (migration 18) for an existing item. */
+export function seedEmbedding(db: TestDb, itemId: string, over: SeedEmbeddingOverrides = {}): void {
+  db.prepare(
+    `INSERT INTO item_embeddings (item_id, embedding, model_version, content_hash, embedded_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(
+    itemId,
+    over.embedding ?? Buffer.from([0, 0, 0, 0]),
+    over.model_version ?? 'test-model',
+    over.content_hash ?? 'h0',
+    over.embedded_at ?? T0,
+  )
+}
+
 export function seedTag(db: TestDb, name: string, color = '#6b7280'): string {
   const id = randomUUID()
   db.prepare('INSERT INTO tags (id, name, color) VALUES (?, ?, ?)').run(id, name, color)
