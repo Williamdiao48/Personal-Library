@@ -46,6 +46,10 @@ Thumbs.db
 # electron-builder cache
 .cache/
 
+# Vendored ML model — ~35 MB, no git-lfs here; run `npm run fetch:model` to
+# populate. See scripts/ml/fetch-embedding-model.mjs.
+resources/models/
+
 # Internal docs — never publish (architecture/parser references, planning,
 # audits, and the development journal). See docs/internal/README.md.
 docs/internal/

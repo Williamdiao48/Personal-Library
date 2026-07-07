@@ -19,6 +19,7 @@
     "format:check": "prettier --check .",
     "rebuild:node": "npm rebuild better-sqlite3 --build-from-source",
     "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
+    "fetch:model": "node scripts/ml/fetch-embedding-model.mjs",
     "postinstall": "electron-rebuild -f -w better-sqlite3"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@headlessui/react": "^2.2.9",
+    "@huggingface/transformers": "^4.2.0",
     "@mozilla/readability": "^0.5.0",
     "@tanstack/react-virtual": "^3.13.23",
     "adm-zip": "^0.5.16",
@@ -79,6 +81,16 @@
     },
     "files": [
       "out/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/models",
+        "to": "models"
+      }
+    ],
+    "asarUnpack": [
+      "**/node_modules/onnxruntime-node/bin/**",
+      "**/node_modules/onnxruntime-web/dist/*.wasm"
     ],
     "mac": {
       "target": [
