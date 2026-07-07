@@ -13,6 +13,8 @@ export const app = {
   },
   getName: () => 'personal-library-test',
   getVersion: () => '0.0.0-test',
+  getAppPath: () => '/tmp/pl-test-app',
+  isPackaged: false,
   on: () => app,
   whenReady: () => Promise.resolve(),
   quit: () => {},

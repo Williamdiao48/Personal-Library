@@ -25,7 +25,7 @@ describe('C1.1 packaging config for the embedding runtime', () => {
   it('ships the vendored model via extraResources (models → models)', () => {
     const entries = pkg.build?.extraResources ?? []
     const modelEntry = entries.find(
-      (e: { from?: string; to?: string }) => e.from === 'resources/models' && e.to === 'models'
+      (e: { from?: string; to?: string }) => e.from === 'resources/models' && e.to === 'models',
     )
     expect(modelEntry).toBeDefined()
   })
