@@ -1,36 +1,32 @@
 import { app } from 'electron'
 import { join } from 'path'
-import { pipeline, env } from '@huggingface/transformers'
+import {
+  MODEL_ID,
+  MODEL_VERSION,
+  EMBED_DIM,
+  MAX_BATCH,
+  createExtractor,
+  embedWith,
+  type Embedder,
+  type FeatureExtractor,
+} from './embedder-core'
 
-// C1.2 — the Embedder: turns text into 384-dim vectors via a local int8
-// bge-small-en-v1.5 ONNX model (transformers.js / onnxruntime), offline, in the
-// Electron main process. This module only *runs the model*; the D8 content
-// representation (chunking/pooling/blend) lives in embeddingText.ts (C1.4).
-//
-// The model is vendored by `npm run fetch:model` into resources/models/ and
-// shipped via electron-builder extraResources (see C1.1 / chunk1 plan).
+// C1.2 / C2.5 — the main-process Embedder singleton. The model-running code
+// (createExtractor, the sub-batch loop, the constants + types) lives in the
+// Electron-free `embedder-core.ts` so it can also run inside the sandboxed
+// embed-worker (C2.5). This module adds the app-aware bits: model-path
+// resolution, device selection, and a warm, serialized singleton for the main
+// process. It re-exports the core so existing `./embedder` imports are unchanged.
 
-/** Local model directory name under resources/models/ (matches the fetch script). */
-export const MODEL_ID = 'bge-small-en-v1.5-int8'
-/** Stable tag stored alongside vectors in Chunk 2 to detect a model change. */
-export const MODEL_VERSION = 'bge-small-en-v1.5-int8'
-/** Output dimensionality of bge-small. */
-export const EMBED_DIM = 384
-/**
- * Max texts per onnxruntime inference. Peak memory is O(batch · seq²) (attention),
- * so an unbounded batch of ~512-token chunks spikes RSS by ~700 MB and, across a
- * backfill, aborts the native allocator (SIGTRAP). Sub-batching caps the peak;
- * results are concatenated so the public contract (one vector per input) holds.
- */
-export const MAX_BATCH = 8
-
-export interface Embedder {
-  /** Identifies the model that produced a vector (for storage staleness). */
-  readonly modelVersion: string
-  /** Vector dimensionality. */
-  readonly dim: number
-  /** Embed a batch of texts → one L2-normalized Float32Array per input. */
-  embed(texts: string[]): Promise<Float32Array[]>
+export {
+  MODEL_ID,
+  MODEL_VERSION,
+  EMBED_DIM,
+  MAX_BATCH,
+  createExtractor,
+  embedWith,
+  type Embedder,
+  type FeatureExtractor,
 }
 
 // ── pure resolution helpers (unit-tested directly, no Electron/model needed) ──
@@ -64,33 +60,11 @@ export function selectDevice(platform: string, arch: string): 'cpu' | 'wasm' {
 
 // ── warm singleton + serialized execution ────────────────────────────────────
 
-// Minimal shape of a transformers.js feature-extraction pipeline call.
-type FeatureExtractor = (
-  texts: string[],
-  opts: { pooling: 'mean'; normalize: boolean },
-) => Promise<{ tolist(): number[][] }>
-
 // Loaded once (~1.8s cold) and reused. The promise itself is the guard against
 // a concurrent double-load.
 let pipelinePromise: Promise<FeatureExtractor> | null = null
 // Serialize embed() calls so batches never overlap on the single ORT session.
 let tail: Promise<unknown> = Promise.resolve()
-
-/**
- * Build a feature-extraction pipeline for a vendored model directory, using the
- * exact dtype the app ships (int8 'q8'). Offline-only. Exported so a real-model
- * test can exercise this same construction path (the mocked unit tests can't
- * verify the actual artifact + config produce sane vectors).
- */
-export async function createExtractor(
-  localModelPath: string,
-  device: 'cpu' | 'wasm' = 'cpu',
-): Promise<FeatureExtractor> {
-  env.allowRemoteModels = false // offline: never hit the network
-  env.localModelPath = localModelPath
-  const pipe = await pipeline('feature-extraction', MODEL_ID, { dtype: 'q8', device })
-  return pipe as unknown as FeatureExtractor
-}
 
 async function loadPipeline(): Promise<FeatureExtractor> {
   const { localModelPath } = resolveModelPaths({
@@ -122,15 +96,7 @@ async function embed(texts: string[]): Promise<Float32Array[]> {
   if (texts.length === 0) return []
   return enqueue(async () => {
     const pipe = await getPipeline()
-    // No bge query/passage prefix — symmetric convention (library items and
-    // candidates are embedded identically), pooled+normalized by the model.
-    // Sub-batch to bound peak native memory (see MAX_BATCH).
-    const out: Float32Array[] = []
-    for (let i = 0; i < texts.length; i += MAX_BATCH) {
-      const output = await pipe(texts.slice(i, i + MAX_BATCH), { pooling: 'mean', normalize: true })
-      for (const row of output.tolist()) out.push(Float32Array.from(row))
-    }
-    return out
+    return embedWith(pipe, texts)
   })
 }
 

@@ -7,12 +7,14 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       lib: {
-        // Two main-process entries: the app entry and the sandboxed parse
-        // worker (F7). Both emit to out/main/ so utilityProcess.fork can
-        // resolve parse-worker.js next to index.js in dev and packaged.
+        // Main-process entries: the app entry plus the sandboxed utilityProcess
+        // workers (parse — F7; embed — D-C2-2). All emit to out/main/ so
+        // utilityProcess.fork can resolve <worker>.js next to index.js in dev
+        // and packaged.
         entry: {
           index: resolve('electron/main/index.ts'),
           'parse-worker': resolve('electron/main/workers/parse-worker.ts'),
+          'embed-worker': resolve('electron/main/workers/embed-worker.ts'),
         },
       },
     },

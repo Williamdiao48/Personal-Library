@@ -1,8 +1,12 @@
-import type { ParseResponse } from './parse-protocol'
+// Tracks in-flight worker requests by id and correlates responses back to their
+// promises. Pure and Electron-free on purpose so it can be unit-tested without
+// spawning a real utilityProcess (the *-host.ts modules own the process). Shared
+// by every utilityProcess host (parse-worker, embed-worker): a response just
+// needs an `id` and an ok/result-or-error shape.
 
-// Tracks in-flight parse requests by id and correlates worker responses back to
-// their promises. Pure and Electron-free on purpose so it can be unit-tested
-// without spawning a real utilityProcess (parse-host.ts owns the process).
+/** The minimal response shape any worker host settles a request with. */
+export type WorkerResponse =
+  { id: number; ok: true; result: unknown } | { id: number; ok: false; error: string }
 
 interface Pending {
   resolve: (value: unknown) => void
@@ -27,7 +31,7 @@ export class PendingRegistry {
     const promise = new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
-        reject(new Error(`Parse worker timed out after ${timeoutMs}ms`))
+        reject(new Error(`Worker request timed out after ${timeoutMs}ms`))
         onTimeout(id)
       }, timeoutMs)
       // Don't let a pending parse timer keep the process alive on shutdown.
@@ -40,7 +44,7 @@ export class PendingRegistry {
   }
 
   /** Settle the request matching a worker response. Unknown ids are ignored. */
-  settle(res: ParseResponse): void {
+  settle(res: WorkerResponse): void {
     const p = this.pending.get(res.id)
     if (!p) return
     clearTimeout(p.timer)
