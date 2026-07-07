@@ -16,6 +16,7 @@ import { registerAnnotationHandlers } from './ipc/annotations'
 import { registerUpdaterHandlers } from './ipc/updater'
 import { registerLogHandlers } from './ipc/log'
 import { shutdownParseWorker } from './workers/parse-host'
+import { armBackfill, shutdownBackfill } from './recommender/lifecycle'
 
 // Must be called before app.whenReady()
 protocol.registerSchemesAsPrivileged([
@@ -178,6 +179,11 @@ app.whenReady().then(() => {
 
   createWindow()
 
+  // Kick a background embedding backfill for any missing/stale item vectors
+  // (C2.6). Debounced + off-thread (worker), so it never competes with startup
+  // or blocks the UI; a no-op once everything is embedded.
+  armBackfill()
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -187,7 +193,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-// Tear down the sandboxed parse worker (F7) so it doesn't outlive the app.
+// Tear down the sandboxed workers (parse — F7; embed — C2.6) so they don't
+// outlive the app.
 app.on('will-quit', () => {
   shutdownParseWorker()
+  shutdownBackfill()
 })

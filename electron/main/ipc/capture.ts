@@ -1,6 +1,7 @@
 import { ipcMain, dialog } from 'electron'
 import { randomUUID } from 'crypto'
 import { captureUrl, captureFile, appendChapters } from '../capture'
+import { triggerBackfill } from '../recommender/lifecycle'
 
 /**
  * True only for parseable http(s) URLs. `capture:start` is a trust boundary —
@@ -41,6 +42,8 @@ export function registerCaptureHandlers(): void {
       range,
     )
       .then((result) => {
+        // New item persisted — reconcile its embedding in the background (C2.6).
+        triggerBackfill()
         if (!event.sender.isDestroyed()) {
           event.sender.send('capture:complete', { jobId, result })
         }
@@ -66,6 +69,8 @@ export function registerCaptureHandlers(): void {
       }
     })
       .then((result) => {
+        // Appended chapters change the item's content — reconcile in background.
+        triggerBackfill()
         if (!event.sender.isDestroyed()) {
           event.sender.send('capture:complete', { jobId, result })
         }
@@ -90,6 +95,9 @@ export function registerCaptureHandlers(): void {
       properties: ['openFile'],
     })
     if (!filePaths.length) return null
-    return captureFile(filePaths[0])
+    const result = await captureFile(filePaths[0])
+    // Imported EPUB/PDF persisted — reconcile its embedding in the background.
+    triggerBackfill()
+    return result
   })
 }

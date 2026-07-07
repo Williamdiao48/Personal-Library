@@ -9,6 +9,7 @@ import { BROWSER_HEADERS } from '../capture/fetch'
 import { safeContentPath, safeUserDataPath } from '../security/paths'
 import type { Item, Tag, RefreshResult } from '../../../src/types'
 import { computeContentHash } from '../util/contentHash'
+import { triggerBackfill } from '../recommender/lifecycle'
 
 /**
  * SEC-2: bound an untrusted rating into the valid domain before it is persisted.
@@ -378,6 +379,7 @@ export function registerLibraryHandlers(): void {
 
         // New chapters exist — append only the delta.
         const result = await appendChapters(id, currentCount)
+        triggerBackfill() // content changed → reconcile embedding (C2.6)
         return { changed: true, wordCount: result.wordCount ?? 0 }
       }
       // getChapterCount returned null (unsupported parser) — fall through to
@@ -439,6 +441,7 @@ export function registerLibraryHandlers(): void {
       )
     })()
 
+    triggerBackfill() // content changed → reconcile embedding (C2.6)
     return { changed: true, wordCount: newWordCount }
   })
 
