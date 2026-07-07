@@ -9,7 +9,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 17
+export const CURRENT_VERSION = 18
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -101,6 +101,19 @@ ALTER TABLE items ADD COLUMN chapter_end INTEGER DEFAULT NULL;`,
   16: `ALTER TABLE collection_items ADD COLUMN sort_order INTEGER DEFAULT NULL;`,
   17: `ALTER TABLE items ADD COLUMN rating REAL DEFAULT NULL;
 ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
+  // Recommender (Chunk 2): one embedding vector per item. Raw little-endian
+  // Float32Array in a BLOB; model_version + content_hash gate re-embedding.
+  // ON DELETE CASCADE drops the row when the item is hard-deleted. New table —
+  // lives here only, never in schema.ts SCHEMA (fresh-install baseline gotcha).
+  18: `
+    CREATE TABLE IF NOT EXISTS item_embeddings (
+      item_id       TEXT    PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+      embedding     BLOB    NOT NULL,
+      model_version TEXT    NOT NULL,
+      content_hash  TEXT    NOT NULL,
+      embedded_at   INTEGER NOT NULL
+    );
+  `,
 }
 
 export function initDatabase(): void {

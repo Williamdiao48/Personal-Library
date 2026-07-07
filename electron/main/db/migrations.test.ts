@@ -36,6 +36,7 @@ describe('database bring-up', () => {
       'annotations',
       'goals',
       'goal_items',
+      'item_embeddings',
     ]) {
       expect(tables).toContain(t)
     }
@@ -74,6 +75,44 @@ describe('database bring-up', () => {
     const db = openTestDb()
     expect(colsOf(db, 'annotations')).toContain('sort_order')
     expect(colsOf(db, 'collection_items')).toContain('sort_order')
+  })
+
+  // Migration 18 — the recommender embedding store.
+  it('item_embeddings has the expected columns', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'item_embeddings')).toEqual(
+      expect.arrayContaining([
+        'item_id',
+        'embedding',
+        'model_version',
+        'content_hash',
+        'embedded_at',
+      ]),
+    )
+  })
+
+  it('item_embeddings.item_id is the primary key', () => {
+    const db = openTestDb()
+    const pk = (
+      db.prepare(`PRAGMA table_info(item_embeddings)`).all() as { name: string; pk: number }[]
+    ).filter((c) => c.pk > 0)
+    expect(pk.map((c) => c.name)).toEqual(['item_id'])
+  })
+
+  it('drops an embedding row when its item is hard-deleted (ON DELETE CASCADE)', () => {
+    const db = openTestDb()
+    db.pragma('foreign_keys = ON')
+    db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified)
+       VALUES ('e1', 'T', NULL, NULL, 'article', 'e1.html', 1, NULL, NULL, 0, 0)`,
+    ).run()
+    db.prepare(
+      `INSERT INTO item_embeddings (item_id, embedding, model_version, content_hash, embedded_at)
+       VALUES ('e1', X'00', 'm', 'h', 0)`,
+    ).run()
+    expect(db.prepare(`SELECT COUNT(*) c FROM item_embeddings`).get()).toMatchObject({ c: 1 })
+    db.prepare(`DELETE FROM items WHERE id = 'e1'`).run()
+    expect(db.prepare(`SELECT COUNT(*) c FROM item_embeddings`).get()).toMatchObject({ c: 0 })
   })
 
   it('applies migrations incrementally from an empty (pre-schema) database', () => {
