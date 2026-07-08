@@ -35,15 +35,25 @@ export const CANDIDATES: CandidatesConfig = {
   FETCH_TIMEOUT_MS: 15_000,
 }
 
-/** A normalized book candidate — the same content-only shape the rerank embeds. */
+/** Which generator produced a candidate — books vs. the fanfic sources. */
+export type SourceName = 'book' | 'ao3' | 'ffn'
+
+/**
+ * A normalized recommendation candidate — the same content-only shape the rerank
+ * embeds, whether it's an OpenLibrary book or an AO3/FFN fic. For fics, `subjects`
+ * carries the work's native tags (so it embeds exactly like a book's subjects) and
+ * `isbn` is null.
+ */
 export interface Candidate {
   title: string
   author: string | null
   subjects: string[]
   coverUrl: string | null
-  /** OpenLibrary work key (e.g. `/works/OL45804W`); the dedup identity. */
+  /** OpenLibrary work key (`/works/OL45804W`) or a fic's work URL; the dedup identity. */
   sourceId: string
   isbn: string | null
+  /** The generator that produced this candidate (dedup namespacing, display, diversity). */
+  source: SourceName
 }
 
 /** The subset of an OpenLibrary `search.json` doc we read (all fields optional). */
@@ -59,6 +69,25 @@ export interface OpenLibraryDoc {
 /** Build a cover image URL from OpenLibrary's numeric cover id, or null. */
 export function coverUrlFromId(coverId: number | undefined): string | null {
   return typeof coverId === 'number' ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg` : null
+}
+
+/** Lowercase, strip punctuation, collapse whitespace — for tolerant title/author matching. */
+function norm(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * The normalized dedup identity for a book/fic: `title|author`, lowercased with
+ * punctuation stripped and whitespace collapsed (exact-normalized, no fuzzy match).
+ * Shared by the library/dismissed set builders, cross-source union, and
+ * `filterCandidates` so every side normalizes identically.
+ */
+export function candidateKey(title: string, author: string | null): string {
+  return `${norm(title)}|${norm(author ?? '')}`
 }
 
 /**
@@ -87,6 +116,7 @@ export function normalizeOpenLibraryDoc(
     coverUrl: coverUrlFromId(doc.cover_i),
     sourceId,
     isbn: doc.isbn?.[0]?.trim() || null,
+    source: 'book',
   }
 }
 

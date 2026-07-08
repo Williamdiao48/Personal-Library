@@ -23,6 +23,8 @@ import {
   type ScoredCandidate,
 } from './rerank'
 import type { Candidate } from './candidates'
+import { openLibrarySource } from './sources/openLibrary'
+import type { CandidateSource } from './candidateSource'
 import type { Embedder } from './embedder-core'
 
 // C4.4 — the rerank core (candidateKey / filter / score / MMR / verify) is pure
@@ -38,6 +40,7 @@ const cand = (over: Partial<Candidate> = {}): Candidate => ({
   coverUrl: null,
   sourceId: '/works/OL1W',
   isbn: null,
+  source: 'book',
   ...over,
 })
 
@@ -190,7 +193,7 @@ describe('recommend', () => {
 
   it('refuses (returns []) on a cold-start library and never hits the network', async () => {
     // No liked+embedded item → buildTaste centroids [] → refuse before fetching.
-    const out = await recommend(stubEmbedder)
+    const out = await recommend(stubEmbedder, [openLibrarySource])
     expect(out).toEqual([])
     expect(fetchMock).not.toHaveBeenCalled()
   })
@@ -213,7 +216,7 @@ describe('recommend', () => {
       }),
     )
 
-    const out = await recommend(stubEmbedder)
+    const out = await recommend(stubEmbedder, [openLibrarySource])
     expect(out.map((c) => c.title)).toEqual(['Fresh One', 'Fresh Two'])
     expect(out[0].sourceId).toBe('/works/F1')
     expect(out[0].why).toBeUndefined() // no LLM blurb in Chunk 4
@@ -227,7 +230,47 @@ describe('recommend', () => {
     )
     fetchMock.mockResolvedValue(okJson({ docs }))
 
-    const out = await recommend(stubEmbedder)
+    const out = await recommend(stubEmbedder, [openLibrarySource])
     expect(out).toHaveLength(RERANK.TOP_K)
+  })
+
+  it('unions injected sources and dedups a cross-source title|author collision (F4)', async () => {
+    seedLikedItem({ title: 'Owned Book', author: 'Owner', tag: 'Fantasy' })
+    const book = cand({ title: 'Fresh One', author: 'X', sourceId: '/works/F1', source: 'book' })
+    const fic = cand({
+      title: 'A Fic',
+      author: 'Ficcer',
+      sourceId: 'https://ao3/works/9',
+      source: 'ao3',
+    })
+    const dupOfBook = cand({
+      title: 'Fresh One',
+      author: 'X',
+      sourceId: 'https://ao3/works/dup',
+      source: 'ao3',
+    })
+    const bookSrc: CandidateSource = { name: 'book', fetch: async () => [book] }
+    const ficSrc: CandidateSource = { name: 'ao3', fetch: async () => [fic, dupOfBook] }
+
+    // Fanfic-first order: the ao3 "Fresh One" wins the title|author key, book's drops.
+    const out = await recommend(stubEmbedder, [ficSrc, bookSrc])
+    expect(out.map((c) => c.title).sort()).toEqual(['A Fic', 'Fresh One'])
+    expect(fetchMock).not.toHaveBeenCalled() // injected sources bypass the network
+  })
+
+  it('survives a source that throws, keeping the healthy source (F4)', async () => {
+    seedLikedItem({ title: 'Owned Book', author: 'Owner', tag: 'Fantasy' })
+    const good: CandidateSource = {
+      name: 'book',
+      fetch: async () => [cand({ title: 'Survivor', author: 'S', sourceId: '/works/S' })],
+    }
+    const boom: CandidateSource = {
+      name: 'ao3',
+      fetch: async () => {
+        throw new Error('source down')
+      },
+    }
+    const out = await recommend(stubEmbedder, [boom, good])
+    expect(out.map((c) => c.title)).toEqual(['Survivor'])
   })
 })

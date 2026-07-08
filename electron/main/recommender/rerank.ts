@@ -2,28 +2,40 @@ import { all } from '../db'
 import type { Embedder } from './embedder-core'
 import { itemMetadataText } from './embeddingText'
 import { cosine } from './vectorMath'
-import { buildTaste, type LikedItem } from './taste'
-import { buildSeedQueries, type SeedSource } from './seedQueries'
-import { fetchCandidates, type Candidate } from './candidates'
+import { buildTaste } from './taste'
+import { candidateKey, type Candidate } from './candidates'
+import { unionCandidates, type CandidateSource } from './candidateSource'
+import { openLibrarySource } from './sources/openLibrary'
+import { ao3Source } from './sources/ao3'
 
-// C4.4 — the rerank (§9 steps 2–4): filter candidates against what the user
-// already owns/dismissed, embed each into the SAME content-only metadata space as
-// library items (Tier-A `itemMetadataText`, D-C4-1 — NOT `embedItemVector`, which
-// reads a content file candidates don't have), score by max-cosine-to-centroid,
-// diversify with MMR (λ), verify, and emit ~10 cards. The scoring / MMR / filter /
-// verify core is pure (ABI-agnostic); only `recommend()` touches the db, the
-// network (via fetchCandidates) and the model (via the injected Embedder) → its
-// test needs the Node ABI + a stub embedder + a mocked fetch.
+// C4.4 + F4 — the rerank (§9 steps 2–4): union the candidate sources (books + AO3
+// fics), filter against what the user already owns/dismissed, embed each into the
+// SAME content-only metadata space as library items (Tier-A `itemMetadataText`,
+// D-C4-1 — NOT `embedItemVector`, which reads a content file candidates don't
+// have), score by max-cosine-to-centroid, diversify with MMR (λ), verify, and emit
+// ~10 cards. The scoring / MMR / filter / verify core is pure (ABI-agnostic); only
+// `recommend()` touches the db, the sources (network) and the model (via the
+// injected Embedder) → its test injects stub sources + a stub embedder.
 //
 // The orchestrator takes the raw `Embedder` (embed of text strings), not an
 // `EmbedHost`: candidates have no content file, so we embed their metadata text
-// directly (D-C4-1). `EmbedHost` stays the backfill seam.
+// directly (D-C4-1). `EmbedHost` stays the backfill seam. Sources are injected
+// (defaulting to the production set) so the orchestration is tested without the
+// network.
 
 export const RERANK = {
   LAMBDA: 0.7, // MMR: relevance vs. diversity trade-off (§9, D6)
   TOP_K: 10, // how many cards recommend() emits
-  SEED_SOURCE_LIMIT: 100, // cap liked items fed to the seeder (keeps the IN() bounded)
 } as const
+
+// candidateKey moved to candidates.ts (shared dedup identity); re-exported so
+// existing importers (tests, cross-source union) keep a single call site.
+export { candidateKey }
+
+/** The production candidate sources, fanfic-first so a fic wins a title|author tie. */
+export function defaultSources(): CandidateSource[] {
+  return [ao3Source, openLibrarySource]
+}
 
 /** A finished recommendation: a real book the user doesn't own, ranked to taste. */
 export interface RecommendationCard {
@@ -52,25 +64,6 @@ export interface ExcludeSets {
 }
 
 // ── pure core ─────────────────────────────────────────────────────────────────
-
-/** Lowercase, strip punctuation, collapse whitespace — for tolerant title/author matching. */
-function norm(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-/**
- * The normalized dedup identity for a book: `title|author`, lowercased with
- * punctuation stripped and whitespace collapsed (D-C4-5: exact-normalized, no
- * fuzzy match). Shared by the library/dismissed set builders and `filterCandidates`
- * so both sides normalize identically.
- */
-export function candidateKey(title: string, author: string | null): string {
-  return `${norm(title)}|${norm(author ?? '')}`
-}
 
 /**
  * Drop candidates the user already owns or has dismissed: by normalized
@@ -143,48 +136,6 @@ export function verifyCandidates(picked: Candidate[], fetched: Candidate[]): Can
 
 // ── db reads (orchestrator only) ──────────────────────────────────────────────
 
-function placeholders(n: number): string {
-  return Array.from({ length: n }, () => '?').join(',')
-}
-
-/**
- * Join the taste engine's liked ids (weight-descending) to each item's author +
- * tags → the seed sources the query builder consumes. Capped at
- * SEED_SOURCE_LIMIT (the top-weight items dominate the seeds anyway, and it keeps
- * the IN() under SQLite's bound-parameter ceiling).
- */
-function loadSeedSources(liked: LikedItem[]): SeedSource[] {
-  const top = liked.slice(0, RERANK.SEED_SOURCE_LIMIT)
-  if (top.length === 0) return []
-  const ids = top.map((l) => l.id)
-
-  const authorById = new Map<string, string | null>()
-  for (const r of all<{ id: string; author: string | null }>(
-    `SELECT id, author FROM items WHERE id IN (${placeholders(ids.length)})`,
-    ids,
-  )) {
-    authorById.set(r.id, r.author)
-  }
-
-  const tagsById = new Map<string, string[]>()
-  for (const r of all<{ item_id: string; name: string }>(
-    `SELECT it.item_id AS item_id, t.name AS name
-     FROM item_tags it JOIN tags t ON t.id = it.tag_id
-     WHERE it.item_id IN (${placeholders(ids.length)})`,
-    ids,
-  )) {
-    const list = tagsById.get(r.item_id)
-    if (list) list.push(r.name)
-    else tagsById.set(r.item_id, [r.name])
-  }
-
-  return top.map((l) => ({
-    author: authorById.get(l.id) ?? null,
-    tags: tagsById.get(l.id) ?? [],
-    weight: l.weight,
-  }))
-}
-
 /** Build the owned + dismissed exclusion sets (§9 step 2). */
 function loadExclusions(): ExcludeSets {
   const keys = new Set<string>()
@@ -211,21 +162,33 @@ function loadExclusions(): ExcludeSets {
 // ── orchestrator ──────────────────────────────────────────────────────────────
 
 /**
- * The Chunk-4 pipeline (§9): taste → seed → fetch → filter → embed → score →
- * MMR → verify → ~10 cards. Refuses gracefully (returns `[]`) when the library is
- * too thin to have a taste centroid (cold start, D-C4-4) — before hitting
- * OpenLibrary. Candidates embed via the raw `Embedder` on their Tier-A metadata
- * text (D-C4-1). Touches the db + network + model.
+ * The pipeline (§9 + F4): taste → fan out to the candidate sources → union/dedup →
+ * filter → embed → score → MMR → verify → ~10 cards. Refuses gracefully (returns
+ * `[]`) when the library is too thin to have a taste centroid (cold start, D-C4-4)
+ * — before hitting any source. Candidates embed via the raw `Embedder` on their
+ * Tier-A metadata text (D-C4-1). `sources` is injected (defaulting to the
+ * production set) so orchestration is tested without the network; a single source
+ * throwing is skipped rather than sinking the batch. Touches the db + network +
+ * model.
  */
-export async function recommend(embedder: Embedder): Promise<RecommendationCard[]> {
+export async function recommend(
+  embedder: Embedder,
+  sources: CandidateSource[] = defaultSources(),
+): Promise<RecommendationCard[]> {
   const taste = buildTaste()
   if (taste.centroids.length === 0) return [] // cold start — no taste, no recs (§8)
 
-  const sources = loadSeedSources(taste.liked)
-  const queries = buildSeedQueries(sources)
-  if (queries.length === 0) return [] // no tags/authors to search on
+  const pools: Candidate[][] = []
+  for (const s of sources) {
+    try {
+      pools.push(await s.fetch(taste.liked))
+    } catch {
+      // One source down (network / parse) — skip it, keep the others.
+    }
+  }
+  const fetched = unionCandidates(pools)
+  if (fetched.length === 0) return [] // no tags/authors to search on, or all sources empty
 
-  const fetched = await fetchCandidates(queries)
   const kept = filterCandidates(fetched, loadExclusions())
   if (kept.length === 0) return []
 
