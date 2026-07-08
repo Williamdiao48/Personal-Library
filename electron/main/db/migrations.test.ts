@@ -40,6 +40,8 @@ describe('database bring-up', () => {
       'taste_seeds',
       'dismissed_recommendations',
       'candidate_cache',
+      'item_source_tags',
+      'item_source_meta',
     ]) {
       expect(tables).toContain(t)
     }
@@ -160,6 +162,42 @@ describe('database bring-up', () => {
       db.prepare(`PRAGMA table_info(candidate_cache)`).all() as { name: string; pk: number }[]
     ).filter((c) => c.pk > 0)
     expect(pk.map((c) => c.name)).toEqual(['query_key'])
+  })
+
+  // Migration 21 — the fanfic recall upgrade's native-tag store (F2).
+  it('item_source_tags / item_source_meta have the expected columns', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'item_source_tags')).toEqual(
+      expect.arrayContaining(['item_id', 'name', 'category']),
+    )
+    expect(colsOf(db, 'item_source_meta')).toEqual(
+      expect.arrayContaining([
+        'item_id',
+        'kudos',
+        'favs',
+        'follows',
+        'words',
+        'status',
+        'rating',
+        'source',
+      ]),
+    )
+  })
+
+  it('drops source tags + meta when their item is hard-deleted (ON DELETE CASCADE)', () => {
+    const db = openTestDb()
+    db.pragma('foreign_keys = ON')
+    db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified)
+       VALUES ('s1', 'T', NULL, NULL, 'article', 's1.html', 1, NULL, NULL, 0, 0)`,
+    ).run()
+    db.prepare(
+      `INSERT INTO item_source_tags (item_id, name, category) VALUES ('s1', 'Harry Potter', 'fandom')`,
+    ).run()
+    db.prepare(`INSERT INTO item_source_meta (item_id, kudos) VALUES ('s1', 10)`).run()
+    db.prepare(`DELETE FROM items WHERE id = 's1'`).run()
+    expect(db.prepare(`SELECT COUNT(*) c FROM item_source_tags`).get()).toMatchObject({ c: 0 })
+    expect(db.prepare(`SELECT COUNT(*) c FROM item_source_meta`).get()).toMatchObject({ c: 0 })
   })
 
   it('applies migrations incrementally from an empty (pre-schema) database', () => {

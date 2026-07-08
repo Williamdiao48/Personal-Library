@@ -9,7 +9,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 20
+export const CURRENT_VERSION = 21
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -146,6 +146,35 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
       query_key    TEXT    PRIMARY KEY,
       payload_json TEXT    NOT NULL,
       fetched_at   INTEGER NOT NULL
+    );
+  `,
+  // Recommender (fanfic recall upgrade, F2): native structured tags + stats
+  // lifted from AO3/FFN at capture (F1).
+  //   item_source_tags — one row per (item, native tag), typed by category
+  //     (fandom/relationship/character/freeform/genre/warning). Drives tag-native
+  //     candidate queries + hybrid chip surfacing. Recommender-owned; distinct
+  //     from the user-facing `tags` table.
+  //   item_source_meta — per-item native stats (kudos/favs/follows, words,
+  //     status, rating) for future popularity priors / display.
+  // New tables — live here only, never in schema.ts SCHEMA (baseline gotcha).
+  21: `
+    CREATE TABLE IF NOT EXISTS item_source_tags (
+      item_id  TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      name     TEXT NOT NULL,
+      category TEXT NOT NULL,
+      PRIMARY KEY (item_id, name, category)
+    );
+    CREATE INDEX IF NOT EXISTS idx_item_source_tags_item_id ON item_source_tags(item_id);
+    CREATE INDEX IF NOT EXISTS idx_item_source_tags_name    ON item_source_tags(name, category);
+    CREATE TABLE IF NOT EXISTS item_source_meta (
+      item_id  TEXT    PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+      kudos    INTEGER,
+      favs     INTEGER,
+      follows  INTEGER,
+      words    INTEGER,
+      status   TEXT,
+      rating   TEXT,
+      source   TEXT
     );
   `,
 }

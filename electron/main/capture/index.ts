@@ -21,6 +21,7 @@ import { assertHttpUrl, safeFetch } from '../security/net-guard'
 import { parseEpub } from '../workers/parse-host'
 import { PDFParse } from 'pdf-parse'
 import { computeContentHash } from '../util/contentHash'
+import { persistSourceTags, siteKeyFromUrl } from '../recommender/sourceTags'
 
 export interface CaptureResult {
   id: string
@@ -174,6 +175,10 @@ async function saveToLibrary(
         SELECT rowid, title, author, ? FROM items WHERE id = ?
       `,
       ).run(textContent, id)
+
+      // Native AO3/FFN tags + stats (F1) → recommender tables + hybrid chips (F2).
+      // No-op for non-fanfic captures (content.sourceTags is undefined).
+      persistSourceTags(db, id, content.sourceTags, content.sourceMeta, siteKeyFromUrl(sourceUrl))
     })()
   } catch (err) {
     // Roll back any files written before the transaction failed
