@@ -100,11 +100,16 @@ function parseFfnCharacters(seg: string): SourceTag[] {
   return out
 }
 
-export function parseFfnMetadata(doc: Document): { tags: SourceTag[]; meta: SourceMeta } {
+/**
+ * Classify one FFN metadata line ("Rated: … - English - Genres - Characters -
+ * Chapters: … - …") into structured tags (genres + characters/pairing) + stats.
+ * Pure and DOM-free so it's shared by the story-page parser and the search-blurb
+ * parser (recommender FFN source), which carry the identical line.
+ */
+export function classifyFfnMetaLine(rawText: string): { tags: SourceTag[]; meta: SourceMeta } {
   const tags: SourceTag[] = []
   const meta: SourceMeta = {}
-  const text =
-    doc.querySelector('#profile_top span.xgray')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+  const text = rawText.replace(/\s+/g, ' ').trim()
   if (!text) return { tags, meta }
 
   const segments = text
@@ -140,6 +145,25 @@ export function parseFfnMetadata(doc: Document): { tags: SourceTag[]; meta: Sour
   })
 
   if (!meta.status) meta.status = 'in-progress' // FFN omits "Status:" for WIPs
+  return { tags, meta }
+}
+
+/**
+ * Story-page metadata: the `#profile_top span.xgray` line (genres/characters/stats)
+ * plus the fandom from the `#pre_story_links` breadcrumb — FFN keeps the fandom in
+ * the nav, NOT the metadata line, and it's the anchor the FFN candidate source
+ * needs, so we lift it here too.
+ */
+export function parseFfnMetadata(doc: Document): { tags: SourceTag[]; meta: SourceMeta } {
+  const line = doc.querySelector('#profile_top span.xgray')?.textContent ?? ''
+  const { tags, meta } = classifyFfnMetaLine(line)
+
+  // Breadcrumb: <div id="pre_story_links"><a>Books</a> » <a>Harry Potter</a></div>.
+  // The last anchor is the fandom (crossover pages name the combined fandom).
+  const crumbs = doc.querySelectorAll('#pre_story_links a')
+  const fandom = crumbs[crumbs.length - 1]?.textContent?.trim()
+  if (fandom) tags.push({ name: fandom, category: 'fandom' })
+
   return { tags, meta }
 }
 

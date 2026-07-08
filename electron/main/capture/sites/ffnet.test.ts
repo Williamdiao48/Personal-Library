@@ -11,7 +11,7 @@ vi.mock('../fetch', () => ({
   fetchPagesSequential: vi.fn(),
 }))
 
-import { captureFfnet, parseFfnMetadata } from './ffnet'
+import { captureFfnet, parseFfnMetadata, classifyFfnMetaLine } from './ffnet'
 import { fetchPageWithBrowser, fetchPagesWithSession, fetchPagesSequential } from '../fetch'
 
 const mockBrowser = vi.mocked(fetchPageWithBrowser)
@@ -231,5 +231,21 @@ describe('parseFfnMetadata', () => {
   it('returns empty when the metadata line is absent', () => {
     const doc = new JSDOM('<div id="profile_top"></div>').window.document
     expect(parseFfnMetadata(doc)).toEqual({ tags: [], meta: {} })
+  })
+
+  it('lifts the fandom from the #pre_story_links breadcrumb (last anchor)', () => {
+    const doc = new JSDOM(
+      `<div id="pre_story_links"><a href="/book/">Books</a><a href="/book/Harry-Potter/">Harry Potter</a></div>
+       <div id="profile_top"><span class="xgray xcontrast_txt">Rated: T - English - Adventure - Words: 100</span></div>`,
+    ).window.document
+    const { tags } = parseFfnMetadata(doc)
+    expect(tags).toContainEqual({ name: 'Harry Potter', category: 'fandom' })
+    expect(tags).toContainEqual({ name: 'Adventure', category: 'genre' })
+  })
+
+  it('classifyFfnMetaLine parses a bare metadata line without any DOM', () => {
+    const { tags, meta } = classifyFfnMetaLine('Rated: M - English - Angst - Chapters: 2 - Favs: 9')
+    expect(tags).toContainEqual({ name: 'Angst', category: 'genre' })
+    expect(meta).toMatchObject({ rating: 'M', favs: 9, status: 'in-progress' })
   })
 })

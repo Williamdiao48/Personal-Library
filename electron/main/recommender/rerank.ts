@@ -7,6 +7,7 @@ import { candidateKey, type Candidate } from './candidates'
 import { unionCandidates, type CandidateSource } from './candidateSource'
 import { openLibrarySource } from './sources/openLibrary'
 import { ao3Source } from './sources/ao3'
+import { ffnSource } from './sources/ffn'
 
 // C4.4 + F4 — the rerank (§9 steps 2–4): union the candidate sources (books + AO3
 // fics), filter against what the user already owns/dismissed, embed each into the
@@ -34,7 +35,7 @@ export { candidateKey }
 
 /** The production candidate sources, fanfic-first so a fic wins a title|author tie. */
 export function defaultSources(): CandidateSource[] {
-  return [ao3Source, openLibrarySource]
+  return [ao3Source, ffnSource, openLibrarySource]
 }
 
 /** A finished recommendation: a real book the user doesn't own, ranked to taste. */

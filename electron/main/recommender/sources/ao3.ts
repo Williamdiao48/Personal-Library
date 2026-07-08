@@ -1,10 +1,10 @@
 import { JSDOM } from 'jsdom'
-import { get, run } from '../../db'
 import { fetchPage } from '../../capture/fetch'
 import type { LikedItem } from '../taste'
 import type { CandidateSource } from '../candidateSource'
 import type { Candidate } from '../candidates'
 import { buildTasteSeeds, type TasteSeeds } from '../tasteSeeds'
+import { readCandidateCache, writeCandidateCache } from '../candidateCache'
 
 // F4 — the AO3 candidate source: recommend *actual fanfiction*. Unlike OpenLibrary
 // (a book keyword API), AO3's works search is tag-native, so we anchor each query
@@ -123,35 +123,6 @@ export function parseAo3ResultsPage(html: string, cfg = AO3_SOURCE): Candidate[]
   return out
 }
 
-// ── candidate_cache (TTL), namespaced to AO3 so keys never collide with books ──
-interface CacheRow {
-  payload_json: string
-  fetched_at: number
-}
-
-function readCache(key: string, ttlMs: number, now: number): Candidate[] | null {
-  const row = get<CacheRow>(
-    `SELECT payload_json, fetched_at FROM candidate_cache WHERE query_key = ?`,
-    [key],
-  )
-  if (!row || now - row.fetched_at > ttlMs) return null
-  try {
-    return JSON.parse(row.payload_json) as Candidate[]
-  } catch {
-    return null
-  }
-}
-
-function writeCache(key: string, cands: Candidate[], now: number): void {
-  run(
-    `INSERT INTO candidate_cache (query_key, payload_json, fetched_at)
-     VALUES (?, ?, ?)
-     ON CONFLICT(query_key) DO UPDATE SET
-       payload_json = excluded.payload_json, fetched_at = excluded.fetched_at`,
-    [key, JSON.stringify(cands), now],
-  )
-}
-
 /**
  * Fetch, parse, dedup and cap AO3 candidates for a batch of queries. Cache-first
  * (candidate_cache keyed `ao3:<url>`). A single query failing (network / parse)
@@ -167,11 +138,11 @@ export async function fetchAo3Candidates(
   for (const query of queries) {
     if (byId.size >= cfg.MAX_CANDIDATES) break
     const key = `ao3:${query.url}`
-    let cands = readCache(key, cfg.CACHE_TTL_MS, now)
+    let cands = readCandidateCache<Candidate[]>(key, cfg.CACHE_TTL_MS, now)
     if (!cands) {
       try {
         cands = parseAo3ResultsPage(await fetchPage(query.url), cfg)
-        writeCache(key, cands, now)
+        writeCandidateCache(key, cands, now)
       } catch {
         cands = []
       }

@@ -31,9 +31,10 @@ function placeholders(n: number): string {
 }
 
 /**
- * Sum weights per term (case-insensitively, keeping first-seen casing) and return
- * heaviest-first with an alphabetical tie-break — deterministic for stable cache
- * keys / eyeball runs.
+ * Sum weights per term (case-insensitively) and return heaviest-first with an
+ * alphabetical tie-break. The kept casing is the lexicographically-first variant —
+ * chosen deterministically rather than by SQLite's unspecified row order, so cache
+ * keys / eyeball runs are stable.
  */
 function aggregate(entries: { term: string; weight: number }[]): WeightedTerm[] {
   const map = new Map<string, WeightedTerm>()
@@ -42,8 +43,12 @@ function aggregate(entries: { term: string; weight: number }[]): WeightedTerm[] 
     if (!display) continue
     const key = display.toLowerCase()
     const cur = map.get(key)
-    if (cur) cur.weight += weight
-    else map.set(key, { term: display, weight })
+    if (cur) {
+      cur.weight += weight
+      if (display < cur.term) cur.term = display // deterministic casing, order-independent
+    } else {
+      map.set(key, { term: display, weight })
+    }
   }
   return [...map.values()].sort((a, b) => b.weight - a.weight || a.term.localeCompare(b.term))
 }
