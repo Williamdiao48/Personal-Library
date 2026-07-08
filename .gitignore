@@ -53,3 +53,8 @@ resources/models/
 # Internal docs — never publish (architecture/parser references, planning,
 # audits, and the development journal). See docs/internal/README.md.
 docs/internal/
+
+# Throwaway eyeball-gate harnesses — opt-in, run against a COPY of the real
+# library. Named *.harness.test.ts so vitest can run them by path, but never
+# committed (they embed with the real model and read the user's real content).
+*.harness.test.ts
