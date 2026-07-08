@@ -9,7 +9,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 19
+export const CURRENT_VERSION = 20
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -126,6 +126,26 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
       text       TEXT    NOT NULL,
       weight     REAL    NOT NULL DEFAULT 1.0,
       created_at INTEGER NOT NULL
+    );
+  `,
+  // Recommender (Chunk 4): the two "real recommendations" seams.
+  //   dismissed_recommendations — books the user marked "not interested / already
+  //     read"; filtered out of future recs. Keyed by normalized title+author.
+  //   candidate_cache — a TTL cache of raw OpenLibrary search payloads keyed by
+  //     query, so repeat recommend() calls don't re-hit their free API.
+  // New tables — live here only, never in schema.ts SCHEMA (baseline gotcha).
+  20: `
+    CREATE TABLE IF NOT EXISTS dismissed_recommendations (
+      id           TEXT    PRIMARY KEY,
+      title        TEXT    NOT NULL,
+      author       TEXT,
+      source       TEXT,
+      dismissed_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS candidate_cache (
+      query_key    TEXT    PRIMARY KEY,
+      payload_json TEXT    NOT NULL,
+      fetched_at   INTEGER NOT NULL
     );
   `,
 }

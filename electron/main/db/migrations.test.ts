@@ -38,6 +38,8 @@ describe('database bring-up', () => {
       'goal_items',
       'item_embeddings',
       'taste_seeds',
+      'dismissed_recommendations',
+      'candidate_cache',
     ]) {
       expect(tables).toContain(t)
     }
@@ -135,6 +137,29 @@ describe('database bring-up', () => {
     expect(() => insert('title')).not.toThrow()
     expect(() => insert('vibe')).not.toThrow()
     expect(() => insert('nonsense')).toThrow()
+  })
+
+  // Migration 20 — the recommender "real recommendations" seams (Chunk 4).
+  it('dismissed_recommendations has the expected columns', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'dismissed_recommendations')).toEqual(
+      expect.arrayContaining(['id', 'title', 'author', 'source', 'dismissed_at']),
+    )
+  })
+
+  it('candidate_cache has the expected columns', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'candidate_cache')).toEqual(
+      expect.arrayContaining(['query_key', 'payload_json', 'fetched_at']),
+    )
+  })
+
+  it('candidate_cache.query_key is the primary key', () => {
+    const db = openTestDb()
+    const pk = (
+      db.prepare(`PRAGMA table_info(candidate_cache)`).all() as { name: string; pk: number }[]
+    ).filter((c) => c.pk > 0)
+    expect(pk.map((c) => c.name)).toEqual(['query_key'])
   })
 
   it('applies migrations incrementally from an empty (pre-schema) database', () => {
