@@ -54,14 +54,16 @@ const RESULTS_HTML = `<ol class="work index group">
 
 // ── buildAo3Queries (pure) ────────────────────────────────────────────────────
 describe('buildAo3Queries', () => {
-  it('anchors one query per top fandom, folding in the top relationship/freeform terms', () => {
+  it('anchors one fandom-only query per top fandom, sorted by kudos', () => {
     const seeds: TasteSeeds = {
       ...emptySeeds(),
       fandoms: [
         { term: 'Harry Potter', weight: 3 },
         { term: 'Naruto', weight: 1 },
       ],
-      relationships: [{ term: 'Enemies to Lovers', weight: 2 }],
+      // These MUST NOT leak into the query: FFN's abbreviated names match nothing
+      // on AO3 and would zero out the results (the bug the eyeball gate caught).
+      relationships: [{ term: 'Harry P./Fleur D.', weight: 2 }],
       freeforms: [{ term: 'Slow Burn', weight: 1 }],
     }
     const qs = buildAo3Queries(seeds)
@@ -69,8 +71,8 @@ describe('buildAo3Queries', () => {
     // URLSearchParams encodes spaces as '+' (form-encoding); normalize to check terms.
     const q0 = decodeURIComponent(qs[0].url).replace(/\+/g, ' ')
     expect(q0).toContain('"Harry Potter"')
-    expect(q0).toContain('"Enemies to Lovers"') // top extra folded in
-    expect(q0).toContain('"Slow Burn"')
+    expect(q0).not.toContain('Harry P./Fleur D.') // regression: no query-poisoning extras
+    expect(q0).not.toContain('Slow Burn')
     expect(qs[0].url).toContain('sort_column')
   })
 

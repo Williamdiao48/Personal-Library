@@ -17,7 +17,6 @@ import { readCandidateCache, writeCandidateCache } from '../candidateCache'
 
 export const AO3_SOURCE = {
   MAX_FANDOM_QUERIES: 4, // one fandom-anchored query each (respectful footprint)
-  EXTRA_TERMS: 2, // top relationship/freeform terms folded into every query
   MAX_SUBJECTS_PER_BLURB: 12, // cap the tags folded into a candidate's embed text
   MAX_CANDIDATES: 60, // cap the merged/deduped set
   CACHE_TTL_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
@@ -45,28 +44,23 @@ function ao3SearchUrl(query: string): string {
 }
 
 /**
- * Build fandom-anchored AO3 search queries from the taste seeds: one query per top
- * fandom, each refined by the user's top relationship/freeform terms and sorted by
- * kudos. With no fandoms to anchor on, fall back to a single freeform/relationship
- * query; with neither, `[]` (this library has no fanfic signal → skip AO3).
+ * Build AO3 search queries from the taste seeds: one **fandom-anchored** query per
+ * top fandom, sorted by kudos. Deliberately fandom-ONLY — we do NOT AND in the
+ * relationship/freeform terms, because those often come from FFN's abbreviated
+ * vocabulary ("Harry P./Fleur D.") that matches nothing on AO3 (full names, e.g.
+ * "Harry Potter/Fleur Delacour"), which would zero out the result set. Recall comes
+ * from the fandom + kudos sort; **precision comes from the taste-vector rerank**
+ * downstream, not from over-constraining the query. With no fandom, fall back to a
+ * single top freeform term (AO3-native vocab); with neither, `[]` (skip AO3).
  */
 export function buildAo3Queries(seeds: TasteSeeds, cfg = AO3_SOURCE): Ao3Query[] {
-  const extras = [...seeds.relationships, ...seeds.freeforms]
-    .sort((a, b) => b.weight - a.weight)
-    .slice(0, cfg.EXTRA_TERMS)
-    .map((t) => t.term)
-
   const queries: Ao3Query[] = []
   for (const f of seeds.fandoms.slice(0, cfg.MAX_FANDOM_QUERIES)) {
-    const q = [phrase(f.term), ...extras.map(phrase)].join(' ')
-    queries.push({ term: f.term, url: ao3SearchUrl(q), weight: f.weight })
+    queries.push({ term: f.term, url: ao3SearchUrl(phrase(f.term)), weight: f.weight })
   }
-  if (queries.length === 0 && extras.length > 0) {
-    queries.push({
-      term: extras.join(' '),
-      url: ao3SearchUrl(extras.map(phrase).join(' ')),
-      weight: 1,
-    })
+  if (queries.length === 0 && seeds.freeforms.length > 0) {
+    const top = seeds.freeforms[0]
+    queries.push({ term: top.term, url: ao3SearchUrl(phrase(top.term)), weight: top.weight })
   }
   return queries
 }
