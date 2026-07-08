@@ -1,7 +1,7 @@
 import { JSDOM } from 'jsdom'
 import { sanitize } from '../sanitizer'
 import { fetchPageWithBrowser, fetchPagesSequential, fetchPagesWithSession } from '../fetch'
-import type { SiteContent } from '../fetch'
+import type { SiteContent, SourceTag, SourceMeta } from '../fetch'
 import type { ChapterRange } from '../index'
 
 function escHtml(s: string): string {
@@ -10,6 +10,138 @@ function escHtml(s: string): string {
 
 // FF.net URL: https://www.fanfiction.net/s/{storyId}/{chapter}/{slug}
 const FFN_PATH_RE = /\/s\/(\d+)\/\d+\/?([^/?#]*)/
+
+// ── Native metadata extraction (F1) ──────────────────────────────────────────
+// FFN packs a story's metadata into a single `#profile_top span.xgray` line:
+//   "Rated: T - English - Adventure/Romance - [Harry P., Hermione G.] Ron W. -
+//    Chapters: 20 - Words: 50,000 - Favs: 500 - Follows: 300 - ... - Status: Complete - id: N"
+// parseFfnMetadata splits on " - " and classifies each segment. Genres are the
+// FFN fixed set (joined by "/", including the two-part "Hurt/Comfort"); the
+// character segment carries `[pairing]` brackets + comma-separated names. Pure +
+// defensive — a missing / restyled line yields an empty result, never throws.
+
+// FFN's fixed genre vocabulary (a story has 1–2, joined by "/").
+const FFN_GENRES = new Set([
+  'Adventure',
+  'Angst',
+  'Crime',
+  'Drama',
+  'Family',
+  'Fantasy',
+  'Friendship',
+  'General',
+  'Horror',
+  'Humor',
+  'Hurt/Comfort',
+  'Mystery',
+  'Parody',
+  'Poetry',
+  'Romance',
+  'Sci-Fi',
+  'Spiritual',
+  'Supernatural',
+  'Suspense',
+  'Tragedy',
+  'Western',
+])
+
+/** Parse "12,345" → 12345, or null for empty / non-numeric text. */
+function parseIntLoose(text: string | null | undefined): number | null {
+  const digits = (text ?? '').replace(/[^0-9]/g, '')
+  if (!digits) return null
+  const n = parseInt(digits, 10)
+  return Number.isFinite(n) ? n : null
+}
+
+/**
+ * Decompose a genre segment ("Adventure/Romance", "Romance/Hurt/Comfort") into
+ * FFN genres, honoring the two-part "Hurt/Comfort". Returns null if any piece
+ * isn't a known genre — i.e. the segment is actually the character list.
+ */
+function parseFfnGenres(seg: string): string[] | null {
+  const parts = seg.split('/')
+  const genres: string[] = []
+  let i = 0
+  while (i < parts.length) {
+    const two = i + 1 < parts.length ? `${parts[i]}/${parts[i + 1]}` : ''
+    if (two && FFN_GENRES.has(two)) {
+      genres.push(two)
+      i += 2
+    } else if (FFN_GENRES.has(parts[i])) {
+      genres.push(parts[i])
+      i += 1
+    } else {
+      return null
+    }
+  }
+  return genres.length ? genres : null
+}
+
+/** A character segment: `[a, b]` brackets → a relationship + its characters; the rest → characters. */
+function parseFfnCharacters(seg: string): SourceTag[] {
+  const out: SourceTag[] = []
+  const bracketRe = /\[([^\]]+)\]/g
+  let m: RegExpExecArray | null
+  while ((m = bracketRe.exec(seg))) {
+    const names = m[1]
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (names.length > 1) out.push({ name: names.join('/'), category: 'relationship' })
+    for (const n of names) out.push({ name: n, category: 'character' })
+  }
+  const loose = seg.replace(bracketRe, ' ')
+  for (const n of loose
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)) {
+    out.push({ name: n, category: 'character' })
+  }
+  return out
+}
+
+export function parseFfnMetadata(doc: Document): { tags: SourceTag[]; meta: SourceMeta } {
+  const tags: SourceTag[] = []
+  const meta: SourceMeta = {}
+  const text =
+    doc.querySelector('#profile_top span.xgray')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+  if (!text) return { tags, meta }
+
+  const segments = text
+    .split(' - ')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  segments.forEach((seg, i) => {
+    if (/^Rated:/i.test(seg)) {
+      meta.rating = seg.replace(/^Rated:\s*/i, '').trim() || undefined
+      return
+    }
+    if (i === 1) return // language always follows Rated — skip it
+    const kv = /^(Words|Favs|Follows|Chapters|Reviews):\s*([\d,]+)/i.exec(seg)
+    if (kv) {
+      const n = parseIntLoose(kv[2])
+      const key = kv[1].toLowerCase()
+      if (n != null && key === 'words') meta.words = n
+      else if (n != null && key === 'favs') meta.favs = n
+      else if (n != null && key === 'follows') meta.follows = n
+      return
+    }
+    if (/^Status:/i.test(seg)) {
+      meta.status = /complete/i.test(seg) ? 'complete' : 'in-progress'
+      return
+    }
+    if (/^(Updated|Published|id):/i.test(seg)) return
+    const genres = parseFfnGenres(seg)
+    if (genres) {
+      for (const g of genres) tags.push({ name: g, category: 'genre' })
+      return
+    }
+    for (const t of parseFfnCharacters(seg)) tags.push(t)
+  })
+
+  if (!meta.status) meta.status = 'in-progress' // FFN omits "Status:" for WIPs
+  return { tags, meta }
+}
 
 function extractChapter(doc: Document, chapterNum: number): { html: string; text: string } {
   // Chapter title from the selected option: "N. Title" or just "N"
@@ -145,11 +277,16 @@ export async function captureFfnet(
   const rawCover = ch1Doc.querySelector('#profile_top img')?.getAttribute('src') ?? null
   const coverUrl = rawCover ? new URL(rawCover, 'https://www.fanfiction.net').href : null
 
+  // Native tags + stats live in #profile_top on chapter 1 (fetched above).
+  const { tags, meta } = parseFfnMetadata(ch1Doc)
+
   return {
     title,
     author,
     html: chapterHtmlParts.join('\n'), // each chapter's content already sanitized in extractChapter
     textContent: chapterTextParts.join(' '),
     coverUrl,
+    sourceTags: tags,
+    sourceMeta: meta,
   }
 }

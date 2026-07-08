@@ -1,7 +1,7 @@
 import { JSDOM } from 'jsdom'
 import { sanitize } from '../sanitizer'
 import { fetchPage, fetchPagesWithSession } from '../fetch'
-import type { SiteContent } from '../fetch'
+import type { SiteContent, SourceTag, SourceMeta, TagCategory } from '../fetch'
 import type { ChapterRange } from '../index'
 
 function escHtml(s: string): string {
@@ -9,6 +9,60 @@ function escHtml(s: string): string {
 }
 
 const MAX_AO3_PAGES = 50
+
+// ── Native metadata extraction (F1) ──────────────────────────────────────────
+// AO3 renders a `dl.work.meta` tag block and a `dl.stats` block on the work page.
+// captureAo3 already has that DOM in hand — parseAo3Metadata lifts the structured
+// tags (fandom/relationship/character/freeform/warning) + stats (rating, kudos,
+// words, complete-vs-WIP) that the recommender needs. Pure + defensive: every
+// field is optional, so a layout change or a missing block yields a partial (or
+// empty) result rather than throwing.
+
+/** Parse "12,345" → 12345, or null for empty / non-numeric text. */
+function parseIntLoose(text: string | null | undefined): number | null {
+  const digits = (text ?? '').replace(/[^0-9]/g, '')
+  if (!digits) return null
+  const n = parseInt(digits, 10)
+  return Number.isFinite(n) ? n : null
+}
+
+/** All `a.tag` texts under a `dd.<category>` group, as SourceTags. */
+function collectAo3Tags(doc: Document, selector: string, category: TagCategory): SourceTag[] {
+  return Array.from(doc.querySelectorAll(selector))
+    .map((el) => el.textContent?.trim())
+    .filter((t): t is string => !!t)
+    .map((name) => ({ name, category }))
+}
+
+/** AO3 `dd.chapters` text is "X/Y": "5/?" or "5/10" → WIP, "5/5" → complete. */
+function ao3Status(chaptersText: string): SourceMeta['status'] | undefined {
+  const m = /^(\d+)\s*\/\s*(\S+)$/.exec(chaptersText.trim())
+  if (!m) return undefined
+  if (m[2] === '?') return 'in-progress'
+  return m[1] === m[2] ? 'complete' : 'in-progress'
+}
+
+export function parseAo3Metadata(doc: Document): { tags: SourceTag[]; meta: SourceMeta } {
+  const tags: SourceTag[] = [
+    ...collectAo3Tags(doc, 'dd.fandom a.tag', 'fandom'),
+    ...collectAo3Tags(doc, 'dd.relationship a.tag', 'relationship'),
+    ...collectAo3Tags(doc, 'dd.character a.tag', 'character'),
+    ...collectAo3Tags(doc, 'dd.freeform a.tag', 'freeform'),
+    ...collectAo3Tags(doc, 'dd.warning a.tag', 'warning'),
+  ]
+
+  const meta: SourceMeta = {}
+  const rating = doc.querySelector('dd.rating a.tag')?.textContent?.trim()
+  if (rating) meta.rating = rating
+  const kudos = parseIntLoose(doc.querySelector('dd.kudos')?.textContent)
+  if (kudos != null) meta.kudos = kudos
+  const words = parseIntLoose(doc.querySelector('dd.words')?.textContent)
+  if (words != null) meta.words = words
+  const status = ao3Status(doc.querySelector('dd.chapters')?.textContent ?? '')
+  if (status) meta.status = status
+
+  return { tags, meta }
+}
 
 // ── Chapter-count check (lightweight) ────────────────────────────────────────
 // Fetches just the first chapter page (not full work) to read the metadata
@@ -131,11 +185,17 @@ export async function captureAo3(
     assembled = sanitize(userstuff?.innerHTML ?? '')
   }
 
+  // Native tags + stats come from the work page (page 1); the recommender reads
+  // them post-capture (F2 persistence).
+  const { tags, meta } = parseAo3Metadata(page1Doc)
+
   return {
     title,
     author,
     html: assembled,
     textContent: textParts.join(' '),
     coverUrl,
+    sourceTags: tags,
+    sourceMeta: meta,
   }
 }

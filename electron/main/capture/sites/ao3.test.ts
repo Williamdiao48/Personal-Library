@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { JSDOM } from 'jsdom'
 
 // captureAo3's only coupling is the network layer (fetch.ts). Mock it and feed
 // AO3-shaped HTML so the real extraction / sanitize / multi-chapter assembly /
@@ -8,13 +9,32 @@ vi.mock('../fetch', () => ({
   fetchPagesWithSession: vi.fn(),
 }))
 
-import { captureAo3 } from './ao3'
+import { captureAo3, parseAo3Metadata } from './ao3'
 import { fetchPage, fetchPagesWithSession } from '../fetch'
 
 const mockFetchPage = vi.mocked(fetchPage)
 const mockFetchPages = vi.mocked(fetchPagesWithSession)
 
-function ao3Page(chapters: string[], opts: { next?: boolean; ogImage?: string } = {}): string {
+// The AO3 tag + stats blocks as the real work page renders them.
+const AO3_META = `
+  <dl class="work meta group">
+    <dd class="fandom tags"><ul class="commas"><li><a class="tag">Harry Potter - J. K. Rowling</a></li></ul></dd>
+    <dd class="rating tags"><ul class="commas"><li><a class="tag">Explicit</a></li></ul></dd>
+    <dd class="warning tags"><ul class="commas"><li><a class="tag">No Archive Warnings Apply</a></li></ul></dd>
+    <dd class="relationship tags"><ul class="commas"><li><a class="tag">Hermione Granger/Draco Malfoy</a></li></ul></dd>
+    <dd class="character tags"><ul class="commas">
+      <li><a class="tag">Hermione Granger</a></li><li><a class="tag">Draco Malfoy</a></li></ul></dd>
+    <dd class="freeform tags"><ul class="commas">
+      <li><a class="tag">Enemies to Lovers</a></li><li><a class="tag">Slow Burn</a></li></ul></dd>
+  </dl>
+  <dl class="stats">
+    <dd class="words">50,123</dd><dd class="chapters">5/5</dd><dd class="kudos">1,234</dd>
+  </dl>`
+
+function ao3Page(
+  chapters: string[],
+  opts: { next?: boolean; ogImage?: string; meta?: boolean } = {},
+): string {
   const chapterEls = chapters
     .map(
       (body, i) => `
@@ -29,7 +49,7 @@ function ao3Page(chapters: string[], opts: { next?: boolean; ogImage?: string } 
   </head><body>
     <h2 class="title heading">My Great Work</h2>
     <h3 class="byline heading"><a rel="author" href="/users/x">Author X</a></h3>
-    <dd class="chapters">${chapters.length}/${chapters.length}</dd>
+    ${opts.meta ? AO3_META : `<dd class="chapters">${chapters.length}/${chapters.length}</dd>`}
     <div id="workskin"><div id="chapters">${chapterEls}</div></div>
     ${opts.next ? '<a rel="next" href="?page=2">Next</a>' : ''}
   </body></html>`
@@ -88,5 +108,47 @@ describe('captureAo3', () => {
 
   it('throws when the URL has no parseable work id', async () => {
     await expect(captureAo3('https://archiveofourown.org/not-a-work')).rejects.toThrow(/work ID/i)
+  })
+
+  it('surfaces native AO3 tags + stats on the captured content (F1)', async () => {
+    mockFetchPage.mockResolvedValue(ao3Page(['<p>x</p>'], { meta: true }))
+    const result = await captureAo3('https://archiveofourown.org/works/5')
+    expect(result.sourceTags).toContainEqual({ name: 'Enemies to Lovers', category: 'freeform' })
+    expect(result.sourceTags).toContainEqual({
+      name: 'Hermione Granger/Draco Malfoy',
+      category: 'relationship',
+    })
+    expect(result.sourceMeta).toMatchObject({ kudos: 1234, words: 50123, status: 'complete' })
+  })
+})
+
+describe('parseAo3Metadata', () => {
+  const docOf = (html: string) => new JSDOM(html).window.document
+
+  it('extracts categorized tags and stats from the work page', () => {
+    const { tags, meta } = parseAo3Metadata(docOf(AO3_META))
+    expect(tags).toContainEqual({ name: 'Harry Potter - J. K. Rowling', category: 'fandom' })
+    expect(tags).toContainEqual({ name: 'Hermione Granger/Draco Malfoy', category: 'relationship' })
+    expect(tags.filter((t) => t.category === 'character').map((t) => t.name)).toEqual([
+      'Hermione Granger',
+      'Draco Malfoy',
+    ])
+    expect(tags.filter((t) => t.category === 'freeform').map((t) => t.name)).toEqual([
+      'Enemies to Lovers',
+      'Slow Burn',
+    ])
+    expect(meta).toMatchObject({
+      rating: 'Explicit',
+      kudos: 1234,
+      words: 50123,
+      status: 'complete',
+    })
+  })
+
+  it('marks a WIP work in-progress and tolerates a missing meta block', () => {
+    expect(parseAo3Metadata(docOf('<dd class="chapters">3/?</dd>')).meta.status).toBe('in-progress')
+    const empty = parseAo3Metadata(docOf('<p>no metadata here</p>'))
+    expect(empty.tags).toEqual([])
+    expect(empty.meta).toEqual({})
   })
 })

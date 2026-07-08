@@ -1,5 +1,27 @@
 import { BrowserWindow, session as electronSession } from 'electron'
 
+// A native structured tag lifted from a fanfic site's own metadata block (AO3's
+// tag groups, FFN's #profile_top line) — the richest taste signal for a fic. The
+// `category` is what makes it more than a flat name: it drives tag-native
+// candidate queries (fandom-anchored) and hybrid chip surfacing (F2).
+export type TagCategory =
+  'fandom' | 'relationship' | 'character' | 'freeform' | 'genre' | 'rating' | 'warning'
+
+export interface SourceTag {
+  name: string
+  category: TagCategory
+}
+
+/** Native per-work stats from a fanfic site (all optional; sites differ). */
+export interface SourceMeta {
+  kudos?: number // AO3
+  favs?: number // FFN
+  follows?: number // FFN
+  words?: number
+  status?: 'complete' | 'in-progress'
+  rating?: string // e.g. AO3 "Explicit", FFN "Fiction T"
+}
+
 // Shared content shape returned by all site strategies
 export interface SiteContent {
   title: string
@@ -7,6 +29,8 @@ export interface SiteContent {
   html: string // sanitized HTML to store
   textContent: string // plain text for FTS and word count
   coverUrl?: string | null // absolute URL of a cover image to download (optional)
+  sourceTags?: SourceTag[] // native structured tags (AO3/FFN); absent for other sites
+  sourceMeta?: SourceMeta // native per-work stats (AO3/FFN)
 }
 
 // Explicit hardened prefs for the hidden capture windows (F6). These load
