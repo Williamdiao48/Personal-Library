@@ -9,7 +9,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 18
+export const CURRENT_VERSION = 19
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -112,6 +112,20 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
       model_version TEXT    NOT NULL,
       content_hash  TEXT    NOT NULL,
       embedded_at   INTEGER NOT NULL
+    );
+  `,
+  // Recommender (Chunk 3): the cold-start "taste seeds" seam — free-text titles
+  // and vibe chips the user names in the (deferred, post-MVP) onboarding prompt,
+  // folded into the taste vector as high-weight synthetic likes. Empty in v1;
+  // the table exists now so lighting the seam up needs no future migration.
+  // New table — lives here only, never in schema.ts SCHEMA (baseline gotcha).
+  19: `
+    CREATE TABLE IF NOT EXISTS taste_seeds (
+      id         TEXT    PRIMARY KEY,
+      kind       TEXT    NOT NULL CHECK(kind IN ('title', 'vibe')),
+      text       TEXT    NOT NULL,
+      weight     REAL    NOT NULL DEFAULT 1.0,
+      created_at INTEGER NOT NULL
     );
   `,
 }

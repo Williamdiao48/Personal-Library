@@ -37,6 +37,7 @@ describe('database bring-up', () => {
       'goals',
       'goal_items',
       'item_embeddings',
+      'taste_seeds',
     ]) {
       expect(tables).toContain(t)
     }
@@ -113,6 +114,27 @@ describe('database bring-up', () => {
     expect(db.prepare(`SELECT COUNT(*) c FROM item_embeddings`).get()).toMatchObject({ c: 1 })
     db.prepare(`DELETE FROM items WHERE id = 'e1'`).run()
     expect(db.prepare(`SELECT COUNT(*) c FROM item_embeddings`).get()).toMatchObject({ c: 0 })
+  })
+
+  // Migration 19 — the recommender taste-seeds seam (Chunk 3).
+  it('taste_seeds has the expected columns', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'taste_seeds')).toEqual(
+      expect.arrayContaining(['id', 'kind', 'text', 'weight', 'created_at']),
+    )
+  })
+
+  it('taste_seeds.kind is constrained to title/vibe', () => {
+    const db = openTestDb()
+    const insert = (kind: string) =>
+      db
+        .prepare(
+          `INSERT INTO taste_seeds (id, kind, text, weight, created_at) VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(kind, kind, 'x', 1.0, 0)
+    expect(() => insert('title')).not.toThrow()
+    expect(() => insert('vibe')).not.toThrow()
+    expect(() => insert('nonsense')).toThrow()
   })
 
   it('applies migrations incrementally from an empty (pre-schema) database', () => {
