@@ -3,11 +3,13 @@ import type { Embedder } from './embedder-core'
 import { itemMetadataText } from './embeddingText'
 import { cosine } from './vectorMath'
 import { buildTaste } from './taste'
+import { buildTasteSeeds } from './tasteSeeds'
 import { candidateKey, type Candidate } from './candidates'
 import { unionCandidates, type CandidateSource } from './candidateSource'
 import { openLibrarySource } from './sources/openLibrary'
 import { ao3Source } from './sources/ao3'
 import { ffnSource } from './sources/ffn'
+import type { Recommendation } from '../../../src/types'
 
 // C4.4 + F4 — the rerank (§9 steps 2–4): union the candidate sources (books + AO3
 // fics), filter against what the user already owns/dismissed, embed each into the
@@ -38,15 +40,42 @@ export function defaultSources(): CandidateSource[] {
   return [ao3Source, ffnSource, openLibrarySource]
 }
 
-/** A finished recommendation: a real book the user doesn't own, ranked to taste. */
-export interface RecommendationCard {
-  title: string
-  author: string | null
-  coverUrl: string | null
-  sourceId: string
-  score: number
-  /** LLM "why we picked this" blurb — unset in Chunk 4 (Chunk 5 / §11). */
-  why?: string
+/**
+ * A finished recommendation, ranked to taste. The shape lives in `src/types`
+ * (`Recommendation`) so the renderer and the IPC boundary share one definition;
+ * re-exported here under the historical name for existing call sites.
+ */
+export type RecommendationCard = Recommendation
+
+const OPENLIBRARY_ORIGIN = 'https://openlibrary.org'
+
+/**
+ * Resolve a candidate to an openable http(s) URL. AO3/FFN fics already carry the
+ * work URL as `sourceId`; OpenLibrary books carry a work KEY (`/works/OL…W`) that
+ * must be prefixed with the origin. Pure.
+ */
+export function candidateUrl(cand: Candidate): string {
+  const id = cand.sourceId
+  if (/^https?:\/\//i.test(id)) return id
+  if (cand.source === 'book') return `${OPENLIBRARY_ORIGIN}${id.startsWith('/') ? '' : '/'}${id}`
+  return id
+}
+
+/**
+ * The deterministic "why": the candidate's own subjects that overlap the reader's
+ * taste-seed terms (case-insensitive), order-preserving on `subjects` and capped.
+ * Empty when there's no overlap (e.g. an FFN→AO3 vocab gap) — the UI then falls
+ * back to the candidate's own top subjects. Pure.
+ */
+export function matchedTags(subjects: string[], seedTerms: Set<string>, cap = 6): string[] {
+  const out: string[] = []
+  for (const s of subjects) {
+    if (seedTerms.has(s.toLowerCase())) {
+      out.push(s)
+      if (out.length >= cap) break
+    }
+  }
+  return out
 }
 
 /** A candidate paired with its embedding + taste score, carried through MMR. */
@@ -175,9 +204,23 @@ function loadExclusions(): ExcludeSets {
 export async function recommend(
   embedder: Embedder,
   sources: CandidateSource[] = defaultSources(),
-): Promise<RecommendationCard[]> {
+): Promise<Recommendation[]> {
   const taste = buildTaste()
   if (taste.centroids.length === 0) return [] // cold start — no taste, no recs (§8)
+
+  // The reader's taste terms (lowercased union of every seed category) — the set a
+  // candidate's own subjects are matched against for the deterministic "why" chips.
+  const seeds = buildTasteSeeds(taste.liked)
+  const seedTerms = new Set(
+    [
+      ...seeds.authors,
+      ...seeds.fandoms,
+      ...seeds.relationships,
+      ...seeds.characters,
+      ...seeds.freeforms,
+      ...seeds.genres,
+    ].map((t) => t.term.toLowerCase()),
+  )
 
   const pools: Candidate[][] = []
   for (const s of sources) {
@@ -214,6 +257,10 @@ export async function recommend(
     author: c.author,
     coverUrl: c.coverUrl,
     sourceId: c.sourceId,
+    source: c.source,
+    url: candidateUrl(c),
+    subjects: c.subjects,
+    matchedTags: matchedTags(c.subjects, seedTerms),
     score: scoreById.get(c.sourceId) ?? 0,
   }))
 }

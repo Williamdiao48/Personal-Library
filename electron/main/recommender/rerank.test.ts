@@ -14,6 +14,8 @@ import { run } from '../db'
 import { encodeVector } from './embeddingCodec'
 import {
   candidateKey,
+  candidateUrl,
+  matchedTags,
   filterCandidates,
   scoreCandidate,
   mmrSelect,
@@ -145,6 +147,52 @@ describe('verifyCandidates', () => {
   })
 })
 
+// ── candidateUrl (pure) ──────────────────────────────────────────────────────
+describe('candidateUrl', () => {
+  it('prefixes an OpenLibrary work key with the origin', () => {
+    expect(candidateUrl(cand({ source: 'book', sourceId: '/works/OL45804W' }))).toBe(
+      'https://openlibrary.org/works/OL45804W',
+    )
+  })
+
+  it('inserts a slash when a book key lacks a leading one', () => {
+    expect(candidateUrl(cand({ source: 'book', sourceId: 'works/OL1W' }))).toBe(
+      'https://openlibrary.org/works/OL1W',
+    )
+  })
+
+  it('passes an AO3/FFN work URL through unchanged', () => {
+    const url = 'https://archiveofourown.org/works/9'
+    expect(candidateUrl(cand({ source: 'ao3', sourceId: url }))).toBe(url)
+  })
+
+  it('never double-prefixes a book that already carries a full URL', () => {
+    const url = 'https://openlibrary.org/works/OL2W'
+    expect(candidateUrl(cand({ source: 'book', sourceId: url }))).toBe(url)
+  })
+})
+
+// ── matchedTags (pure) ───────────────────────────────────────────────────────
+describe('matchedTags', () => {
+  const seeds = new Set(['harry potter', 'slow burn', 'romance'])
+
+  it('keeps the candidate subjects that overlap the taste seeds, case-insensitively', () => {
+    expect(matchedTags(['Harry Potter', 'Adventure', 'Slow Burn'], seeds)).toEqual([
+      'Harry Potter',
+      'Slow Burn',
+    ])
+  })
+
+  it('returns [] (UI falls back to own subjects) when nothing overlaps', () => {
+    expect(matchedTags(['Mystery', 'Noir'], seeds)).toEqual([])
+  })
+
+  it('preserves subject order and caps the result', () => {
+    const many = ['romance', 'slow burn', 'harry potter']
+    expect(matchedTags(many, seeds, 2)).toEqual(['romance', 'slow burn'])
+  })
+})
+
 // ── recommend (orchestrator: db + mocked fetch + stub embedder) ──────────────
 describe('recommend', () => {
   let db: TestDb
@@ -221,6 +269,32 @@ describe('recommend', () => {
     expect(out[0].sourceId).toBe('/works/F1')
     expect(out[0].why).toBeUndefined() // no LLM blurb in Chunk 4
     expect(out[0].score).toBeCloseTo(1, 5) // candidate east vs. east centroid
+    // Widened output (C5.1): source badge, an openable URL, own subjects, "why" chips.
+    expect(out[0].source).toBe('book')
+    expect(out[0].url).toBe('https://openlibrary.org/works/F1')
+    expect(out[0].subjects).toEqual(['Fantasy'])
+    expect(out[0].matchedTags).toEqual([]) // liked item has no native tags → no overlap
+  })
+
+  it('fills matchedTags with the taste tags a candidate shares (the deterministic why)', async () => {
+    // A liked item carrying a native "Fantasy" tag → it lands in the taste seeds;
+    // a candidate whose subjects include "Fantasy" then matches it ("War" does not).
+    const liked = seedLikedItem({ title: 'Seed', author: 'S' })
+    run(`INSERT INTO item_source_tags (item_id, name, category) VALUES (?, ?, ?)`, [
+      liked,
+      'Fantasy',
+      'freeform',
+    ])
+    fetchMock.mockResolvedValue(
+      okJson({
+        docs: [
+          doc({ key: '/works/M', title: 'Match', author_name: ['A'], subject: ['Fantasy', 'War'] }),
+        ],
+      }),
+    )
+
+    const out = await recommend(stubEmbedder, [openLibrarySource])
+    expect(out[0].matchedTags).toEqual(['Fantasy'])
   })
 
   it('caps the result at TOP_K', async () => {
