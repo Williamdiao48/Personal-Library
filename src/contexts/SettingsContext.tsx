@@ -44,6 +44,7 @@ export interface AppSettings {
   gridDensity: GridDensity
   defaultSort: SortBy
   customThemes: CustomTheme[]
+  enableDiscover: boolean // show the Discover recommendations panel
 }
 
 const CUSTOM_THEME_VARS: Array<[keyof CustomTheme, string]> = [
@@ -65,6 +66,7 @@ const DEFAULTS: AppSettings = {
   gridDensity: 'normal',
   defaultSort: 'date_saved',
   customThemes: [],
+  enableDiscover: true,
 }
 
 const STORAGE_KEY = 'app-settings'

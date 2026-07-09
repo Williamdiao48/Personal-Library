@@ -9,6 +9,11 @@ vi.mock('../../contexts/UpdaterContext', () => ({
   useUpdater: () => ({ pendingVersion: updaterState.pendingVersion, setPendingVersion: vi.fn() }),
 }))
 
+const settingsState = vi.hoisted(() => ({ enableDiscover: true }))
+vi.mock('../../contexts/SettingsContext', () => ({
+  useSettings: () => ({ settings: { enableDiscover: settingsState.enableDiscover } }),
+}))
+
 function mgmt(over: Partial<React.ComponentProps<typeof Sidebar>['collectionMgmt']> = {}) {
   return {
     collections: [] as Collection[],
@@ -58,6 +63,7 @@ const runningJob = (over: Partial<CaptureJob> = {}): CaptureJob => ({
 beforeEach(() => {
   vi.clearAllMocks()
   updaterState.pendingVersion = null
+  settingsState.enableDiscover = true
 })
 
 describe('Sidebar — navigation', () => {
@@ -75,6 +81,17 @@ describe('Sidebar — navigation', () => {
   it('marks Manage Tags active on the tags route', () => {
     renderSidebar({}, ['/tags'])
     expect(screen.getByRole('link', { name: 'Manage Tags' }).className).toContain('active')
+  })
+
+  it('shows the Discover nav entry when the setting is enabled', () => {
+    renderSidebar()
+    expect(screen.getByRole('link', { name: 'Discover' })).toHaveAttribute('href', '/discover')
+  })
+
+  it('hides the Discover nav entry when the setting is disabled', () => {
+    settingsState.enableDiscover = false
+    renderSidebar()
+    expect(screen.queryByRole('link', { name: 'Discover' })).not.toBeInTheDocument()
   })
 })
 

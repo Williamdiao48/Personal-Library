@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Navigate } from 'react-router-dom'
 import { discoverService } from '../../services/discover'
 import { useToast } from '../../contexts/ToastContext'
+import { useSettings } from '../../contexts/SettingsContext'
 import AddItemModal from '../Capture/AddItemModal'
 import RecommendationCard from './RecommendationCard'
 import type { Recommendation } from '../../types'
@@ -22,6 +23,7 @@ export function formatRelativeTime(ts: number, now: number = Date.now()): string
 export default function DiscoverView() {
   const navigate = useNavigate()
   const { addToast, updateToast } = useToast()
+  const { settings } = useSettings()
 
   const [cards, setCards] = useState<Recommendation[]>([])
   const [generatedAt, setGeneratedAt] = useState<number | null>(null)
@@ -89,6 +91,10 @@ export default function DiscoverView() {
     generatedAt !== null && cards.length > 0
       ? `Updated ${formatRelativeTime(generatedAt)} · ${cards.length} picks`
       : ''
+
+  // Guard: if the feature is disabled in Settings, the route is unreachable
+  // (belt-and-suspenders with the hidden Sidebar nav entry).
+  if (!settings.enableDiscover) return <Navigate to="/" replace />
 
   return (
     <div className="discover-layout">

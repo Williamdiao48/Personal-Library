@@ -25,6 +25,10 @@ vi.mock('../../contexts/ToastContext', () => ({
   useToast: () => ({ addToast, updateToast, removeToast: vi.fn() }),
 }))
 
+vi.mock('../../contexts/SettingsContext', () => ({
+  useSettings: () => ({ settings: { enableDiscover: true } }),
+}))
+
 // AddItemModal is heavy (capture/library services) — stub it to surface initialUrl.
 vi.mock('../Capture/AddItemModal', () => ({
   default: ({ initialUrl, onClose }: { initialUrl?: string; onClose: () => void }) => (
