@@ -4,7 +4,7 @@ import { itemMetadataText } from './embeddingText'
 import { cosine } from './vectorMath'
 import { buildTaste } from './taste'
 import { buildTasteSeeds } from './tasteSeeds'
-import { candidateKey, type Candidate } from './candidates'
+import { candidateKey, type Candidate, type SourceName } from './candidates'
 import { unionCandidates, type CandidateSource } from './candidateSource'
 import { openLibrarySource } from './sources/openLibrary'
 import { ao3Source } from './sources/ao3'
@@ -28,7 +28,7 @@ import type { Recommendation } from '../../../src/types'
 
 export const RERANK = {
   LAMBDA: 0.7, // MMR: relevance vs. diversity trade-off (§9, D6)
-  TOP_K: 10, // how many cards recommend() emits
+  TOP_K: 12, // how many cards recommend() emits
 } as const
 
 // candidateKey moved to candidates.ts (shared dedup identity); re-exported so
@@ -153,6 +153,61 @@ export function mmrSelect(scored: ScoredCandidate[], k: number, lambda: number):
   return selected
 }
 
+// ── source-balanced selection ─────────────────────────────────────────────────
+// Pure embedding similarity ignores WHICH source a pick came from, so a library
+// with a strong fandom signal (e.g. lots of Harry Potter fics) lets fics occupy
+// the top score band and crowd books out — even when the library is mostly books.
+// We instead split the picks into a "book" and a "fic" bucket and fill each to a
+// quota proportional to the reader's own library composition, running MMR within
+// each bucket. So the recommendation mix mirrors what they actually read.
+
+/** Coarse bucket a candidate/library item falls in: published book vs fanfiction. */
+export type SourceBucket = 'book' | 'fic'
+
+/** ao3 + ffn are both fanfiction; everything else (books, imports) is `book`. */
+export function bucketOf(source: SourceName): SourceBucket {
+  return source === 'book' ? 'book' : 'fic'
+}
+
+/**
+ * Split `k` slots between book and fic in proportion to the library mix, rounding
+ * the book share and giving fic the remainder. All-of-one-kind → all slots there.
+ * Pure.
+ */
+export function allocateSlots(
+  k: number,
+  mix: { book: number; fic: number },
+): { book: number; fic: number } {
+  const total = mix.book + mix.fic
+  if (total === 0) return { book: k, fic: 0 }
+  const book = Math.round((mix.book / total) * k)
+  return { book, fic: k - book }
+}
+
+/**
+ * Select up to `k` picks honoring the per-bucket quota: MMR within each bucket for
+ * its allotment, then—if a bucket underfills its quota—top the result up to `k`
+ * from the best remaining candidates of either bucket (so the mix is a target, not
+ * a hard cap that could shrink the feed). Final order is score-descending. Pure.
+ */
+export function selectByQuota(
+  scored: ScoredCandidate[],
+  k: number,
+  alloc: { book: number; fic: number },
+  lambda: number,
+): ScoredCandidate[] {
+  const book = scored.filter((s) => bucketOf(s.cand.source) === 'book')
+  const fic = scored.filter((s) => bucketOf(s.cand.source) === 'fic')
+  const picked = [...mmrSelect(book, alloc.book, lambda), ...mmrSelect(fic, alloc.fic, lambda)]
+
+  if (picked.length < k) {
+    const takenIds = new Set(picked.map((s) => s.cand.sourceId))
+    const rest = scored.filter((s) => !takenIds.has(s.cand.sourceId))
+    picked.push(...mmrSelect(rest, k - picked.length, lambda))
+  }
+  return picked.sort((a, b) => b.score - a.score)
+}
+
 /**
  * Guardrail (§9 step 4, D-C4-6): keep only picks that exist in the fetched set
  * (by normalized key). A no-op in Chunk 4 — picks are drawn from the fetched
@@ -187,6 +242,21 @@ function loadExclusions(): ExcludeSets {
   }
 
   return { keys, ids }
+}
+
+const FANFIC_URL_RE = /archiveofourown\.org|fanfiction\.net/i
+
+/** The reader's library composition — book vs fic — for proportional allocation. */
+function libraryMix(): { book: number; fic: number } {
+  let book = 0
+  let fic = 0
+  for (const r of all<{ source_url: string | null }>(
+    `SELECT source_url FROM items WHERE deleted_at IS NULL`,
+  )) {
+    if (r.source_url && FANFIC_URL_RE.test(r.source_url)) fic++
+    else book++
+  }
+  return { book, fic }
 }
 
 // ── orchestrator ──────────────────────────────────────────────────────────────
@@ -245,7 +315,11 @@ export async function recommend(
     score: scoreCandidate(vecs[i], taste.centroids),
   }))
 
-  const selected = mmrSelect(scored, RERANK.TOP_K, RERANK.LAMBDA)
+  // Source-balanced selection: fill book/fic quotas proportional to the library
+  // mix so the feed mirrors what the reader actually reads (not just whichever
+  // source has the strongest embedding match).
+  const alloc = allocateSlots(RERANK.TOP_K, libraryMix())
+  const selected = selectByQuota(scored, RERANK.TOP_K, alloc, RERANK.LAMBDA)
   const scoreById = new Map(selected.map((s) => [s.cand.sourceId, s.score]))
   const verified = verifyCandidates(
     selected.map((s) => s.cand),

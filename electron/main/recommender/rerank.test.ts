@@ -19,6 +19,9 @@ import {
   filterCandidates,
   scoreCandidate,
   mmrSelect,
+  bucketOf,
+  allocateSlots,
+  selectByQuota,
   verifyCandidates,
   recommend,
   RERANK,
@@ -135,6 +138,68 @@ describe('mmrSelect', () => {
       scored({ cand: cand({ sourceId: `s${i}` }), vec: v(1, 0), score: 1 - i * 0.1 }),
     )
     expect(mmrSelect(items, 3, 0.7)).toHaveLength(3)
+  })
+})
+
+// ── source-balanced selection (pure) ─────────────────────────────────────────
+describe('bucketOf', () => {
+  it('groups ao3 + ffn as fic and book as book', () => {
+    expect(bucketOf('book')).toBe('book')
+    expect(bucketOf('ao3')).toBe('fic')
+    expect(bucketOf('ffn')).toBe('fic')
+  })
+})
+
+describe('allocateSlots', () => {
+  it('splits slots proportional to the library mix (60/40 book → 7/5 of 12)', () => {
+    expect(allocateSlots(12, { book: 15, fic: 10 })).toEqual({ book: 7, fic: 5 })
+  })
+
+  it('gives every slot to the only kind present', () => {
+    expect(allocateSlots(10, { book: 8, fic: 0 })).toEqual({ book: 10, fic: 0 })
+    expect(allocateSlots(10, { book: 0, fic: 3 })).toEqual({ book: 0, fic: 10 })
+  })
+
+  it('falls back to all-book when the library is empty', () => {
+    expect(allocateSlots(10, { book: 0, fic: 0 })).toEqual({ book: 10, fic: 0 })
+  })
+})
+
+describe('selectByQuota', () => {
+  const b = (id: string, s: number) =>
+    scored({ cand: cand({ sourceId: id, source: 'book' }), vec: v(1, 0), score: s })
+  const f = (id: string, s: number) =>
+    scored({ cand: cand({ sourceId: id, source: 'ao3' }), vec: v(1, 0), score: s })
+
+  it('honors the book quota even when fics score higher (the reported skew)', () => {
+    // 4 fics all outscore the 2 books, but a 2/2 quota still surfaces both books.
+    const pool = [
+      f('f1', 0.9),
+      f('f2', 0.88),
+      f('f3', 0.86),
+      f('f4', 0.84),
+      b('b1', 0.7),
+      b('b2', 0.6),
+    ]
+    const out = selectByQuota(pool, 4, { book: 2, fic: 2 }, 0.7)
+    const buckets = out.map((s) => s.cand.source)
+    expect(buckets.filter((x) => x === 'book')).toHaveLength(2)
+    expect(buckets.filter((x) => x === 'ao3')).toHaveLength(2)
+    expect(out).toHaveLength(4)
+  })
+
+  it('tops up from the other bucket when one underfills its quota (never shrinks the feed)', () => {
+    // Only 1 book but the quota wants 2 → the extra slot overflows to fic.
+    const pool = [f('f1', 0.9), f('f2', 0.85), f('f3', 0.8), b('b1', 0.6)]
+    const out = selectByQuota(pool, 4, { book: 2, fic: 2 }, 0.7)
+    expect(out).toHaveLength(4)
+    expect(out.filter((s) => s.cand.source === 'book')).toHaveLength(1)
+  })
+
+  it('returns picks in score-descending order', () => {
+    const pool = [b('b1', 0.5), f('f1', 0.9), b('b2', 0.7)]
+    const out = selectByQuota(pool, 3, { book: 2, fic: 1 }, 0.7)
+    expect(out.map((s) => s.score)).toEqual([0.9, 0.7, 0.5])
   })
 })
 
