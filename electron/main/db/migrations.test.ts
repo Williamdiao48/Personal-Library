@@ -42,6 +42,7 @@ describe('database bring-up', () => {
       'candidate_cache',
       'item_source_tags',
       'item_source_meta',
+      'tag_alias',
     ]) {
       expect(tables).toContain(t)
     }
@@ -198,6 +199,24 @@ describe('database bring-up', () => {
     db.prepare(`DELETE FROM items WHERE id = 's1'`).run()
     expect(db.prepare(`SELECT COUNT(*) c FROM item_source_tags`).get()).toMatchObject({ c: 0 })
     expect(db.prepare(`SELECT COUNT(*) c FROM item_source_meta`).get()).toMatchObject({ c: 0 })
+  })
+
+  // Migration 22 — the autocomplete vocab-bridge cache (raw→canonical tag names).
+  it('tag_alias has the expected columns and upserts by (raw, kind)', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'tag_alias')).toEqual(
+      expect.arrayContaining(['raw', 'kind', 'canonical', 'resolved_at']),
+    )
+    const upsert = db.prepare(
+      `INSERT INTO tag_alias (raw, kind, canonical, resolved_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(raw, kind) DO UPDATE SET canonical = excluded.canonical, resolved_at = excluded.resolved_at`,
+    )
+    upsert.run('Harry P.', 'character', 'Harry Potter', 1)
+    upsert.run('Harry P.', 'character', 'Harry Potter (Movies)', 2) // same key → updates
+    expect(db.prepare(`SELECT COUNT(*) c FROM tag_alias`).get()).toMatchObject({ c: 1 })
+    expect(db.prepare(`SELECT canonical FROM tag_alias`).get()).toMatchObject({
+      canonical: 'Harry Potter (Movies)',
+    })
   })
 
   it('applies migrations incrementally from an empty (pre-schema) database', () => {

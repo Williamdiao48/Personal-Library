@@ -65,6 +65,46 @@ export async function fetchPage(url: string): Promise<string> {
   throw new Error(`Failed to fetch page: ${res.status} ${res.statusText}`)
 }
 
+// Plain fetch for JSON/XHR endpoints. Some sites (e.g. AO3's tag autocomplete)
+// 302-redirect to an HTML page unless the request looks like an XHR/JSON call, so
+// we send an `application/json` Accept + the XHR marker. Returns the raw body text
+// (caller parses). No browser fallback — a BrowserWindow returns HTML chrome, not
+// the JSON payload, and these endpoints aren't Cloudflare-gated like full pages.
+//
+// Retries transient failures (network error, timeout, or a 5xx/429 — AO3
+// intermittently returns 525 under bursts) with a short backoff, since a burst of
+// these calls otherwise drops results non-deterministically. A 4xx (other than 429)
+// is a real "no such thing" and is NOT retried.
+export async function fetchJson(url: string, retries = 2): Promise<string> {
+  const jsonSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+  let lastErr: unknown = new Error('fetchJson: no attempt made')
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    let res: Response | undefined
+    try {
+      res = await fetch(url, {
+        signal: AbortSignal.timeout(15_000),
+        headers: {
+          ...BROWSER_HEADERS,
+          Accept: 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+      })
+    } catch (err) {
+      lastErr = err // network error / timeout → transient, retry
+    }
+    if (res) {
+      if (res.ok) return res.text()
+      // A 4xx (other than 429) is a real "no such thing" — fail fast, no retry.
+      if (res.status < 500 && res.status !== 429) {
+        throw new Error(`Failed to fetch JSON: ${res.status} ${res.statusText}`)
+      }
+      lastErr = new Error(`Failed to fetch JSON: ${res.status} ${res.statusText}`) // 5xx/429 → retry
+    }
+    if (attempt < retries) await jsonSleep(400 * (attempt + 1))
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('fetchJson failed')
+}
+
 // Opens a hidden BrowserWindow (real Chromium) to load the page.
 // Handles JS execution, real cookies, and browser fingerprinting.
 //

@@ -3,64 +3,107 @@ import { fetchPage } from '../../capture/fetch'
 import type { LikedItem } from '../taste'
 import type { CandidateSource } from '../candidateSource'
 import type { Candidate } from '../candidates'
-import { buildTasteSeeds, type TasteSeeds } from '../tasteSeeds'
+import {
+  buildAo3RawSeeds,
+  buildLengthProfile,
+  type Ao3TagSeeds,
+  type LengthProfile,
+} from '../tasteSeeds'
+import { resolveAo3Seeds } from '../tagResolve'
 import { readCandidateCache, writeCandidateCache } from '../candidateCache'
 
-// F4 — the AO3 candidate source: recommend *actual fanfiction*. Unlike OpenLibrary
-// (a book keyword API), AO3's works search is tag-native, so we anchor each query
-// on a fandom the user loves — refined by their top relationship/freeform tags —
-// sorted by kudos, and parse the results-index blurbs into Candidates the shared
-// rerank scores against the taste vector. Respectful: cache-first (candidate_cache
-// TTL), a handful of queries, index pages only (never full works), plain HTTP via
-// fetchPage. The query builder + blurb parser are pure; only fetchAo3Candidates
-// touches the network + cache.
+// F4 (+ recall upgrade) — the AO3 candidate source: recommend *actual fanfiction*.
+// AO3's works search is tag-native, so instead of a bag of keywords we anchor each
+// query on the user's own AO3-canonical tags via the EXACT named fields — pairings
+// and characters first (the strongest taste signal), then fandom for breadth —
+// sorted by kudos and paginated a couple pages deep so the pool spans the whole
+// popularity range, not just a fandom's all-time top-20. A soft length/completion
+// band (from the reader's own liked-fic stats) narrows only when their taste is
+// clearly skewed. Precision comes from the taste-vector rerank downstream; the
+// query's job is recall. Respectful: cache-first, capped requests, a polite delay,
+// index pages only (never full works), plain HTTP via fetchPage. The query builder
+// + blurb parser are pure; only fetchAo3Candidates touches the network + cache.
 
 export const AO3_SOURCE = {
-  MAX_FANDOM_QUERIES: 4, // one fandom-anchored query each (respectful footprint)
+  MAX_RELATIONSHIP_QUERIES: 3, // pairings first — the strongest signal
+  MAX_CHARACTER_QUERIES: 2,
+  MAX_FANDOM_QUERIES: 2, // fandom-wide breadth, fetched last (fills leftover slots)
+  PAGES_PER_QUERY: 2, // paginate deep enough to break the top-20 kudos bias
+  MAX_REQUESTS: 10, // hard etiquette cap on total page fetches per recommend()
+  REQUEST_DELAY_MS: 500, // polite delay between real fetches (AO3 is volunteer-run)
   MAX_SUBJECTS_PER_BLURB: 12, // cap the tags folded into a candidate's embed text
-  MAX_CANDIDATES: 60, // cap the merged/deduped set
+  MAX_CANDIDATES: 80, // cap the merged/deduped set
   CACHE_TTL_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
 }
 
+/** A single AO3 search: the fully-keyed `work_search[...]` fields (minus `page`). */
 export interface Ao3Query {
   term: string
-  url: string
   weight: number
+  params: Record<string, string>
 }
 
 const AO3_ORIGIN = 'https://archiveofourown.org'
 
-/** Quote a term so AO3 treats a multi-word tag as a phrase (and strip stray quotes). */
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** Quote a term so AO3's free-text field treats a multi-word tag as a phrase. */
 function phrase(term: string): string {
   return `"${term.replace(/"/g, ' ').trim()}"`
 }
 
-function ao3SearchUrl(query: string): string {
-  const params = new URLSearchParams()
-  params.set('work_search[query]', query)
-  params.set('work_search[sort_column]', 'kudos_count')
-  params.set('work_search[language_id]', 'en')
-  return `${AO3_ORIGIN}/works/search?${params.toString()}`
+/**
+ * Assemble the `work_search[...]` fields for one anchor: the named (or free-text)
+ * tag field, the soft length band (word_count range + complete) when the profile
+ * carries one, kudos sort, English. `page` is appended later, per fetch.
+ */
+function queryParams(field: string, value: string, length: LengthProfile): Record<string, string> {
+  const p: Record<string, string> = { [`work_search[${field}]`]: value }
+  if (length.wordFloor) p['work_search[word_count]'] = `>${length.wordFloor}`
+  else if (length.wordCeil) p['work_search[word_count]'] = `<${length.wordCeil}`
+  if (length.completeOnly) p['work_search[complete]'] = 'T'
+  p['work_search[sort_column]'] = 'kudos_count'
+  p['work_search[language_id]'] = 'en'
+  return p
+}
+
+/** Absolute works-search URL for a query at a given 1-based page. */
+export function ao3PageUrl(query: Ao3Query, page: number): string {
+  const p = new URLSearchParams(query.params)
+  if (page > 1) p.set('page', String(page))
+  return `${AO3_ORIGIN}/works/search?${p.toString()}`
 }
 
 /**
- * Build AO3 search queries from the taste seeds: one **fandom-anchored** query per
- * top fandom, sorted by kudos. Deliberately fandom-ONLY — we do NOT AND in the
- * relationship/freeform terms, because those often come from FFN's abbreviated
- * vocabulary ("Harry P./Fleur D.") that matches nothing on AO3 (full names, e.g.
- * "Harry Potter/Fleur Delacour"), which would zero out the result set. Recall comes
- * from the fandom + kudos sort; **precision comes from the taste-vector rerank**
- * downstream, not from over-constraining the query. With no fandom, fall back to a
- * single top freeform term (AO3-native vocab); with neither, `[]` (skip AO3).
+ * Build AO3 search queries from the AO3-canonical seeds, in priority order:
+ * pairings (`relationship_names`) → characters (`character_names`) → fandoms
+ * (`fandom_names`). Each uses AO3's EXACT named field, so a pairing filters rather
+ * than ANDing a phrase into free text (the query-poisoning bug). Genres are
+ * deliberately NOT hard-filtered here ("loosely") — the reranker weighs them via
+ * `subjects`. Falls back to a single fuzzy free-text `query` on a non-AO3 fandom
+ * only when there's no AO3-canonical anchor at all (an FFN-only library); with
+ * nothing, `[]` (skip AO3). Pure.
  */
-export function buildAo3Queries(seeds: TasteSeeds, cfg = AO3_SOURCE): Ao3Query[] {
+export function buildAo3Queries(
+  seeds: Ao3TagSeeds,
+  length: LengthProfile,
+  cfg = AO3_SOURCE,
+): Ao3Query[] {
   const queries: Ao3Query[] = []
-  for (const f of seeds.fandoms.slice(0, cfg.MAX_FANDOM_QUERIES)) {
-    queries.push({ term: f.term, url: ao3SearchUrl(phrase(f.term)), weight: f.weight })
+  const add = (field: string, t: { term: string; weight: number }): void => {
+    queries.push({ term: t.term, weight: t.weight, params: queryParams(field, t.term, length) })
   }
-  if (queries.length === 0 && seeds.freeforms.length > 0) {
-    const top = seeds.freeforms[0]
-    queries.push({ term: top.term, url: ao3SearchUrl(phrase(top.term)), weight: top.weight })
+  for (const r of seeds.relationships.slice(0, cfg.MAX_RELATIONSHIP_QUERIES))
+    add('relationship_names', r)
+  for (const c of seeds.characters.slice(0, cfg.MAX_CHARACTER_QUERIES)) add('character_names', c)
+  for (const f of seeds.fandoms.slice(0, cfg.MAX_FANDOM_QUERIES)) add('fandom_names', f)
+  if (queries.length === 0 && seeds.fandomsFreeText.length > 0) {
+    const f = seeds.fandomsFreeText[0]
+    queries.push({
+      term: f.term,
+      weight: f.weight,
+      params: queryParams('query', phrase(f.term), length),
+    })
   }
   return queries
 }
@@ -118,33 +161,46 @@ export function parseAo3ResultsPage(html: string, cfg = AO3_SOURCE): Candidate[]
 }
 
 /**
- * Fetch, parse, dedup and cap AO3 candidates for a batch of queries. Cache-first
- * (candidate_cache keyed `ao3:<url>`). A single query failing (network / parse)
- * yields `[]` so one bad query never sinks the batch. Touches the network + cache.
+ * Fetch, parse, dedup and cap AO3 candidates for a batch of queries, paginating
+ * each up to PAGES_PER_QUERY pages. Cache-first (per-page key `ao3:<url>`); a
+ * polite delay separates real network fetches, and a hard MAX_REQUESTS budget +
+ * MAX_CANDIDATES cap keep the footprint small. A page that fails or comes back
+ * empty stops that query's pagination without sinking the batch. Touches the
+ * network + cache.
  */
 export async function fetchAo3Candidates(
   queries: Ao3Query[],
-  opts: { now?: number; cfg?: typeof AO3_SOURCE } = {},
+  opts: { now?: number; cfg?: typeof AO3_SOURCE; delayMs?: number } = {},
 ): Promise<Candidate[]> {
   const cfg = opts.cfg ?? AO3_SOURCE
   const now = opts.now ?? Date.now()
+  const delayMs = opts.delayMs ?? cfg.REQUEST_DELAY_MS
   const byId = new Map<string, Candidate>()
+  let requests = 0
+
   for (const query of queries) {
-    if (byId.size >= cfg.MAX_CANDIDATES) break
-    const key = `ao3:${query.url}`
-    let cands = readCandidateCache<Candidate[]>(key, cfg.CACHE_TTL_MS, now)
-    if (!cands) {
-      try {
-        cands = parseAo3ResultsPage(await fetchPage(query.url), cfg)
-        writeCandidateCache(key, cands, now)
-      } catch {
-        cands = []
+    if (byId.size >= cfg.MAX_CANDIDATES || requests >= cfg.MAX_REQUESTS) break
+    for (let page = 1; page <= cfg.PAGES_PER_QUERY; page++) {
+      if (byId.size >= cfg.MAX_CANDIDATES || requests >= cfg.MAX_REQUESTS) break
+      const url = ao3PageUrl(query, page)
+      const key = `ao3:${url}`
+      let cands = readCandidateCache<Candidate[]>(key, cfg.CACHE_TTL_MS, now)
+      if (!cands) {
+        if (delayMs > 0 && requests > 0) await sleep(delayMs)
+        requests++
+        try {
+          cands = parseAo3ResultsPage(await fetchPage(url), cfg)
+          writeCandidateCache(key, cands, now)
+        } catch {
+          cands = []
+        }
       }
-    }
-    for (const cand of cands) {
-      if (byId.has(cand.sourceId)) continue
-      byId.set(cand.sourceId, cand)
-      if (byId.size >= cfg.MAX_CANDIDATES) break
+      for (const cand of cands) {
+        if (byId.has(cand.sourceId)) continue
+        byId.set(cand.sourceId, cand)
+        if (byId.size >= cfg.MAX_CANDIDATES) break
+      }
+      if (cands.length === 0) break // no results → no further pages for this query
     }
   }
   return [...byId.values()]
@@ -153,7 +209,9 @@ export async function fetchAo3Candidates(
 export const ao3Source: CandidateSource = {
   name: 'ao3',
   async fetch(liked: LikedItem[]): Promise<Candidate[]> {
-    const queries = buildAo3Queries(buildTasteSeeds(liked))
+    // Resolve FFN-abbreviated tags → canonical AO3 vocab (cached) before querying.
+    const seeds = await resolveAo3Seeds(buildAo3RawSeeds(liked))
+    const queries = buildAo3Queries(seeds, buildLengthProfile(liked))
     if (queries.length === 0) return []
     return fetchAo3Candidates(queries)
   },

@@ -9,7 +9,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 21
+export const CURRENT_VERSION = 22
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -175,6 +175,21 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
       status   TEXT,
       rating   TEXT,
       source   TEXT
+    );
+  `,
+  // Recommender (autocomplete vocab bridge): a persistent raw→canonical tag cache.
+  // FFN captures use abbreviated names ("Harry P.") that don't match AO3's exact
+  // named-field tag vocabulary ("Harry Potter"); we resolve them once via AO3's
+  // autocomplete endpoint and cache the result here so each unique term hits the
+  // network at most once. `canonical` NULL = resolved to nothing (negative cache,
+  // so a dead term isn't re-fetched every recommend()). New table — MIGRATIONS only.
+  22: `
+    CREATE TABLE IF NOT EXISTS tag_alias (
+      raw         TEXT    NOT NULL,
+      kind        TEXT    NOT NULL,
+      canonical   TEXT,
+      resolved_at INTEGER NOT NULL,
+      PRIMARY KEY (raw, kind)
     );
   `,
 }
