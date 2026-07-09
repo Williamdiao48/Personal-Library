@@ -43,6 +43,7 @@ describe('database bring-up', () => {
       'item_source_tags',
       'item_source_meta',
       'tag_alias',
+      'discover_cache',
     ]) {
       expect(tables).toContain(t)
     }
@@ -217,6 +218,27 @@ describe('database bring-up', () => {
     expect(db.prepare(`SELECT canonical FROM tag_alias`).get()).toMatchObject({
       canonical: 'Harry Potter (Movies)',
     })
+  })
+
+  // Migration 23 — the Discover results cache (single-row snapshot of recommend()).
+  it('discover_cache has the expected columns and is constrained to a single row', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'discover_cache')).toEqual(
+      expect.arrayContaining(['id', 'cards_json', 'generated_at']),
+    )
+    const upsert = db.prepare(
+      `INSERT INTO discover_cache (id, cards_json, generated_at) VALUES (1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET cards_json = excluded.cards_json, generated_at = excluded.generated_at`,
+    )
+    upsert.run('[]', 1)
+    upsert.run('[{"t":1}]', 2) // id is pinned to 1 → updates the same row
+    expect(db.prepare(`SELECT COUNT(*) c FROM discover_cache`).get()).toMatchObject({ c: 1 })
+    // The CHECK (id = 1) guard rejects any other row id.
+    expect(() =>
+      db
+        .prepare(`INSERT INTO discover_cache (id, cards_json, generated_at) VALUES (2, '[]', 1)`)
+        .run(),
+    ).toThrow()
   })
 
   it('applies migrations incrementally from an empty (pre-schema) database', () => {

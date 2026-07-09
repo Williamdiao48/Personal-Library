@@ -9,7 +9,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 22
+export const CURRENT_VERSION = 23
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -190,6 +190,17 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
       canonical   TEXT,
       resolved_at INTEGER NOT NULL,
       PRIMARY KEY (raw, kind)
+    );
+  `,
+  // C5.2 — the Discover results cache: a single row holding the last recommend()
+  // output (JSON) + when it was generated, so opening Discover shows cards
+  // instantly (across restarts) while a fresh fetch is manual-only. Distinct from
+  // candidate_cache (per-query source payloads). New table — MIGRATIONS only.
+  23: `
+    CREATE TABLE IF NOT EXISTS discover_cache (
+      id           INTEGER PRIMARY KEY CHECK (id = 1),
+      cards_json   TEXT,
+      generated_at INTEGER
     );
   `,
 }
