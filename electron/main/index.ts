@@ -15,6 +15,7 @@ import { registerGoalsHandlers } from './ipc/goals'
 import { registerAnnotationHandlers } from './ipc/annotations'
 import { registerUpdaterHandlers } from './ipc/updater'
 import { registerLogHandlers } from './ipc/log'
+import { registerDiscoverHandlers } from './ipc/discover'
 import { shutdownParseWorker } from './workers/parse-host'
 import { armBackfill, shutdownBackfill } from './recommender/lifecycle'
 
@@ -168,6 +169,7 @@ app.whenReady().then(() => {
     registerUpdaterHandlers()
     registerBackupHandlers()
     registerLogHandlers()
+    registerDiscoverHandlers()
   } catch (err) {
     dialog.showErrorBox(
       'Personal Library failed to start',

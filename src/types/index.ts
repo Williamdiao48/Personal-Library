@@ -351,6 +351,16 @@ export interface Api {
   log: {
     writeError: (message: string) => Promise<void>
   }
+  discover: {
+    /** The last cached picks + when they were generated; null when never run. */
+    get: () => Promise<{ cards: Recommendation[]; generatedAt: number } | null>
+    /** Run the engine, cache + return the result (with a cold-start flag). */
+    refresh: () => Promise<DiscoverResult>
+    /** Exclude a card from future recs (not-interested / already-read). */
+    dismiss: (card: Recommendation) => Promise<void>
+    /** Open a card's http(s) source page in the external browser. */
+    openExternal: (url: string) => Promise<void>
+  }
 }
 
 declare global {

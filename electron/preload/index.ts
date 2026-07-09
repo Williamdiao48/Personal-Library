@@ -208,4 +208,13 @@ contextBridge.exposeInMainWorld('api', {
   log: {
     writeError: (message: string) => ipcRenderer.invoke('log:writeError', message),
   },
+
+  // Discover (recommendations)
+  discover: {
+    get: () => ipcRenderer.invoke('discover:get'),
+    refresh: () => ipcRenderer.invoke('discover:refresh'),
+    dismiss: (card: import('../../src/types').Recommendation) =>
+      ipcRenderer.invoke('discover:dismiss', card),
+    openExternal: (url: string) => ipcRenderer.invoke('discover:openExternal', url),
+  },
 })
