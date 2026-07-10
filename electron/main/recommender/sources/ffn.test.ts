@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// The FFN source's impure edges are fetchPageWithBrowser (Cloudflare) + the cache
-// (DB). Mock the browser fetch and drive real query building / blurb parsing /
-// dedup / cache against an in-memory DB (Node ABI). Builders + parsers are pure.
+// The FFN source's impure edges are the CF browser fetch + the cache (DB). It now
+// fetches all cache-miss URLs through ONE reused window via fetchPagesSequential
+// (which returns one HTML string per URL), so we mock that and drive real query
+// building / blurb parsing / dedup / cache against an in-memory DB (Node ABI).
+// Builders + parsers are pure.
 vi.mock('../../capture/fetch', () => ({
   fetchPageWithBrowser: vi.fn(),
   fetchPagesWithSession: vi.fn(),
@@ -10,7 +12,7 @@ vi.mock('../../capture/fetch', () => ({
 }))
 
 import { openTestDb, closeTestDb, seedItem, type TestDb } from '../../../../test/db/harness'
-import { fetchPageWithBrowser } from '../../capture/fetch'
+import { fetchPagesSequential } from '../../capture/fetch'
 import {
   buildFfnQueries,
   parseFfnResultsPage,
@@ -20,7 +22,8 @@ import {
 } from './ffn'
 import type { TasteSeeds } from '../tasteSeeds'
 
-const mockBrowser = vi.mocked(fetchPageWithBrowser)
+// fetchPagesSequential resolves to one HTML string per requested URL, in order.
+const mockFetch = vi.mocked(fetchPagesSequential)
 
 const emptySeeds = (): TasteSeeds => ({
   authors: [],
@@ -91,12 +94,12 @@ describe('fetchFfnCandidates', () => {
 
   beforeEach(() => {
     db = openTestDb()
-    mockBrowser.mockReset()
+    mockFetch.mockReset()
   })
   afterEach(() => closeTestDb())
 
   it('fetches + parses + dedups, then serves a cache hit without re-fetching', async () => {
-    mockBrowser.mockResolvedValue(RESULTS_HTML)
+    mockFetch.mockResolvedValue([RESULTS_HTML])
     const q = query('https://www.fanfiction.net/search/?keywords=x&type=story&ready=1')
 
     const out = await fetchFfnCandidates([q], { now: 1000 })
@@ -105,12 +108,24 @@ describe('fetchFfnCandidates', () => {
       'https://www.fanfiction.net/s/222',
     ])
     await fetchFfnCandidates([q], { now: 2000 }) // within TTL
-    expect(mockBrowser).toHaveBeenCalledTimes(1)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
   })
 
-  it('soft-fails a query whose fetch throws, without sinking the batch', async () => {
-    mockBrowser.mockRejectedValue(new Error('cloudflare'))
+  it('soft-fails when the batch fetch throws, without sinking the source', async () => {
+    mockFetch.mockRejectedValue(new Error('cloudflare'))
     expect(await fetchFfnCandidates([query('https://www.fanfiction.net/search/?q=z')])).toEqual([])
+  })
+
+  it('fetches all cache-miss queries through a single shared window', async () => {
+    mockFetch.mockResolvedValue([RESULTS_HTML, ''])
+    const qs = [
+      query('https://www.fanfiction.net/search/?keywords=a&type=story&ready=1'),
+      query('https://www.fanfiction.net/search/?keywords=b&type=story&ready=1'),
+    ]
+    await fetchFfnCandidates(qs, { now: 1000 })
+    // One call, both miss URLs passed together (one window, CF solved once).
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    expect(mockFetch.mock.calls[0][0]).toEqual(qs.map((q) => q.url))
   })
 
   it('ffnSource.fetch builds fandom-anchored queries from liked items and returns fics', async () => {
@@ -118,7 +133,7 @@ describe('fetchFfnCandidates', () => {
     db.prepare(
       `INSERT INTO item_source_tags (item_id, name, category) VALUES (?, 'Harry Potter', 'fandom')`,
     ).run(id)
-    mockBrowser.mockResolvedValue(RESULTS_HTML)
+    mockFetch.mockResolvedValue([RESULTS_HTML])
 
     const out = await ffnSource.fetch([{ id, weight: 1 }])
     expect(out.map((c) => c.title)).toEqual(['Story One', 'Story Two'])
@@ -128,6 +143,6 @@ describe('fetchFfnCandidates', () => {
   it('ffnSource.fetch returns [] for a library with no fandom tags', async () => {
     const id = seedItem(db, { author: 'Owner' })
     expect(await ffnSource.fetch([{ id, weight: 1 }])).toEqual([])
-    expect(mockBrowser).not.toHaveBeenCalled()
+    expect(mockFetch).not.toHaveBeenCalled()
   })
 })

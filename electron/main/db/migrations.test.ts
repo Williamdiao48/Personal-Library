@@ -44,6 +44,7 @@ describe('database bring-up', () => {
       'item_source_meta',
       'tag_alias',
       'discover_cache',
+      'candidate_embeddings',
     ]) {
       expect(tables).toContain(t)
     }
@@ -239,6 +240,21 @@ describe('database bring-up', () => {
         .prepare(`INSERT INTO discover_cache (id, cards_json, generated_at) VALUES (2, '[]', 1)`)
         .run(),
     ).toThrow()
+  })
+
+  // Migration 24 — the candidate-embedding perf cache (sourceId-keyed vectors).
+  it('candidate_embeddings has the expected columns and sourceId is the primary key', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'candidate_embeddings')).toEqual(
+      expect.arrayContaining(['source_id', 'embedding', 'model_version']),
+    )
+    const pk = (
+      db.prepare(`PRAGMA table_info(candidate_embeddings)`).all() as {
+        name: string
+        pk: number
+      }[]
+    ).filter((c) => c.pk > 0)
+    expect(pk.map((c) => c.name)).toEqual(['source_id'])
   })
 
   it('applies migrations incrementally from an empty (pre-schema) database', () => {

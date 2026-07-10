@@ -4,19 +4,24 @@ import { openTestDb, closeTestDb } from '../../../test/db/harness'
 import { get } from '../db'
 import type { Recommendation } from '../../../src/types'
 
-// The engine (recommend), the embedder singleton, and taste are mocked so this
-// suite never loads the model / network — it exercises the IPC glue only: the
+// The engine (recommend), the worker embedder, and taste are mocked so this suite
+// never loads the model / network — it exercises the IPC glue only: the
 // discover_cache read/write, dismiss persistence + cache pruning, cold-start
 // short-circuit, and the openExternal scheme guard. The real (in-memory) DB is
 // used (Node ABI) so the cache + dismissed_recommendations behaviour is genuine.
 
-const recommendMock = vi.fn<() => Promise<Recommendation[]>>(async () => [])
+const recommendMock = vi.fn<(...a: unknown[]) => Promise<Recommendation[]>>(async () => [])
 const buildTasteMock = vi.fn(() => ({ centroids: [new Float32Array([1])], liked: [] }))
+// Hoisted so the (hoisted) vi.mock factory below can reference it eagerly — a plain
+// top-level const would be read before initialization.
+const { workerEmbedderStub } = vi.hoisted(() => ({
+  workerEmbedderStub: { embed: async () => [] },
+}))
 
 vi.mock('../recommender/rerank', () => ({
-  recommend: (...a: unknown[]) => recommendMock(...(a as [])),
+  recommend: (...a: unknown[]) => recommendMock(...a),
 }))
-vi.mock('../recommender/embedder', () => ({ embedder: {} }))
+vi.mock('../workers/embed-host', () => ({ workerEmbedder: workerEmbedderStub }))
 vi.mock('../recommender/taste', () => ({ buildTaste: () => buildTasteMock() }))
 
 import { registerDiscoverHandlers } from './discover'
@@ -78,6 +83,12 @@ describe('discover:refresh', () => {
     expect(out.coldStart).toBe(false)
     expect(out.cards.map((c) => c.title)).toEqual(['Fresh'])
     expect(recommendMock).toHaveBeenCalledTimes(1)
+    // Taste is built once and passed in (worker embedder + the prebuilt taste), so
+    // recommend() doesn't rebuild it — the off-thread embedder is the 1st arg, the
+    // prebuilt taste the 3rd.
+    const [embedderArg, , tasteArg] = recommendMock.mock.calls[0]
+    expect(embedderArg).toBe(workerEmbedderStub)
+    expect(tasteArg).toMatchObject({ centroids: expect.any(Array) })
     // Persisted for the next get().
     const row = get<{ cards_json: string }>(`SELECT cards_json FROM discover_cache WHERE id = 1`)
     expect(JSON.parse(row!.cards_json)[0].title).toBe('Fresh')

@@ -9,7 +9,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 23
+export const CURRENT_VERSION = 24
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -201,6 +201,18 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
       id           INTEGER PRIMARY KEY CHECK (id = 1),
       cards_json   TEXT,
       generated_at INTEGER
+    );
+  `,
+  // Perf: cache the embedding of each recommendation CANDIDATE (keyed by its
+  // sourceId — an OpenLibrary work key or a fic URL) so a Discover refresh reuses
+  // vectors from the last run instead of re-embedding every candidate on the model.
+  // `model_version` invalidates the cache when the model changes (mirrors
+  // item_embeddings). Not item-scoped, so no FK. New table — MIGRATIONS only.
+  24: `
+    CREATE TABLE IF NOT EXISTS candidate_embeddings (
+      source_id     TEXT    PRIMARY KEY,
+      embedding     BLOB    NOT NULL,
+      model_version TEXT    NOT NULL
     );
   `,
 }

@@ -75,14 +75,14 @@ export async function fetchPage(url: string): Promise<string> {
 // intermittently returns 525 under bursts) with a short backoff, since a burst of
 // these calls otherwise drops results non-deterministically. A 4xx (other than 429)
 // is a real "no such thing" and is NOT retried.
-export async function fetchJson(url: string, retries = 2): Promise<string> {
+export async function fetchJson(url: string, retries = 2, timeoutMs = 15_000): Promise<string> {
   const jsonSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
   let lastErr: unknown = new Error('fetchJson: no attempt made')
   for (let attempt = 0; attempt <= retries; attempt++) {
     let res: Response | undefined
     try {
       res = await fetch(url, {
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(timeoutMs),
         headers: {
           ...BROWSER_HEADERS,
           Accept: 'application/json',

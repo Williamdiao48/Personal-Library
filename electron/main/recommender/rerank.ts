@@ -2,10 +2,11 @@ import { all } from '../db'
 import type { Embedder } from './embedder-core'
 import { itemMetadataText } from './embeddingText'
 import { cosine } from './vectorMath'
-import { buildTaste } from './taste'
+import { buildTaste, type TasteResult } from './taste'
 import { buildTasteSeeds } from './tasteSeeds'
 import { candidateKey, type Candidate, type SourceName } from './candidates'
 import { unionCandidates, type CandidateSource } from './candidateSource'
+import { loadCandidateVectors, saveCandidateVectors } from './candidateEmbeddings'
 import { openLibrarySource } from './sources/openLibrary'
 import { ao3Source } from './sources/ao3'
 import { ffnSource } from './sources/ffn'
@@ -132,23 +133,30 @@ export function scoreCandidate(vec: Float32Array, centroids: Float32Array[]): nu
 export function mmrSelect(scored: ScoredCandidate[], k: number, lambda: number): ScoredCandidate[] {
   const selected: ScoredCandidate[] = []
   const remaining = scored.slice()
+  // maxSim[i] = similarity of remaining[i] to its NEAREST already-selected pick (0
+  // until something is selected; redundancy only penalizes when positive). Kept in
+  // step with `remaining` and updated only against the just-picked vector each
+  // round, so the diversity penalty costs O(k·N) cosines instead of recomputing
+  // every remaining×selected pair each round (O(k²·N)). Selection is identical —
+  // the running max over selected equals the from-scratch max.
+  const maxSim = new Array<number>(remaining.length).fill(0)
   while (selected.length < k && remaining.length > 0) {
     let bestIdx = 0
     let bestMmr = -Infinity
     for (let i = 0; i < remaining.length; i++) {
-      const r = remaining[i]
-      let maxSim = 0 // similarity is only penalizing when positive (redundancy)
-      for (const s of selected) {
-        const sim = cosine(r.vec, s.vec)
-        if (sim > maxSim) maxSim = sim
-      }
-      const mmr = lambda * r.score - (1 - lambda) * maxSim
+      const mmr = lambda * remaining[i].score - (1 - lambda) * maxSim[i]
       if (mmr > bestMmr) {
         bestMmr = mmr
         bestIdx = i
       }
     }
-    selected.push(remaining.splice(bestIdx, 1)[0])
+    const pick = remaining.splice(bestIdx, 1)[0]
+    maxSim.splice(bestIdx, 1)
+    selected.push(pick)
+    for (let i = 0; i < remaining.length; i++) {
+      const sim = cosine(remaining[i].vec, pick.vec)
+      if (sim > maxSim[i]) maxSim[i] = sim
+    }
   }
   return selected
 }
@@ -221,19 +229,42 @@ export function verifyCandidates(picked: Candidate[], fetched: Candidate[]): Can
 
 // ── db reads (orchestrator only) ──────────────────────────────────────────────
 
-/** Build the owned + dismissed exclusion sets (§9 step 2). */
-function loadExclusions(): ExcludeSets {
+const FANFIC_URL_RE = /archiveofourown\.org|fanfiction\.net/i
+
+/** The library-derived rerank inputs, both from a SINGLE scan of `items`. */
+interface LibrarySnapshot {
+  /** Owned + dismissed exclusion sets (§9 step 2). */
+  exclude: ExcludeSets
+  /** Library composition — book vs fic — for proportional allocation. */
+  mix: { book: number; fic: number }
+}
+
+/**
+ * Read the active library once and derive BOTH the exclusion sets and the book/fic
+ * mix from the same pass — they previously scanned `items` separately with the same
+ * `deleted_at IS NULL` predicate. Dismissed recommendations add to the exclusions
+ * from their own (small) table.
+ */
+function loadLibrarySnapshot(): LibrarySnapshot {
   const keys = new Set<string>()
   const ids = new Set<string>()
+  let book = 0
+  let fic = 0
 
   for (const r of all<{ title: string; author: string | null; source_url: string | null }>(
     `SELECT title, author, source_url FROM items WHERE deleted_at IS NULL`,
   )) {
     keys.add(candidateKey(r.title, r.author))
-    if (r.source_url) ids.add(r.source_url)
+    if (r.source_url) {
+      ids.add(r.source_url)
+      if (FANFIC_URL_RE.test(r.source_url)) fic++
+      else book++
+    } else {
+      book++
+    }
   }
 
-  for (const r of all<{ title: string; author: string | null; id: string; source: string | null }>(
+  for (const r of all<{ id: string; title: string; author: string | null; source: string | null }>(
     `SELECT id, title, author, source FROM dismissed_recommendations`,
   )) {
     keys.add(candidateKey(r.title, r.author))
@@ -241,22 +272,7 @@ function loadExclusions(): ExcludeSets {
     if (r.source) ids.add(r.source)
   }
 
-  return { keys, ids }
-}
-
-const FANFIC_URL_RE = /archiveofourown\.org|fanfiction\.net/i
-
-/** The reader's library composition — book vs fic — for proportional allocation. */
-function libraryMix(): { book: number; fic: number } {
-  let book = 0
-  let fic = 0
-  for (const r of all<{ source_url: string | null }>(
-    `SELECT source_url FROM items WHERE deleted_at IS NULL`,
-  )) {
-    if (r.source_url && FANFIC_URL_RE.test(r.source_url)) fic++
-    else book++
-  }
-  return { book, fic }
+  return { exclude: { keys, ids }, mix: { book, fic } }
 }
 
 // ── orchestrator ──────────────────────────────────────────────────────────────
@@ -270,12 +286,17 @@ function libraryMix(): { book: number; fic: number } {
  * production set) so orchestration is tested without the network; a single source
  * throwing is skipped rather than sinking the batch. Touches the db + network +
  * model.
+ *
+ * `taste` defaults to a fresh `buildTaste()` but can be passed in when the caller
+ * already built it (the Discover IPC does, for its cold-start check) — building it
+ * is a full library-signals scan + a decode of every stored embedding, so reusing
+ * one avoids doing that twice per refresh.
  */
 export async function recommend(
   embedder: Embedder,
   sources: CandidateSource[] = defaultSources(),
+  taste: TasteResult = buildTaste(),
 ): Promise<Recommendation[]> {
-  const taste = buildTaste()
   if (taste.centroids.length === 0) return [] // cold start — no taste, no recs (§8)
 
   // The reader's taste terms (lowercased union of every seed category) — the set a
@@ -292,33 +313,50 @@ export async function recommend(
     ].map((t) => t.term.toLowerCase()),
   )
 
-  const pools: Candidate[][] = []
-  for (const s of sources) {
-    try {
-      pools.push(await s.fetch(taste.liked))
-    } catch {
-      // One source down (network / parse) — skip it, keep the others.
-    }
-  }
+  // Fan out to the sources CONCURRENTLY. They hit independent hosts (AO3, FFN via
+  // Cloudflare, OpenLibrary), so overlapping them costs no per-host etiquette and
+  // collapses the wall time from the SUM of the three to the slowest one (usually
+  // FFN's browser fetch). `allSettled` keeps the "one source down doesn't sink the
+  // batch" guarantee, and results stay in `sources` order so the union's fanfic-first
+  // tie-break is unchanged.
+  const settled = await Promise.allSettled(sources.map((s) => s.fetch(taste.liked)))
+  const pools: Candidate[][] = settled.map((r) => (r.status === 'fulfilled' ? r.value : []))
   const fetched = unionCandidates(pools)
   if (fetched.length === 0) return [] // no tags/authors to search on, or all sources empty
 
-  const kept = filterCandidates(fetched, loadExclusions())
+  // One scan of the library → both the exclusion sets and the book/fic mix.
+  const snapshot = loadLibrarySnapshot()
+  const kept = filterCandidates(fetched, snapshot.exclude)
   if (kept.length === 0) return []
 
-  // One batched embed of every kept candidate's Tier-A metadata text (D-C4-1).
-  const texts = kept.map((c) => itemMetadataText({ title: c.title, author: c.author }, c.subjects))
-  const vecs = await embedder.embed(texts)
-  const scored: ScoredCandidate[] = kept.map((cand, i) => ({
-    cand,
-    vec: vecs[i],
-    score: scoreCandidate(vecs[i], taste.centroids),
-  }))
+  // Embed each kept candidate's Tier-A metadata text (D-C4-1), reusing vectors
+  // cached by sourceId (model-versioned) from a prior refresh — so only candidates
+  // we haven't embedded before hit the model. Running the model is the main-thread /
+  // CPU cost of a warm refresh, so this is the biggest warm-path saving.
+  const vecById = loadCandidateVectors(
+    kept.map((c) => c.sourceId),
+    embedder.modelVersion,
+  )
+  const misses = kept.filter((c) => !vecById.has(c.sourceId))
+  if (misses.length > 0) {
+    const missVecs = await embedder.embed(
+      misses.map((c) => itemMetadataText({ title: c.title, author: c.author }, c.subjects)),
+    )
+    saveCandidateVectors(
+      misses.map((c, i) => ({ sourceId: c.sourceId, vec: missVecs[i] })),
+      embedder.modelVersion,
+    )
+    misses.forEach((c, i) => vecById.set(c.sourceId, missVecs[i]))
+  }
+  const scored: ScoredCandidate[] = kept.map((cand) => {
+    const vec = vecById.get(cand.sourceId)!
+    return { cand, vec, score: scoreCandidate(vec, taste.centroids) }
+  })
 
   // Source-balanced selection: fill book/fic quotas proportional to the library
   // mix so the feed mirrors what the reader actually reads (not just whichever
   // source has the strongest embedding match).
-  const alloc = allocateSlots(RERANK.TOP_K, libraryMix())
+  const alloc = allocateSlots(RERANK.TOP_K, snapshot.mix)
   const selected = selectByQuota(scored, RERANK.TOP_K, alloc, RERANK.LAMBDA)
   const scoreById = new Map(selected.map((s) => [s.cand.sourceId, s.score]))
   const verified = verifyCandidates(

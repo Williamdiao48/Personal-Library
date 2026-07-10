@@ -97,7 +97,9 @@ function embedTexts(texts: string[]): Promise<Float32Array[]> {
 
 // A worker-backed Embedder: same interface as the in-process one (embedItemVector
 // doesn't care where the raw batch embed runs), but the inference is off-thread.
-const workerEmbedder: Embedder = {
+// Exported so the recommend path (candidate embedding) can run off the UI thread
+// too, not just backfill — same singleton worker, requests serialize via the registry.
+export const workerEmbedder: Embedder = {
   modelVersion: MODEL_VERSION,
   dim: EMBED_DIM,
   embed: embedTexts,

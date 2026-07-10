@@ -25,6 +25,7 @@ export interface CandidatesConfig {
   MAX_CANDIDATES: number
   CACHE_TTL_MS: number
   FETCH_TIMEOUT_MS: number
+  CONCURRENCY: number
 }
 
 export const CANDIDATES: CandidatesConfig = {
@@ -33,6 +34,7 @@ export const CANDIDATES: CandidatesConfig = {
   MAX_CANDIDATES: 80, // cap the merged/deduped set (§9: ~50–100)
   CACHE_TTL_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
   FETCH_TIMEOUT_MS: 15_000,
+  CONCURRENCY: 4, // in-flight OpenLibrary queries (robust API, same host)
 }
 
 /** Which generator produced a candidate — books vs. the fanfic sources. */
@@ -187,11 +189,26 @@ async function fetchDocsForQuery(
   }
 }
 
+/** Map `items` with at most `limit` calls in flight, preserving input order in the result. */
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    for (let i = next++; i < items.length; i = next++) {
+      results[i] = await fn(items[i])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
 /**
  * Fetch, normalize, dedup and cap the candidate set for a batch of seed queries.
- * Dedup is by `sourceId` (first occurrence wins — queries are weight-ordered by
- * the seeder). Touches the network + candidate_cache; the caller (C4.4) filters
- * and reranks the result.
+ * Queries fetch with bounded concurrency (`CONCURRENCY`) — OpenLibrary is a robust
+ * single-host API, so a small in-flight pool is polite and much faster than serial.
+ * Results are kept in query order, so dedup by `sourceId` (first occurrence wins —
+ * queries are weight-ordered by the seeder) is unchanged. Touches the network +
+ * candidate_cache; the caller (C4.4) filters and reranks the result.
  */
 export async function fetchCandidates(
   queries: SeedQuery[],
@@ -199,10 +216,12 @@ export async function fetchCandidates(
 ): Promise<Candidate[]> {
   const cfg = opts.cfg ?? CANDIDATES
   const now = opts.now ?? Date.now()
+  const docsPerQuery = await mapPool(queries, cfg.CONCURRENCY, (q) =>
+    fetchDocsForQuery(q.q, cfg, now),
+  )
   const byId = new Map<string, Candidate>()
-  for (const query of queries) {
+  for (const docs of docsPerQuery) {
     if (byId.size >= cfg.MAX_CANDIDATES) break
-    const docs = await fetchDocsForQuery(query.q, cfg, now)
     for (const doc of docs) {
       const cand = normalizeOpenLibraryDoc(doc, cfg)
       if (!cand || byId.has(cand.sourceId)) continue

@@ -1,5 +1,5 @@
 import { JSDOM } from 'jsdom'
-import { fetchPageWithBrowser } from '../../capture/fetch'
+import { fetchPagesSequential } from '../../capture/fetch'
 import { classifyFfnMetaLine } from '../../capture/sites/ffnet'
 import type { LikedItem } from '../taste'
 import type { CandidateSource } from '../candidateSource'
@@ -21,6 +21,7 @@ export const FFN_SOURCE = {
   MAX_SUBJECTS_PER_BLURB: 10,
   MAX_CANDIDATES: 40,
   CACHE_TTL_MS: 14 * 24 * 60 * 60 * 1000, // 14 days — FFN is costly, cache hard
+  REQUEST_DELAY_MS: 1200, // polite delay between pages in the shared CF window
 }
 
 export interface FfnQuery {
@@ -102,9 +103,13 @@ export function parseFfnResultsPage(html: string, cfg = FFN_SOURCE): Candidate[]
 }
 
 /**
- * Fetch (via the CF BrowserWindow), parse, dedup and cap FFN candidates for a batch
- * of queries. Cache-first (`ffn:<url>`, long TTL). A single query failing yields
- * `[]` so one bad query never sinks the batch. Touches the browser + cache.
+ * Fetch, parse, dedup and cap FFN candidates for a batch of queries. Cache-first
+ * (`ffn:<url>`, long TTL): only the cache-miss URLs go to the network, and they all
+ * ride ONE reused BrowserWindow (`fetchPagesSequential`) so Cloudflare is solved
+ * once and the session is shared — instead of spawning a fresh window (and a fresh
+ * CF challenge) per query. The batch fetch rejects on any main-frame failure, so we
+ * catch it and fall back to whatever was cached: one bad fetch never sinks the
+ * source. Touches the browser + cache.
  */
 export async function fetchFfnCandidates(
   queries: FfnQuery[],
@@ -112,20 +117,39 @@ export async function fetchFfnCandidates(
 ): Promise<Candidate[]> {
   const cfg = opts.cfg ?? FFN_SOURCE
   const now = opts.now ?? Date.now()
-  const byId = new Map<string, Candidate>()
-  for (const query of queries) {
-    if (byId.size >= cfg.MAX_CANDIDATES) break
-    const key = `ffn:${query.url}`
-    let cands = readCandidateCache<Candidate[]>(key, cfg.CACHE_TTL_MS, now)
-    if (!cands) {
-      try {
-        cands = parseFfnResultsPage(await fetchPageWithBrowser(query.url), cfg)
-        writeCandidateCache(key, cands, now)
-      } catch {
-        cands = []
-      }
+
+  // Split into cache hits vs. the URLs we must fetch.
+  const cached = new Map<string, Candidate[]>()
+  const misses: FfnQuery[] = []
+  for (const q of queries) {
+    const hit = readCandidateCache<Candidate[]>(`ffn:${q.url}`, cfg.CACHE_TTL_MS, now)
+    if (hit) cached.set(q.url, hit)
+    else misses.push(q)
+  }
+
+  // Fetch every miss through a single shared window; parse + persist each.
+  const fetched = new Map<string, Candidate[]>()
+  if (misses.length > 0) {
+    try {
+      const htmls = await fetchPagesSequential(
+        misses.map((q) => q.url),
+        cfg.REQUEST_DELAY_MS,
+      )
+      misses.forEach((q, i) => {
+        const cands = parseFfnResultsPage(htmls[i] ?? '', cfg)
+        writeCandidateCache(`ffn:${q.url}`, cands, now)
+        fetched.set(q.url, cands)
+      })
+    } catch {
+      // Whole batch failed (e.g. Cloudflare) — keep the cached results and move on.
     }
-    for (const cand of cands) {
+  }
+
+  // Merge in query order, dedup by sourceId, cap.
+  const byId = new Map<string, Candidate>()
+  for (const q of queries) {
+    if (byId.size >= cfg.MAX_CANDIDATES) break
+    for (const cand of cached.get(q.url) ?? fetched.get(q.url) ?? []) {
       if (byId.has(cand.sourceId)) continue
       byId.set(cand.sourceId, cand)
       if (byId.size >= cfg.MAX_CANDIDATES) break

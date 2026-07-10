@@ -339,6 +339,12 @@ describe('recommend', () => {
     expect(out[0].url).toBe('https://openlibrary.org/works/F1')
     expect(out[0].subjects).toEqual(['Fantasy'])
     expect(out[0].matchedTags).toEqual([]) // liked item has no native tags → no overlap
+    // Perf cache: only the KEPT candidates are embedded (owned/dismissed are filtered
+    // out before the model runs), and their vectors are cached by sourceId for reuse.
+    const cached = db
+      .prepare(`SELECT source_id FROM candidate_embeddings ORDER BY source_id`)
+      .all() as { source_id: string }[]
+    expect(cached.map((r) => r.source_id)).toEqual(['/works/F1', '/works/F2'])
   })
 
   it('fills matchedTags with the taste tags a candidate shares (the deterministic why)', async () => {

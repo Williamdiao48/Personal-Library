@@ -1,7 +1,7 @@
 import { ipcMain, shell } from 'electron'
 import { get, run } from '../db'
 import { recommend } from '../recommender/rerank'
-import { embedder } from '../recommender/embedder'
+import { workerEmbedder } from '../workers/embed-host'
 import { buildTaste } from '../recommender/taste'
 import { isHttpUrl } from './capture'
 import type { Recommendation } from '../../../src/types'
@@ -50,13 +50,16 @@ export function registerDiscoverHandlers(): void {
 
   // The only path that runs the engine. `coldStart` (empty taste centroids) is
   // computed up front so the UI can show "learn your taste" rather than a bare
-  // empty state; recommend() also returns [] in that case (it re-derives taste,
-  // an accepted small duplication on a manual, user-initiated action).
+  // empty state. Taste is built ONCE here and passed into recommend() (which would
+  // otherwise rebuild it — a full signals scan + embedding decode). Candidate
+  // embedding runs on the OFF-THREAD worker embedder so the refresh doesn't jank
+  // the UI.
   ipcMain.handle(
     'discover:refresh',
     async (): Promise<{ cards: Recommendation[]; generatedAt: number; coldStart: boolean }> => {
-      const coldStart = buildTaste().centroids.length === 0
-      const cards = coldStart ? [] : await recommend(embedder)
+      const taste = buildTaste()
+      const coldStart = taste.centroids.length === 0
+      const cards = coldStart ? [] : await recommend(workerEmbedder, undefined, taste)
       const generatedAt = Date.now()
       writeCache(cards, generatedAt)
       return { cards, generatedAt, coldStart }

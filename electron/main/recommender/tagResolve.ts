@@ -24,6 +24,11 @@ export const RESOLVE = {
   TTL_MS: 90 * 24 * 60 * 60 * 1000, // canonical tags are stable — cache hard (90d)
   NEG_TTL_MS: 7 * 24 * 60 * 60 * 1000, // retry a failed/empty resolution after a week
   DELAY_MS: 300, // polite delay before each real autocomplete fetch
+  // Autocomplete is a lightweight endpoint (healthy replies are sub-second) and up
+  // to ~23 of these run serially, so cap the per-call tail: 1 retry × a short
+  // timeout instead of fetchJson's default 2×15s (~46s) that could stall a refresh.
+  FETCH_RETRIES: 1,
+  FETCH_TIMEOUT_MS: 8_000,
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -47,7 +52,7 @@ export function parseAutocompleteTop(body: string): string | null {
 // returns null only for a genuine empty autocomplete result.
 async function fetchAutocompleteTop(kind: AliasKind, term: string): Promise<string | null> {
   const url = `${AO3_ORIGIN}/autocomplete/${kind}?term=${encodeURIComponent(term)}`
-  return parseAutocompleteTop(await fetchJson(url))
+  return parseAutocompleteTop(await fetchJson(url, RESOLVE.FETCH_RETRIES, RESOLVE.FETCH_TIMEOUT_MS))
 }
 
 /**
@@ -153,7 +158,11 @@ export async function resolvePairing(
   let canonical: string | null
   try {
     const url = `${AO3_ORIGIN}/autocomplete/relationship?term=${encodeURIComponent(`${x}/${y}`)}`
-    canonical = parsePairingMatch(await fetchJson(url), x, y)
+    canonical = parsePairingMatch(
+      await fetchJson(url, RESOLVE.FETCH_RETRIES, RESOLVE.FETCH_TIMEOUT_MS),
+      x,
+      y,
+    )
   } catch {
     return null // transient fetch failure — do NOT cache, so it retries next run
   }
