@@ -356,6 +356,11 @@ export interface Api {
     get: () => Promise<{ cards: Recommendation[]; generatedAt: number } | null>
     /** Run the engine, cache + return the result (with a cold-start flag). */
     refresh: () => Promise<DiscoverResult>
+    /**
+     * "Load more": re-run the engine excluding the cards already shown this session,
+     * appending the next best picks to the cached feed. Empty `cards` = pool exhausted.
+     */
+    more: (excludeSourceIds: string[]) => Promise<{ cards: Recommendation[] }>
     /** Exclude a card from future recs (not-interested / already-read). */
     dismiss: (card: Recommendation) => Promise<void>
     /** Open a card's http(s) source page in the external browser. */

@@ -379,6 +379,32 @@ describe('recommend', () => {
     expect(out).toHaveLength(RERANK.TOP_K)
   })
 
+  it('widens the emitted pool to opts.limit (a Discover page beyond the default TOP_K)', async () => {
+    seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
+    const src: CandidateSource = {
+      name: 'book',
+      fetch: async () =>
+        Array.from({ length: 20 }, (_, i) =>
+          cand({ title: `Cand ${i}`, author: `A${i}`, sourceId: `/works/C${i}`, source: 'book' }),
+        ),
+    }
+    const out = await recommend(stubEmbedder, [src], undefined, { limit: 18 })
+    expect(out).toHaveLength(18)
+  })
+
+  it('excludeIds drops already-shown candidates so the next page never repeats', async () => {
+    seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
+    const src: CandidateSource = {
+      name: 'book',
+      fetch: async () => [
+        cand({ title: 'One', author: 'A', sourceId: '/works/C1', source: 'book' }),
+        cand({ title: 'Two', author: 'B', sourceId: '/works/C2', source: 'book' }),
+      ],
+    }
+    const out = await recommend(stubEmbedder, [src], undefined, { excludeIds: ['/works/C1'] })
+    expect(out.map((c) => c.sourceId)).toEqual(['/works/C2'])
+  })
+
   it('unions injected sources and dedups a cross-source title|author collision (F4)', async () => {
     seedLikedItem({ title: 'Owned Book', author: 'Owner', tag: 'Fantasy' })
     const book = cand({ title: 'Fresh One', author: 'X', sourceId: '/works/F1', source: 'book' })

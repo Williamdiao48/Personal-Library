@@ -29,7 +29,7 @@ import type { Recommendation } from '../../../src/types'
 
 export const RERANK = {
   LAMBDA: 0.7, // MMR: relevance vs. diversity trade-off (§9, D6)
-  TOP_K: 12, // how many cards recommend() emits
+  TOP_K: 12, // default cards recommend() emits (a Discover "page" widens this)
 } as const
 
 // candidateKey moved to candidates.ts (shared dedup identity); re-exported so
@@ -291,12 +291,19 @@ function loadLibrarySnapshot(): LibrarySnapshot {
  * already built it (the Discover IPC does, for its cold-start check) — building it
  * is a full library-signals scan + a decode of every stored embedding, so reusing
  * one avoids doing that twice per refresh.
+ *
+ * `opts.limit` widens the emitted pool beyond `TOP_K` (Discover asks for a page of
+ * ~24); `opts.excludeIds` adds sourceIds to drop **before** scoring — Discover's
+ * "load more" passes the cards already shown so a paged fetch returns the *next*
+ * best candidates rather than repeating. Both default to the single-page behavior.
  */
 export async function recommend(
   embedder: Embedder,
   sources: CandidateSource[] = defaultSources(),
   taste: TasteResult = buildTaste(),
+  opts: { limit?: number; excludeIds?: readonly string[] } = {},
 ): Promise<Recommendation[]> {
+  const limit = opts.limit ?? RERANK.TOP_K
   if (taste.centroids.length === 0) return [] // cold start — no taste, no recs (§8)
 
   // The reader's taste terms (lowercased union of every seed category) — the set a
@@ -326,6 +333,10 @@ export async function recommend(
 
   // One scan of the library → both the exclusion sets and the book/fic mix.
   const snapshot = loadLibrarySnapshot()
+  // Discover "load more" excludes the cards already shown this session so the next
+  // page digs deeper into the ranked pool instead of repeating (added to the sourceId
+  // set filterCandidates drops against).
+  if (opts.excludeIds) for (const id of opts.excludeIds) snapshot.exclude.ids.add(id)
   const kept = filterCandidates(fetched, snapshot.exclude)
   if (kept.length === 0) return []
 
@@ -356,8 +367,8 @@ export async function recommend(
   // Source-balanced selection: fill book/fic quotas proportional to the library
   // mix so the feed mirrors what the reader actually reads (not just whichever
   // source has the strongest embedding match).
-  const alloc = allocateSlots(RERANK.TOP_K, snapshot.mix)
-  const selected = selectByQuota(scored, RERANK.TOP_K, alloc, RERANK.LAMBDA)
+  const alloc = allocateSlots(limit, snapshot.mix)
+  const selected = selectByQuota(scored, limit, alloc, RERANK.LAMBDA)
   const scoreById = new Map(selected.map((s) => [s.cand.sourceId, s.score]))
   const verified = verifyCandidates(
     selected.map((s) => s.cand),

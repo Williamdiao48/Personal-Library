@@ -22,6 +22,12 @@ interface CachedDiscover {
   generatedAt: number
 }
 
+// How many cards a single refresh / "load more" page emits. The engine already
+// embeds + scores the WHOLE candidate pool per refresh, then discards all but this
+// many — so widening the page beyond the old 12 is nearly free (no extra fetch or
+// model work). The renderer reveals them ~12 at a time as the reader scrolls.
+const DISCOVER_POOL = 24
+
 /** Read + parse the single cache row; null when empty or unparseable. */
 function readCache(): CachedDiscover | null {
   const row = get<{ cards_json: string | null; generated_at: number | null }>(
@@ -59,10 +65,46 @@ export function registerDiscoverHandlers(): void {
     async (): Promise<{ cards: Recommendation[]; generatedAt: number; coldStart: boolean }> => {
       const taste = buildTaste()
       const coldStart = taste.centroids.length === 0
-      const cards = coldStart ? [] : await recommend(workerEmbedder, undefined, taste)
+      const cards = coldStart
+        ? []
+        : await recommend(workerEmbedder, undefined, taste, { limit: DISCOVER_POOL })
       const generatedAt = Date.now()
       writeCache(cards, generatedAt)
       return { cards, generatedAt, coldStart }
+    },
+  )
+
+  // "Load more": the reader scrolled past the current pool. Run the engine again
+  // excluding every card already shown this session (`excludeSourceIds`) so it
+  // returns the NEXT best candidates rather than repeats, append them to the cached
+  // snapshot (so a restart restores the whole scrolled feed), and return just the new
+  // cards. Empty result = the pool is exhausted → the UI stops and shows an end
+  // marker. Warm-cheap: source docs + candidate embeddings are already cached, so
+  // this is a re-selection, not a re-fetch/re-embed.
+  ipcMain.handle(
+    'discover:more',
+    async (_e, excludeSourceIds: string[]): Promise<{ cards: Recommendation[] }> => {
+      const taste = buildTaste()
+      if (taste.centroids.length === 0) return { cards: [] }
+      const cards = await recommend(workerEmbedder, undefined, taste, {
+        limit: DISCOVER_POOL,
+        excludeIds: excludeSourceIds,
+      })
+      if (cards.length > 0) {
+        const cached = readCache()
+        const seen = new Set(excludeSourceIds)
+        const fresh = cards.filter((c) => !seen.has(c.sourceId))
+        if (cached) {
+          const existingIds = new Set(cached.cards.map((c) => c.sourceId))
+          writeCache(
+            [...cached.cards, ...fresh.filter((c) => !existingIds.has(c.sourceId))],
+            cached.generatedAt,
+          )
+        } else {
+          writeCache(fresh, Date.now())
+        }
+      }
+      return { cards }
     },
   )
 

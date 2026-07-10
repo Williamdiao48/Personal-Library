@@ -16,6 +16,37 @@ if (!('ResizeObserver' in globalThis)) {
   ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub
 }
 
+// jsdom has no IntersectionObserver, but DiscoverView's infinite-scroll sentinel
+// constructs one on mount. This controllable stub records each instance's callback
+// so a test can drive the intersection: `fireIntersection()` fires the latest
+// (active) observer. observe/disconnect are no-ops.
+class IntersectionObserverStub {
+  static instances: IntersectionObserverStub[] = []
+  callback: IntersectionObserverCallback
+  constructor(cb: IntersectionObserverCallback) {
+    this.callback = cb
+    IntersectionObserverStub.instances.push(this)
+  }
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+  takeRecords(): IntersectionObserverEntry[] {
+    return []
+  }
+}
+;(globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver =
+  IntersectionObserverStub
+
+/** Fire the most recently constructed IntersectionObserver (the active sentinel). */
+export function fireIntersection(isIntersecting = true): void {
+  const inst = IntersectionObserverStub.instances.at(-1)
+  inst?.callback(
+    [{ isIntersecting } as IntersectionObserverEntry],
+    inst as unknown as IntersectionObserver,
+  )
+}
+
 afterEach(() => {
   cleanup()
+  IntersectionObserverStub.instances = []
 })

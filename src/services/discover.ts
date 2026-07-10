@@ -5,6 +5,7 @@ import type { Recommendation } from '../types'
 export const discoverService = {
   get: () => window.api.discover.get(),
   refresh: () => window.api.discover.refresh(),
+  more: (excludeSourceIds: string[]) => window.api.discover.more(excludeSourceIds),
   dismiss: (card: Recommendation) => window.api.discover.dismiss(card),
   openExternal: (url: string) => window.api.discover.openExternal(url),
 }

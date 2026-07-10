@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, Navigate } from 'react-router-dom'
 import { discoverService } from '../../services/discover'
 import { useToast } from '../../contexts/ToastContext'
@@ -31,6 +31,16 @@ export default function DiscoverView() {
   const [refreshing, setRefreshing] = useState(false)
   const [coldStart, setColdStart] = useState(false)
 
+  // Infinite scroll: reveal `visibleCount` of the loaded pool, growing a page at a
+  // time as a sentinel nears the viewport; when the whole loaded pool is on screen,
+  // auto-fetch the next page (`more`) and append. `exhausted` latches when a fetch
+  // returns nothing new so we stop pestering the engine.
+  const PAGE_SIZE = 12
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [exhausted, setExhausted] = useState(false)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+
   // Modal (Add to Library) — same parent-owned pattern as LibraryView.
   const [showAddModal, setShowAddModal] = useState(false)
   const [pendingUrl, setPendingUrl] = useState<string | undefined>(undefined)
@@ -61,6 +71,9 @@ export default function DiscoverView() {
       setCards(res.cards)
       setGeneratedAt(res.generatedAt)
       setColdStart(res.coldStart)
+      // Fresh feed → restart the scroll pagination.
+      setVisibleCount(PAGE_SIZE)
+      setExhausted(false)
       if (res.coldStart) {
         updateToast(toastId, 'Read and rate a few items first', 'success')
       } else {
@@ -72,6 +85,53 @@ export default function DiscoverView() {
       setRefreshing(false)
     }
   }, [refreshing, addToast, updateToast])
+
+  // Fetch the next page: exclude everything already shown so the engine returns the
+  // NEXT best picks (never repeats). No new cards = the pool is exhausted.
+  const loadMore = useCallback(async () => {
+    setLoadingMore(true)
+    try {
+      const shownIds = cards.map((c) => c.sourceId)
+      const res = await discoverService.more(shownIds)
+      const seen = new Set(shownIds)
+      const fresh = res.cards.filter((c) => !seen.has(c.sourceId))
+      if (fresh.length === 0) {
+        setExhausted(true)
+      } else {
+        setCards((prev) => [...prev, ...fresh])
+        setVisibleCount((c) => c + Math.min(PAGE_SIZE, fresh.length))
+      }
+    } catch {
+      setExhausted(true) // don't hammer the engine on a failed page
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [cards])
+
+  // Sentinel reached: first reveal more of the already-loaded pool (instant), and
+  // only once it's all on screen fetch the next page from the engine.
+  const onReachEnd = useCallback(() => {
+    if (loading || refreshing || coldStart || cards.length === 0) return
+    if (visibleCount < cards.length) {
+      setVisibleCount((c) => Math.min(c + PAGE_SIZE, cards.length))
+      return
+    }
+    if (!loadingMore && !exhausted) void loadMore()
+  }, [loading, refreshing, coldStart, cards.length, visibleCount, loadingMore, exhausted, loadMore])
+
+  // Observe the sentinel against the viewport, prefetching ~a screen early.
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el) return
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) onReachEnd()
+      },
+      { rootMargin: '600px' },
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [onReachEnd])
 
   const handleAdd = (rec: Recommendation) => {
     setPendingUrl(rec.url)
@@ -137,17 +197,25 @@ export default function DiscoverView() {
           </button>
         </div>
       ) : (
-        <div className="discover-grid">
-          {cards.map((rec) => (
-            <RecommendationCard
-              key={rec.sourceId}
-              rec={rec}
-              onAdd={handleAdd}
-              onDismiss={handleDismiss}
-              onOpen={handleOpen}
-            />
-          ))}
-        </div>
+        <>
+          <div className="discover-grid">
+            {cards.slice(0, visibleCount).map((rec) => (
+              <RecommendationCard
+                key={rec.sourceId}
+                rec={rec}
+                onAdd={handleAdd}
+                onDismiss={handleDismiss}
+                onOpen={handleOpen}
+              />
+            ))}
+          </div>
+          {/* Sentinel: reveals more of the pool, then auto-loads the next page. */}
+          <div ref={sentinelRef} className="discover-sentinel" aria-hidden="true" />
+          {loadingMore && <p className="discover-more-status">Finding more…</p>}
+          {exhausted && (
+            <p className="discover-more-status discover-more-end">You&apos;re all caught up</p>
+          )}
+        </>
       )}
 
       {showAddModal && (

@@ -173,3 +173,22 @@
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
 }
+
+/* ── infinite scroll ──────────────────────────────────────────────────── */
+/* Zero-height tripwire the IntersectionObserver watches; kept in flow after
+   the grid so it enters the viewport as the reader nears the last card. */
+.discover-sentinel {
+  height: 1px;
+}
+
+.discover-more-status {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  padding: 20px 0 8px;
+  margin: 0;
+}
+.discover-more-end {
+  color: var(--text-muted);
+  opacity: 0.7;
+}

@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import DiscoverView, { formatRelativeTime } from './DiscoverView'
 import { discoverService } from '../../services/discover'
+import { fireIntersection } from '../../../test/renderer/setup'
 import type { Recommendation } from '../../types'
 
 // The service layer + the toast context + the (heavy) capture modal are stubbed,
@@ -14,6 +15,7 @@ vi.mock('../../services/discover', () => ({
   discoverService: {
     get: vi.fn(),
     refresh: vi.fn(),
+    more: vi.fn(() => Promise.resolve({ cards: [] })),
     dismiss: vi.fn(() => Promise.resolve()),
     openExternal: vi.fn(() => Promise.resolve()),
   },
@@ -135,5 +137,52 @@ describe('DiscoverView', () => {
 
     expect(screen.getByTestId('add-modal')).toBeInTheDocument()
     expect(screen.getByTestId('modal-url')).toHaveTextContent('https://ao3/works/42')
+  })
+
+  // N distinct cards for the infinite-scroll tests.
+  const recs = (n: number, from = 1) =>
+    Array.from({ length: n }, (_, i) =>
+      rec({ title: `Fic ${from + i}`, sourceId: `id-${from + i}`, url: `https://ao3/${from + i}` }),
+    )
+
+  it('reveals more of the loaded pool a page at a time as the sentinel scrolls in', async () => {
+    svc.get.mockResolvedValue({ cards: recs(15), generatedAt: Date.now() })
+    renderView()
+    await screen.findByText('Fic 1')
+
+    // First page = 12 cards; the 13th–15th are loaded but not yet rendered.
+    expect(screen.queryByText('Fic 13')).not.toBeInTheDocument()
+
+    await act(async () => fireIntersection())
+
+    expect(await screen.findByText('Fic 15')).toBeInTheDocument()
+    expect(svc.more).not.toHaveBeenCalled() // still local — no engine call
+  })
+
+  it('auto-loads the next page (excluding shown ids) once the pool is on screen', async () => {
+    svc.get.mockResolvedValue({ cards: recs(2), generatedAt: Date.now() })
+    svc.more.mockResolvedValue({ cards: recs(1, 3) }) // one genuinely-new card
+    renderView()
+    await screen.findByText('Fic 1')
+
+    await act(async () => fireIntersection())
+
+    expect(await screen.findByText('Fic 3')).toBeInTheDocument()
+    expect(svc.more).toHaveBeenCalledWith(['id-1', 'id-2'])
+  })
+
+  it('shows "all caught up" and stops when load-more returns nothing new', async () => {
+    svc.get.mockResolvedValue({ cards: recs(2), generatedAt: Date.now() })
+    svc.more.mockResolvedValue({ cards: [] })
+    renderView()
+    await screen.findByText('Fic 1')
+
+    await act(async () => fireIntersection())
+
+    expect(await screen.findByText(/all caught up/i)).toBeInTheDocument()
+
+    // A further sentinel hit must NOT fire another engine call (exhausted latch).
+    await act(async () => fireIntersection())
+    expect(svc.more).toHaveBeenCalledTimes(1)
   })
 })

@@ -92,6 +92,9 @@ describe('discover:refresh', () => {
     // Persisted for the next get().
     const row = get<{ cards_json: string }>(`SELECT cards_json FROM discover_cache WHERE id = 1`)
     expect(JSON.parse(row!.cards_json)[0].title).toBe('Fresh')
+    // Requests a whole page (not the bare TOP_K=12) — widening is near-free.
+    const optsArg = recommendMock.mock.calls[0][3] as { limit?: number }
+    expect(optsArg.limit).toBeGreaterThan(12)
   })
 
   it('short-circuits on a cold-start library — no engine call, coldStart true', async () => {
@@ -104,6 +107,50 @@ describe('discover:refresh', () => {
     expect(out.coldStart).toBe(true)
     expect(out.cards).toEqual([])
     expect(recommendMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('discover:more', () => {
+  it('runs the engine excluding the shown ids and appends the new cards to the cache', async () => {
+    // Seed a first page in the cache.
+    const a = rec({ title: 'A', sourceId: 'id-a' })
+    const b = rec({ title: 'B', sourceId: 'id-b' })
+    recommendMock.mockResolvedValue([a, b])
+    await invoke('discover:refresh')
+
+    // Next page returns a genuinely-new card.
+    const c = rec({ title: 'C', sourceId: 'id-c' })
+    recommendMock.mockResolvedValue([c])
+    const out = (await invoke('discover:more', ['id-a', 'id-b'])) as { cards: Recommendation[] }
+
+    expect(out.cards.map((x) => x.title)).toEqual(['C'])
+    // The engine was told to exclude the shown ids (4th-arg opts).
+    const opts = recommendMock.mock.calls[1][3] as { limit?: number; excludeIds?: string[] }
+    expect(opts.excludeIds).toEqual(['id-a', 'id-b'])
+    expect(opts.limit).toBeGreaterThan(12)
+    // Cache is now the accumulated feed A,B,C (survives a restart / next get()).
+    const cached = (await invoke('discover:get')) as { cards: Recommendation[] }
+    expect(cached.cards.map((x) => x.title)).toEqual(['A', 'B', 'C'])
+  })
+
+  it('short-circuits on cold start — no engine call, empty cards', async () => {
+    buildTasteMock.mockReturnValue({ centroids: [], liked: [] })
+    const out = (await invoke('discover:more', [])) as { cards: Recommendation[] }
+    expect(out.cards).toEqual([])
+    expect(recommendMock).not.toHaveBeenCalled()
+  })
+
+  it('does not duplicate a card already in the cached feed', async () => {
+    const a = rec({ title: 'A', sourceId: 'id-a' })
+    recommendMock.mockResolvedValue([a])
+    await invoke('discover:refresh')
+
+    // Engine (contrived) returns the already-cached card plus a new one.
+    recommendMock.mockResolvedValue([a, rec({ title: 'D', sourceId: 'id-d' })])
+    await invoke('discover:more', []) // empty exclusions → existing-id guard is what dedups
+
+    const cached = (await invoke('discover:get')) as { cards: Recommendation[] }
+    expect(cached.cards.map((x) => x.title)).toEqual(['A', 'D'])
   })
 })
 
