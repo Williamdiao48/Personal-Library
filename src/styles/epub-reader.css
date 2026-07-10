@@ -1311,3 +1311,20 @@
   text-decoration-color: #b09070;
   background: none;
 }
+
+/* Read-only theme chips on annotation panel rows */
+.annotation-row-themes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.annotation-theme-chip {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}

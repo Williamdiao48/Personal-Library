@@ -553,6 +553,28 @@ const Sidebar = memo(function Sidebar({
         )}
         <Link
           className="sidebar-settings-btn"
+          to="/annotations"
+          aria-label="Annotations"
+          title="Annotations"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M4 4h11l5 5v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z" />
+            <path d="M8 11h8M8 15h5" />
+          </svg>
+          Annotations
+        </Link>
+        <Link
+          className="sidebar-settings-btn"
           to="/stats"
           aria-label="Reading stats"
           title="Reading Stats"

@@ -257,3 +257,26 @@
   display: flex;
   gap: 8px;
 }
+
+/* ── Annotations section: color-label inputs ─────────────────────────────── */
+.settings-color-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+}
+.settings-color-label-input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font-ui);
+  outline: none;
+}
+.settings-color-label-input:focus {
+  border-color: var(--accent);
+}

@@ -45,6 +45,8 @@ describe('database bring-up', () => {
       'tag_alias',
       'discover_cache',
       'candidate_embeddings',
+      'annotation_themes',
+      'annotation_theme_links',
     ]) {
       expect(tables).toContain(t)
     }
@@ -260,6 +262,43 @@ describe('database bring-up', () => {
   it('annotations.color exists (migration 25 — highlight colors)', () => {
     const db = openTestDb()
     expect(colsOf(db, 'annotations')).toContain('color')
+  })
+
+  // Migration 26 — annotation themes.
+  it('annotation_themes / annotation_theme_links have the expected columns', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'annotation_themes')).toEqual(
+      expect.arrayContaining(['id', 'name', 'created_at']),
+    )
+    expect(colsOf(db, 'annotation_theme_links')).toEqual(
+      expect.arrayContaining(['annotation_id', 'theme_id']),
+    )
+  })
+
+  it('drops theme links when the annotation OR the theme is deleted (ON DELETE CASCADE)', () => {
+    const db = openTestDb()
+    db.pragma('foreign_keys = ON')
+    db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified)
+       VALUES ('bk', 'T', NULL, NULL, 'article', 'bk.html', 1, NULL, NULL, 0, 0)`,
+    ).run()
+    db.prepare(
+      `INSERT INTO annotations (id, item_id, type, position, created_at) VALUES ('an', 'bk', 'highlight', 0, 0)`,
+    ).run()
+    db.prepare(
+      `INSERT INTO annotation_themes (id, name, created_at) VALUES ('th', 'symbolism', 0)`,
+    ).run()
+    db.prepare(
+      `INSERT INTO annotation_theme_links (annotation_id, theme_id) VALUES ('an', 'th')`,
+    ).run()
+    expect(db.prepare(`SELECT COUNT(*) c FROM annotation_theme_links`).get()).toMatchObject({
+      c: 1,
+    })
+    // Deleting the annotation removes the link.
+    db.prepare(`DELETE FROM annotations WHERE id = 'an'`).run()
+    expect(db.prepare(`SELECT COUNT(*) c FROM annotation_theme_links`).get()).toMatchObject({
+      c: 0,
+    })
   })
 
   it('applies migrations incrementally from an empty (pre-schema) database', () => {

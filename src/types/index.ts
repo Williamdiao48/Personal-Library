@@ -161,6 +161,14 @@ export type AnnotationType = 'bookmark' | 'highlight' | 'note'
 // predates colors; it renders as the default yellow.
 export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink'
 
+// A free-form label ("symbolism", "class conflict") the user attaches to
+// annotations to organize quotes across books. Mirrors the tags table.
+export interface AnnotationTheme {
+  id: string
+  name: string
+  created_at: number
+}
+
 export interface Annotation {
   id: string
   item_id: string
@@ -172,8 +180,29 @@ export interface Annotation {
   context_after: string | null
   note_text: string | null
   color: HighlightColor | null // null = legacy highlight → default yellow
+  themes: AnnotationTheme[] // attached themes; [] when none (populated by IPC)
   created_at: number // unix ms
   sort_order: number | null
+}
+
+// An annotation plus its source book, for the cross-book Annotations hub.
+export interface AnnotationWithSource extends Annotation {
+  item_title: string
+  item_author: string | null
+  content_type: ContentType
+}
+
+// A flattened annotation the renderer hands to annotations:exportQuotes. The
+// renderer pre-formats display strings (chapter label, color category) so the
+// main-process writer stays presentation-agnostic.
+export interface ExportQuoteRow {
+  text: string // the quote (selected_text) — may be empty for a bare note
+  note: string | null
+  title: string
+  author: string | null
+  chapterLabel: string | null // e.g. "Ch. 3" or "Page 12"
+  category: string | null // color-category label
+  themes: string[]
 }
 
 export interface CreateAnnotationPayload {
@@ -343,11 +372,20 @@ export interface Api {
   }
   annotations: {
     getForItem: (itemId: string) => Promise<Annotation[]>
+    getAll: () => Promise<AnnotationWithSource[]>
     create: (payload: CreateAnnotationPayload) => Promise<Annotation>
     updateNote: (id: string, noteText: string | null) => Promise<void>
     setColor: (id: string, color: HighlightColor | null) => Promise<void>
+    setThemes: (annotationId: string, themeIds: string[]) => Promise<void>
     delete: (id: string) => Promise<void>
     swapSortOrder: (id1: string, id2: string) => Promise<void>
+    exportQuotes: (rows: ExportQuoteRow[], format: 'md' | 'txt') => Promise<string | null>
+  }
+  annotationThemes: {
+    list: () => Promise<AnnotationTheme[]>
+    create: (name: string) => Promise<AnnotationTheme>
+    rename: (id: string, name: string) => Promise<void>
+    delete: (id: string) => Promise<void>
   }
   onRequestCapture: (callback: (url: string) => void) => () => void
   onCaptureProgress: (callback: (payload: { jobId: string; msg: string }) => void) => () => void

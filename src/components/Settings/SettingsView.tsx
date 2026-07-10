@@ -4,6 +4,7 @@ import { useSettings } from '../../contexts/SettingsContext'
 import { useUpdater } from '../../contexts/UpdaterContext'
 import type { Theme, GridDensity, SortBy, CustomTheme } from '../../contexts/SettingsContext'
 import CustomSelect from '../ui/CustomSelect'
+import { HIGHLIGHT_COLORS } from '../../constants/highlightColors'
 import { backupService } from '../../services/backup'
 import { deriveCustomTheme, isValidHex } from '../../utils/themeDerive'
 import '../../styles/settings.css'
@@ -492,6 +493,35 @@ export default function SettingsView() {
               options={SORT_OPTIONS}
             />
           </div>
+        </section>
+
+        {/* ── Annotations ── */}
+        <section className="settings-section">
+          <h3 className="settings-section-title">Annotations</h3>
+          <p className="settings-row-hint" style={{ marginBottom: 6 }}>
+            Give each highlight color a meaning. These labels show as categories in the Annotations
+            view and in exports.
+          </p>
+          {HIGHLIGHT_COLORS.map((c) => (
+            <div className="settings-row" key={c.key}>
+              <span
+                className="settings-color-swatch"
+                style={{ background: c.swatch }}
+                aria-hidden="true"
+              />
+              <input
+                className="settings-color-label-input"
+                value={settings.highlightLabels[c.key]}
+                placeholder={c.label}
+                aria-label={`${c.label} highlight label`}
+                onChange={(e) =>
+                  updateSettings({
+                    highlightLabels: { ...settings.highlightLabels, [c.key]: e.target.value },
+                  })
+                }
+              />
+            </div>
+          ))}
         </section>
 
         {/* ── Data ── */}

@@ -9,7 +9,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 25
+export const CURRENT_VERSION = 26
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -220,6 +220,25 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   // yellow — so no backfill is needed. Added via MIGRATIONS only (never in SCHEMA
   // baseline, per the fresh-install duplicate-column gotcha).
   25: `ALTER TABLE annotations ADD COLUMN color TEXT DEFAULT NULL;`,
+  // Annotation themes: free-form labels ("symbolism", "class conflict") the user
+  // attaches to highlights/notes to organize quotes across books. Mirrors the
+  // tags / item_tags shape but scoped to annotations. New tables — MIGRATIONS
+  // only, never in schema.ts SCHEMA (fresh-install baseline gotcha). Numbered 26
+  // to sit above the color migration (25); see the 25 note for why numbers here
+  // must stay above the shared library.db's max version.
+  26: `
+    CREATE TABLE IF NOT EXISTS annotation_themes (
+      id         TEXT    PRIMARY KEY,
+      name       TEXT    NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS annotation_theme_links (
+      annotation_id TEXT NOT NULL REFERENCES annotations(id)       ON DELETE CASCADE,
+      theme_id      TEXT NOT NULL REFERENCES annotation_themes(id) ON DELETE CASCADE,
+      PRIMARY KEY (annotation_id, theme_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ann_theme_links_theme ON annotation_theme_links(theme_id);
+  `,
 }
 
 export function initDatabase(): void {

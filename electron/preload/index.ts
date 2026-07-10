@@ -152,14 +152,25 @@ contextBridge.exposeInMainWorld('api', {
   // Annotations
   annotations: {
     getForItem: (itemId: string) => ipcRenderer.invoke('annotations:getForItem', itemId),
+    getAll: () => ipcRenderer.invoke('annotations:getAll'),
     create: (payload: object) => ipcRenderer.invoke('annotations:create', payload),
     updateNote: (id: string, noteText: string | null) =>
       ipcRenderer.invoke('annotations:updateNote', id, noteText),
     setColor: (id: string, color: string | null) =>
       ipcRenderer.invoke('annotations:setColor', id, color),
+    setThemes: (annotationId: string, themeIds: string[]) =>
+      ipcRenderer.invoke('annotations:setThemes', annotationId, themeIds),
     delete: (id: string) => ipcRenderer.invoke('annotations:delete', id),
     swapSortOrder: (id1: string, id2: string) =>
       ipcRenderer.invoke('annotations:swapSortOrder', id1, id2),
+    exportQuotes: (rows: object[], format: string) =>
+      ipcRenderer.invoke('annotations:exportQuotes', rows, format),
+  },
+  annotationThemes: {
+    list: () => ipcRenderer.invoke('annotationThemes:list'),
+    create: (name: string) => ipcRenderer.invoke('annotationThemes:create', name),
+    rename: (id: string, name: string) => ipcRenderer.invoke('annotationThemes:rename', id, name),
+    delete: (id: string) => ipcRenderer.invoke('annotationThemes:delete', id),
   },
 
   // Backup

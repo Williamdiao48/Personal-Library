@@ -1,4 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
+import type { HighlightColor } from '../types'
+import { DEFAULT_HIGHLIGHT_LABELS } from '../constants/highlightColors'
 
 export type Theme =
   | 'dark'
@@ -45,6 +47,9 @@ export interface AppSettings {
   defaultSort: SortBy
   customThemes: CustomTheme[]
   enableDiscover: boolean // show the Discover recommendations panel
+  // User-facing meaning for each highlight color (e.g. yellow = "Key quote").
+  // Drives the color-category legend/filters. App-global config, not per-annotation.
+  highlightLabels: Record<HighlightColor, string>
 }
 
 const CUSTOM_THEME_VARS: Array<[keyof CustomTheme, string]> = [
@@ -67,6 +72,7 @@ const DEFAULTS: AppSettings = {
   defaultSort: 'date_saved',
   customThemes: [],
   enableDiscover: true,
+  highlightLabels: DEFAULT_HIGHLIGHT_LABELS,
 }
 
 const STORAGE_KEY = 'app-settings'

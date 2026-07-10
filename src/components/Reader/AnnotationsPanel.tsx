@@ -205,6 +205,16 @@ function AnnotationRow({
           <p className="annotation-note-text">{truncate(annotation.note_text, 160)}</p>
         )
       )}
+
+      {(annotation.themes ?? []).length > 0 && (
+        <div className="annotation-row-themes">
+          {(annotation.themes ?? []).map((t) => (
+            <span key={t.id} className="annotation-theme-chip">
+              {t.name}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
