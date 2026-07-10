@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import type { Annotation } from '../../types'
+import type { Annotation, HighlightColor } from '../../types'
+import { HIGHLIGHT_COLORS, DEFAULT_HIGHLIGHT_COLOR } from '../../constants/highlightColors'
 
 interface Props {
   x: number
@@ -7,6 +8,7 @@ interface Props {
   annotation: Annotation
   onDelete: (id: string) => void
   onUpdate: (id: string, noteText: string | null) => void
+  onSetColor: (id: string, color: HighlightColor) => void
   onClose: () => void
 }
 
@@ -20,6 +22,7 @@ export default function AnnotationContextMenu({
   annotation,
   onDelete,
   onUpdate,
+  onSetColor,
   onClose,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
@@ -102,6 +105,29 @@ export default function AnnotationContextMenu({
         </div>
       ) : (
         <>
+          {annotation.type === 'highlight' && (
+            <>
+              <div className="annot-ctx-swatches" role="group" aria-label="Highlight color">
+                {HIGHLIGHT_COLORS.map(({ key, label, swatch }) => {
+                  const active = (annotation.color ?? DEFAULT_HIGHLIGHT_COLOR) === key
+                  return (
+                    <button
+                      key={key}
+                      className={`annot-ctx-swatch${active ? ' active' : ''}`}
+                      style={{ background: swatch }}
+                      onClick={() => {
+                        onSetColor(annotation.id, key)
+                        onClose()
+                      }}
+                      title={label}
+                      aria-label={label}
+                    />
+                  )
+                })}
+              </div>
+              <div className="annot-ctx-divider" />
+            </>
+          )}
           {annotation.type === 'note' && (
             <button
               className="annot-ctx-btn"

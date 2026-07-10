@@ -8,6 +8,7 @@ vi.mock('../services/annotationsService', () => ({
     getForItem: vi.fn().mockResolvedValue([]),
     create: vi.fn(),
     updateNote: vi.fn().mockResolvedValue(undefined),
+    setColor: vi.fn().mockResolvedValue(undefined),
     delete: vi.fn().mockResolvedValue(undefined),
     swapSortOrder: vi.fn().mockResolvedValue(undefined),
   },
@@ -27,6 +28,7 @@ function ann(over: Partial<Annotation>): Annotation {
     context_before: null,
     context_after: null,
     note_text: null,
+    color: null,
     created_at: 0,
     sort_order: null,
     ...over,
@@ -144,6 +146,37 @@ describe('useAnnotations — creation with anchored text', () => {
     expect((mark as HTMLElement).dataset.type).toBe('highlight')
   })
 
+  it('createHighlight threads the chosen color into the payload and onto the mark', async () => {
+    const container = document.createElement('div')
+    container.innerHTML = '<p>The quick brown fox jumps over</p>'
+    const { result } = setupWith(container, [])
+    await waitFor(() => expect(svc.getForItem).toHaveBeenCalled())
+    svc.create.mockResolvedValue(
+      ann({ id: 'h2', type: 'highlight', selected_text: 'brown', color: 'green' }),
+    )
+
+    await act(async () => {
+      await result.current.createHighlight(rangeInText(container, 'brown'), 0.3, 'green')
+    })
+
+    expect(svc.create).toHaveBeenCalledWith(expect.objectContaining({ color: 'green' }))
+    const mark = container.querySelector('mark[data-annotation-id="h2"]') as HTMLElement
+    expect(mark.dataset.color).toBe('green')
+  })
+
+  it('createHighlight defaults to yellow when no color is passed', async () => {
+    const container = document.createElement('div')
+    container.innerHTML = '<p>default color path here</p>'
+    const { result } = setupWith(container, [])
+    await waitFor(() => expect(svc.getForItem).toHaveBeenCalled())
+    svc.create.mockResolvedValue(ann({ id: 'h3', type: 'highlight', selected_text: 'default' }))
+
+    await act(async () => {
+      await result.current.createHighlight(rangeInText(container, 'default'), 0.1)
+    })
+    expect(svc.create).toHaveBeenCalledWith(expect.objectContaining({ color: 'yellow' }))
+  })
+
   it('createHighlight ignores an empty/whitespace selection', async () => {
     const container = document.createElement('div')
     container.innerHTML = '<p>   spaces   </p>'
@@ -207,6 +240,24 @@ describe('useAnnotations — updateNote & delete DOM cleanup', () => {
     expect(result.current.annotations[0].note_text).toBe('new')
   })
 
+  it('setHighlightColor persists, patches state, and recolors the live mark', async () => {
+    const container = document.createElement('div')
+    container.innerHTML =
+      'keep <mark data-annotation-id="c1" data-type="highlight">word</mark> tail'
+    const { result } = setupWith(container, [
+      ann({ id: 'c1', type: 'highlight', color: 'yellow', selected_text: 'word' }),
+    ])
+    await waitFor(() => expect(result.current.annotations).toHaveLength(1))
+
+    await act(async () => {
+      await result.current.setHighlightColor('c1', 'blue')
+    })
+    expect(svc.setColor).toHaveBeenCalledWith('c1', 'blue')
+    expect(result.current.annotations[0].color).toBe('blue')
+    const mark = container.querySelector('mark[data-annotation-id="c1"]') as HTMLElement
+    expect(mark.dataset.color).toBe('blue')
+  })
+
   it('deleteAnnotation unwraps the annotation mark from the container', async () => {
     const container = document.createElement('div')
     container.innerHTML = 'keep <mark data-annotation-id="d1">gone</mark> tail'
@@ -244,6 +295,25 @@ describe('useAnnotations — applyHighlightsToDOM re-anchoring', () => {
     // The 2nd "target" is the one preceded by "beta " — verify by the text before the mark.
     const before = (mark.previousSibling as Text | null)?.data ?? ''
     expect(before).toMatch(/beta $/)
+  })
+
+  it('re-anchors a stored colored highlight with its data-color', async () => {
+    const container = document.createElement('div')
+    container.innerHTML = '<p>find the pink needle in here</p>'
+    const highlight = ann({
+      id: 'clr',
+      type: 'highlight',
+      chapter_index: 0,
+      selected_text: 'needle',
+      color: 'pink',
+    })
+    const { result } = setupWith(container, [highlight])
+    await waitFor(() => expect(result.current.annotations).toHaveLength(1))
+
+    act(() => result.current.applyHighlightsToDOM(0))
+
+    const mark = container.querySelector('mark[data-annotation-id="clr"]') as HTMLElement
+    expect(mark.dataset.color).toBe('pink')
   })
 
   it('re-applying is idempotent — clears prior marks, never nests or double-wraps', async () => {

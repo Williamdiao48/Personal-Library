@@ -14,6 +14,7 @@ const annot = (over: Partial<Annotation> = {}): Annotation =>
     context_before: null,
     context_after: null,
     note_text: 'a note',
+    color: null,
     created_at: 0,
     sort_order: null,
     ...over,
@@ -26,6 +27,7 @@ function renderMenu(over: Partial<React.ComponentProps<typeof AnnotationContextM
     annotation: annot(),
     onDelete: vi.fn(),
     onUpdate: vi.fn(),
+    onSetColor: vi.fn(),
     onClose: vi.fn(),
     ...over,
   }
@@ -54,6 +56,29 @@ describe('AnnotationContextMenu', () => {
     expect(screen.queryByRole('button', { name: 'Edit note' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Copy text' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+  })
+
+  it('shows a recolor swatch row for a highlight and marks the active color', () => {
+    renderMenu({ annotation: annot({ type: 'highlight', color: 'blue', note_text: null }) })
+    const swatches = ['Yellow', 'Green', 'Blue', 'Pink'].map((n) =>
+      screen.getByRole('button', { name: n }),
+    )
+    expect(swatches).toHaveLength(4)
+    expect(screen.getByRole('button', { name: 'Blue' }).className).toMatch(/\bactive\b/)
+  })
+
+  it('recolors a highlight and closes when a swatch is clicked', () => {
+    const props = renderMenu({
+      annotation: annot({ type: 'highlight', color: 'yellow', note_text: null }),
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Green' }))
+    expect(props.onSetColor).toHaveBeenCalledWith('a1', 'green')
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  it('shows no recolor swatches for a note', () => {
+    renderMenu()
+    expect(screen.queryByRole('button', { name: 'Green' })).toBeNull()
   })
 
   it('copies the selected text to the clipboard and closes', () => {

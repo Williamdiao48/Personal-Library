@@ -157,6 +157,10 @@ export interface ConvertResult {
 
 export type AnnotationType = 'bookmark' | 'highlight' | 'note'
 
+// Highlight color key. NULL on a stored annotation = a legacy highlight that
+// predates colors; it renders as the default yellow.
+export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink'
+
 export interface Annotation {
   id: string
   item_id: string
@@ -167,6 +171,7 @@ export interface Annotation {
   context_before: string | null
   context_after: string | null
   note_text: string | null
+  color: HighlightColor | null // null = legacy highlight → default yellow
   created_at: number // unix ms
   sort_order: number | null
 }
@@ -180,6 +185,7 @@ export interface CreateAnnotationPayload {
   context_before?: string | null
   context_after?: string | null
   note_text?: string | null
+  color?: HighlightColor | null
 }
 
 export interface BackupExportResult {
@@ -339,6 +345,7 @@ export interface Api {
     getForItem: (itemId: string) => Promise<Annotation[]>
     create: (payload: CreateAnnotationPayload) => Promise<Annotation>
     updateNote: (id: string, noteText: string | null) => Promise<void>
+    setColor: (id: string, color: HighlightColor | null) => Promise<void>
     delete: (id: string) => Promise<void>
     swapSortOrder: (id1: string, id2: string) => Promise<void>
   }

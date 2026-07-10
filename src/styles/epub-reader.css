@@ -979,6 +979,30 @@
 .annotation-mark[data-type='highlight']:hover {
   background-color: rgba(255, 220, 0, 0.45);
 }
+/* Color variants — legacy highlights (no data-color) fall back to the yellow
+   base rule above. Semi-transparent so they read on light and dark reader
+   themes alike. */
+.annotation-mark[data-type='highlight'][data-color='green'] {
+  background-color: rgba(74, 222, 128, 0.3);
+  border-bottom-color: rgba(52, 199, 89, 0.7);
+}
+.annotation-mark[data-type='highlight'][data-color='green']:hover {
+  background-color: rgba(74, 222, 128, 0.48);
+}
+.annotation-mark[data-type='highlight'][data-color='blue'] {
+  background-color: rgba(96, 165, 250, 0.32);
+  border-bottom-color: rgba(59, 130, 246, 0.7);
+}
+.annotation-mark[data-type='highlight'][data-color='blue']:hover {
+  background-color: rgba(96, 165, 250, 0.5);
+}
+.annotation-mark[data-type='highlight'][data-color='pink'] {
+  background-color: rgba(244, 114, 182, 0.32);
+  border-bottom-color: rgba(236, 72, 153, 0.7);
+}
+.annotation-mark[data-type='highlight'][data-color='pink']:hover {
+  background-color: rgba(244, 114, 182, 0.5);
+}
 .annotation-mark[data-type='note'] {
   background-color: transparent;
   border-bottom: 2px dashed rgba(140, 100, 255, 0.65);
@@ -1030,6 +1054,30 @@
   height: 1px;
   background: rgba(255, 255, 255, 0.08);
   margin: 3px 6px;
+}
+/* Recolor swatch row at the top of a highlight's context menu */
+.annot-ctx-swatches {
+  display: flex;
+  gap: 6px;
+  padding: 4px 6px 6px;
+}
+.annot-ctx-swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+.annot-ctx-swatch:hover {
+  transform: scale(1.15);
+}
+/* Double ring (dark + light) stays visible on any reader theme background */
+.annot-ctx-swatch.active {
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 0 0 3px rgba(255, 255, 255, 0.85);
 }
 .annot-ctx-edit {
   padding: 8px;

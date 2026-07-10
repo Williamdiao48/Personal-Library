@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Annotation, ContentType } from '../../types'
+import { HIGHLIGHT_COLORS, DEFAULT_HIGHLIGHT_COLOR } from '../../constants/highlightColors'
 
 interface Props {
   annotations: Annotation[]
@@ -73,11 +74,19 @@ function AnnotationRow({
   }
 
   const icon = annotation.type === 'highlight' ? <HighlightIcon /> : <NoteIcon />
+  // Tint the highlight icon with its color so the panel mirrors the reader.
+  const iconColor =
+    annotation.type === 'highlight'
+      ? HIGHLIGHT_COLORS.find((c) => c.key === (annotation.color ?? DEFAULT_HIGHLIGHT_COLOR))
+          ?.swatch
+      : undefined
 
   return (
     <div className="annotation-row">
       <div className="annotation-row-header">
-        <span className="annotation-row-icon">{icon}</span>
+        <span className="annotation-row-icon" style={iconColor ? { color: iconColor } : undefined}>
+          {icon}
+        </span>
         <button
           className="annotation-row-pos annotation-row-pos-link"
           onClick={() => onJump(annotation)}

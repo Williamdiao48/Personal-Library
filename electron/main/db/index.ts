@@ -9,7 +9,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 24
+export const CURRENT_VERSION = 25
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -215,6 +215,11 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
       model_version TEXT    NOT NULL
     );
   `,
+  // Highlight colors: a nullable color key ('yellow' | 'green' | 'blue' | 'pink')
+  // on each annotation. NULL = a legacy highlight, which renders as the default
+  // yellow — so no backfill is needed. Added via MIGRATIONS only (never in SCHEMA
+  // baseline, per the fresh-install duplicate-column gotcha).
+  25: `ALTER TABLE annotations ADD COLUMN color TEXT DEFAULT NULL;`,
 }
 
 export function initDatabase(): void {

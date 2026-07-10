@@ -10,7 +10,7 @@ import AnnotationsPanel from './AnnotationsPanel'
 import BookmarksPanel from './BookmarksPanel'
 import NotePopover from './NotePopover'
 import AnnotationContextMenu from './AnnotationContextMenu'
-import type { Item, EpubBook, Annotation } from '../../types'
+import type { Item, EpubBook, Annotation, HighlightColor } from '../../types'
 import '../../styles/epub-reader.css'
 
 const SAVE_DEBOUNCE_MS = 600
@@ -269,8 +269,8 @@ export default function EpubReader({ item, onBack }: Props) {
     return total > 1 ? pageRef.current / total : 0
   }
 
-  function handleSelectionHighlight(range: Range) {
-    annot.createHighlight(range, getCurrentEpubPosition())
+  function handleSelectionHighlight(range: Range, color: HighlightColor) {
+    annot.createHighlight(range, getCurrentEpubPosition(), color)
   }
 
   function handleSelectionNote(range: Range) {
@@ -1320,6 +1320,7 @@ export default function EpubReader({ item, onBack }: Props) {
             setContextMenu(null)
           }}
           onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
+          onSetColor={annot.setHighlightColor}
           onClose={() => setContextMenu(null)}
         />
       )}

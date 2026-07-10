@@ -3193,6 +3193,33 @@ html[data-theme='sepia'] .item-card-refresh-status--error {
   color: #fff;
 }
 
+/* Color swatch row in the selection popup */
+.sel-popup-swatches {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+}
+.sel-popup-swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+.sel-popup-swatch:hover {
+  transform: scale(1.18);
+  border-color: rgba(255, 255, 255, 0.7);
+}
+.sel-popup-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
 /* ── Note editor modal ──────────────────────────────────────────────────── */
 
 .note-editor-overlay {

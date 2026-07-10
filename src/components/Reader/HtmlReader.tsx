@@ -10,7 +10,7 @@ import AnnotationsPanel from './AnnotationsPanel'
 import BookmarksPanel from './BookmarksPanel'
 import NotePopover from './NotePopover'
 import AnnotationContextMenu from './AnnotationContextMenu'
-import type { Item, Annotation } from '../../types'
+import type { Item, Annotation, HighlightColor } from '../../types'
 import '../../styles/reader.css'
 import '../../styles/epub-reader.css' // reuse settings panel + button styles
 
@@ -315,8 +315,8 @@ export default function HtmlReader({
     return scrollable > 0 ? el.scrollTop / scrollable : 0
   }
 
-  function handleSelectionHighlight(range: Range) {
-    annot.createHighlight(range, getCurrentPosition())
+  function handleSelectionHighlight(range: Range, color: HighlightColor) {
+    annot.createHighlight(range, getCurrentPosition(), color)
   }
 
   function handleSelectionNote(range: Range) {
@@ -1122,6 +1122,7 @@ export default function HtmlReader({
               setContextMenu(null)
             }}
             onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
+            onSetColor={annot.setHighlightColor}
             onClose={() => setContextMenu(null)}
           />
         )}
@@ -1195,6 +1196,7 @@ export default function HtmlReader({
               setContextMenu(null)
             }}
             onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
+            onSetColor={annot.setHighlightColor}
             onClose={() => setContextMenu(null)}
           />
         )}

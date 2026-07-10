@@ -155,6 +155,8 @@ contextBridge.exposeInMainWorld('api', {
     create: (payload: object) => ipcRenderer.invoke('annotations:create', payload),
     updateNote: (id: string, noteText: string | null) =>
       ipcRenderer.invoke('annotations:updateNote', id, noteText),
+    setColor: (id: string, color: string | null) =>
+      ipcRenderer.invoke('annotations:setColor', id, color),
     delete: (id: string) => ipcRenderer.invoke('annotations:delete', id),
     swapSortOrder: (id1: string, id2: string) =>
       ipcRenderer.invoke('annotations:swapSortOrder', id1, id2),

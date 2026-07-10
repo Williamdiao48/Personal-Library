@@ -42,6 +42,33 @@ describe('annotations IPC', () => {
     expect(list.map((a) => a.sort_order)).toEqual([1, 2])
   })
 
+  it('persists a highlight color on create and setColor updates it', async () => {
+    const item = seedItem(db, {})
+    const h = (await invoke('annotations:create', {
+      item_id: item,
+      type: 'highlight',
+      position: 0.3,
+      selected_text: 'sel',
+      color: 'green',
+    })) as any
+    expect(h.color).toBe('green')
+
+    await invoke('annotations:setColor', h.id, 'pink')
+    const list = (await invoke('annotations:getForItem', item)) as any[]
+    expect(list[0].color).toBe('pink')
+  })
+
+  it('defaults color to null when omitted', async () => {
+    const item = seedItem(db, {})
+    const a = (await invoke('annotations:create', {
+      item_id: item,
+      type: 'highlight',
+      position: 0,
+      selected_text: 's',
+    })) as any
+    expect(a.color).toBeNull()
+  })
+
   it('updateNote edits note text', async () => {
     const item = seedItem(db, {})
     const a = (await invoke('annotations:create', {

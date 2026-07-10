@@ -257,6 +257,11 @@ describe('database bring-up', () => {
     expect(pk.map((c) => c.name)).toEqual(['source_id'])
   })
 
+  it('annotations.color exists (migration 25 — highlight colors)', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'annotations')).toContain('color')
+  })
+
   it('applies migrations incrementally from an empty (pre-schema) database', () => {
     // A DB at user_version 0 with NO tables must migrate cleanly to head — this is
     // the path a brand-new install actually takes.

@@ -26,8 +26,8 @@ export function registerAnnotationHandlers(): void {
     run(
       `
       INSERT INTO annotations
-        (id, item_id, type, chapter_index, position, selected_text, context_before, context_after, note_text, created_at, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, item_id, type, chapter_index, position, selected_text, context_before, context_after, note_text, color, created_at, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         id,
@@ -39,6 +39,7 @@ export function registerAnnotationHandlers(): void {
         payload.context_before ?? null,
         payload.context_after ?? null,
         payload.note_text ?? null,
+        payload.color ?? null,
         now,
         sortOrder,
       ],
@@ -48,6 +49,10 @@ export function registerAnnotationHandlers(): void {
 
   ipcMain.handle('annotations:updateNote', (_e, id: string, noteText: string | null) => {
     run('UPDATE annotations SET note_text = ? WHERE id = ?', [noteText, id])
+  })
+
+  ipcMain.handle('annotations:setColor', (_e, id: string, color: string | null) => {
+    run('UPDATE annotations SET color = ? WHERE id = ?', [color, id])
   })
 
   ipcMain.handle('annotations:delete', (_e, id: string) => {

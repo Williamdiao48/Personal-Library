@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { annotationsService } from '../services/annotationsService'
-import type { Annotation, ContentType, CreateAnnotationPayload } from '../types'
+import type { Annotation, AnnotationType, CreateAnnotationPayload, HighlightColor } from '../types'
+import { DEFAULT_HIGHLIGHT_COLOR } from '../constants/highlightColors'
 
 interface UseAnnotationsOptions {
   itemId: string
@@ -13,9 +14,10 @@ interface UseAnnotationsOptions {
 export interface UseAnnotationsReturn {
   annotations: Annotation[]
   createBookmark: (position: number) => Promise<void>
-  createHighlight: (range: Range, position: number) => Promise<void>
+  createHighlight: (range: Range, position: number, color?: HighlightColor) => Promise<void>
   createNote: (position: number, noteText: string, range?: Range) => Promise<void>
   updateNote: (id: string, noteText: string | null) => Promise<void>
+  setHighlightColor: (id: string, color: HighlightColor) => Promise<void>
   deleteAnnotation: (id: string) => Promise<void>
   swapAnnotationOrder: (id1: string, id2: string) => Promise<void>
   applyHighlightsToDOM: (chapterIndex: number | null) => void
@@ -110,22 +112,30 @@ export function clearAnnotationMarks(container: HTMLElement): void {
   })
 }
 
-/** Wrap the given Range in a <mark data-annotation-id="..." data-type="..."> element. */
-function applyMarkToRange(range: Range, annotationId: string, type: AnnotationType): void {
-  try {
+/** Wrap the given Range in a <mark data-annotation-id data-type [data-color]> element.
+ *  color applies only to highlights; null (legacy) leaves data-color unset so the
+ *  CSS default (yellow) renders. */
+function applyMarkToRange(
+  range: Range,
+  annotationId: string,
+  type: AnnotationType,
+  color?: HighlightColor | null,
+): void {
+  const build = (): HTMLElement => {
     const mark = document.createElement('mark')
     mark.className = 'annotation-mark'
     mark.dataset.annotationId = annotationId
     mark.dataset.type = type
-    range.surroundContents(mark)
+    if (type === 'highlight' && color) mark.dataset.color = color
+    return mark
+  }
+  try {
+    range.surroundContents(build())
   } catch {
     // surroundContents throws if range crosses element boundaries;
     // fall back to extractContents + wrap
     try {
-      const mark = document.createElement('mark')
-      mark.className = 'annotation-mark'
-      mark.dataset.annotationId = annotationId
-      mark.dataset.type = type
+      const mark = build()
       mark.appendChild(range.extractContents())
       range.insertNode(mark)
     } catch {
@@ -200,7 +210,7 @@ function reanchorHighlight(annotation: Annotation, container: HTMLElement): void
   const range = document.createRange()
   range.setStart(startNode, startOffset)
   range.setEnd(endNode, endOffset)
-  applyMarkToRange(range, annotation.id, annotation.type)
+  applyMarkToRange(range, annotation.id, annotation.type, annotation.color)
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────
@@ -232,7 +242,7 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
   )
 
   const createHighlight = useCallback(
-    async (range: Range, position: number) => {
+    async (range: Range, position: number, color: HighlightColor = DEFAULT_HIGHLIGHT_COLOR) => {
       const text = range.toString().trim()
       if (text.length < 1) return
 
@@ -245,11 +255,12 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
         selected_text: text,
         context_before: contextBefore || null,
         context_after: contextAfter || null,
+        color,
       }
       const created = await annotationsService.create(payload)
       setAnnotations((prev) => [...prev, created])
       // Immediately paint the mark so it appears without waiting for applyHighlightsToDOM
-      applyMarkToRange(range, created.id, 'highlight')
+      applyMarkToRange(range, created.id, 'highlight', color)
     },
     [itemId, chapterIndex],
   )
@@ -291,6 +302,19 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
     await annotationsService.updateNote(id, noteText)
     setAnnotations((prev) => prev.map((a) => (a.id === id ? { ...a, note_text: noteText } : a)))
   }, [])
+
+  const setHighlightColor = useCallback(
+    async (id: string, color: HighlightColor) => {
+      await annotationsService.setColor(id, color)
+      setAnnotations((prev) => prev.map((a) => (a.id === id ? { ...a, color } : a)))
+      // Recolor the live mark in place (no re-anchor needed)
+      const mark = contentRef.current?.querySelector<HTMLElement>(
+        `mark[data-annotation-id="${id}"]`,
+      )
+      if (mark) mark.dataset.color = color
+    },
+    [contentRef],
+  )
 
   const deleteAnnotation = useCallback(
     async (id: string) => {
@@ -352,6 +376,7 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
     createHighlight,
     createNote,
     updateNote,
+    setHighlightColor,
     deleteAnnotation,
     swapAnnotationOrder,
     applyHighlightsToDOM,

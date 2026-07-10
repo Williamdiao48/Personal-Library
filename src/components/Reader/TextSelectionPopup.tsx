@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import type { HighlightColor } from '../../types'
+import { HIGHLIGHT_COLORS } from '../../constants/highlightColors'
 
 interface Props {
   containerRef: React.RefObject<HTMLElement | null>
-  onHighlight: (range: Range) => void
+  onHighlight: (range: Range, color: HighlightColor) => void
   onNote: (range: Range) => void
   disabled?: boolean
   clearTrigger?: string | number
@@ -127,11 +129,11 @@ export default function TextSelectionPopup({
 
   if (!popup) return null
 
-  const handleHighlight = () => {
+  const handleHighlight = (color: HighlightColor) => {
     const { range } = popup
     setPopup(null)
     window.getSelection()?.removeAllRanges()
-    onHighlight(range)
+    onHighlight(range, color)
   }
 
   const handleNote = () => {
@@ -149,13 +151,19 @@ export default function TextSelectionPopup({
       // Prevent mousedown from clearing selection before we process it
       onMouseDown={(e) => e.preventDefault()}
     >
-      <button className="sel-popup-btn" onClick={handleHighlight} title="Highlight">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <rect x="1" y="10" width="14" height="4" rx="1" fill="currentColor" opacity="0.6" />
-          <rect x="3" y="2" width="10" height="8" rx="1" fill="currentColor" />
-        </svg>
-        Highlight
-      </button>
+      <div className="sel-popup-swatches" role="group" aria-label="Highlight color">
+        {HIGHLIGHT_COLORS.map(({ key, label, swatch }) => (
+          <button
+            key={key}
+            className="sel-popup-swatch"
+            style={{ background: swatch }}
+            onClick={() => handleHighlight(key)}
+            title={`Highlight ${label.toLowerCase()}`}
+            aria-label={`Highlight ${label.toLowerCase()}`}
+          />
+        ))}
+      </div>
+      <span className="sel-popup-divider" aria-hidden="true" />
       <button className="sel-popup-btn" onClick={handleNote} title="Add note">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M2 3h12v8H9l-3 3V11H2V3z" stroke="currentColor" strokeWidth="1.5" fill="none" />

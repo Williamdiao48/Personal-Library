@@ -74,16 +74,21 @@ afterEach(() => {
 describe('TextSelectionPopup', () => {
   it('renders nothing until a selection is made', () => {
     setup()
-    expect(screen.queryByText('Highlight')).toBeNull()
+    expect(screen.queryByText('Note')).toBeNull()
   })
 
-  it('shows the popup for an in-container selection and Highlight fires with the range', () => {
+  it('shows the popup and a color swatch fires onHighlight with the range and color', () => {
     const { container, onHighlight } = setup()
     const range = stubSelection(container)
     mouseUpIn(container)
-    expect(screen.getByText('Highlight')).toBeInTheDocument()
-    fireEvent.click(screen.getByText('Highlight'))
-    expect(onHighlight).toHaveBeenCalledWith(range)
+    // All four swatches render
+    expect(screen.getByLabelText('Highlight yellow')).toBeInTheDocument()
+    expect(screen.getByLabelText('Highlight green')).toBeInTheDocument()
+    expect(screen.getByLabelText('Highlight blue')).toBeInTheDocument()
+    expect(screen.getByLabelText('Highlight pink')).toBeInTheDocument()
+    // Clicking a non-default swatch threads that color through
+    fireEvent.click(screen.getByLabelText('Highlight green'))
+    expect(onHighlight).toHaveBeenCalledWith(range, 'green')
   })
 
   it('Note fires with the range', () => {
@@ -97,7 +102,7 @@ describe('TextSelectionPopup', () => {
   it('does nothing while disabled', () => {
     const { container } = setup({ disabled: true })
     selectAndMouseUp(container)
-    expect(screen.queryByText('Highlight')).toBeNull()
+    expect(screen.queryByText('Note')).toBeNull()
   })
 
   it('ignores a collapsed selection', () => {
@@ -110,36 +115,36 @@ describe('TextSelectionPopup', () => {
       removeAllRanges: vi.fn(),
     } as unknown as Selection)
     mouseUpIn(container)
-    expect(screen.queryByText('Highlight')).toBeNull()
+    expect(screen.queryByText('Note')).toBeNull()
   })
 
   it('dismisses on an outside mousedown', () => {
     const { container } = setup()
     selectAndMouseUp(container)
-    expect(screen.getByText('Highlight')).toBeInTheDocument()
+    expect(screen.getByText('Note')).toBeInTheDocument()
     act(() => {
       fireEvent.mouseDown(document.body)
     })
-    expect(screen.queryByText('Highlight')).toBeNull()
+    expect(screen.queryByText('Note')).toBeNull()
   })
 
   it('dismisses when the selection is cleared (selectionchange)', () => {
     const { container } = setup()
     selectAndMouseUp(container)
-    expect(screen.getByText('Highlight')).toBeInTheDocument()
+    expect(screen.getByText('Note')).toBeInTheDocument()
     vi.spyOn(window, 'getSelection').mockReturnValue({
       isCollapsed: true,
     } as unknown as Selection)
     act(() => {
       document.dispatchEvent(new Event('selectionchange'))
     })
-    expect(screen.queryByText('Highlight')).toBeNull()
+    expect(screen.queryByText('Note')).toBeNull()
   })
 
   it('dismisses when the clearTrigger changes', () => {
     const { container, rerender, onHighlight, onNote } = setup({ clearTrigger: 'a' })
     selectAndMouseUp(container)
-    expect(screen.getByText('Highlight')).toBeInTheDocument()
+    expect(screen.getByText('Note')).toBeInTheDocument()
     const ref = createRef<HTMLElement>()
     ;(ref as { current: HTMLElement }).current = container
     rerender(
@@ -150,6 +155,6 @@ describe('TextSelectionPopup', () => {
         clearTrigger="b"
       />,
     )
-    expect(screen.queryByText('Highlight')).toBeNull()
+    expect(screen.queryByText('Note')).toBeNull()
   })
 })

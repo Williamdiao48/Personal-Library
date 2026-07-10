@@ -1,4 +1,4 @@
-import type { Annotation, CreateAnnotationPayload } from '../types'
+import type { Annotation, CreateAnnotationPayload, HighlightColor } from '../types'
 
 export const annotationsService = {
   getForItem: (itemId: string): Promise<Annotation[]> => window.api.annotations.getForItem(itemId),
@@ -8,6 +8,9 @@ export const annotationsService = {
 
   updateNote: (id: string, noteText: string | null): Promise<void> =>
     window.api.annotations.updateNote(id, noteText),
+
+  setColor: (id: string, color: HighlightColor | null): Promise<void> =>
+    window.api.annotations.setColor(id, color),
 
   delete: (id: string): Promise<void> => window.api.annotations.delete(id),
 
