@@ -223,225 +223,227 @@ const Sidebar = memo(function Sidebar({
         </Link>
       </nav>
 
-      {/* ── Collections ─────────────────────────────── */}
-      <section className="sidebar-collections">
-        <div className="sidebar-section-header">
-          <h2 className="sidebar-section-title">Collections</h2>
-          <button
-            className="sidebar-section-add"
-            onClick={() => {
-              setShowNewInput(true)
-              setEditingId(null)
-              setConfirmDeleteId(null)
-              newCancelled.current = false
-            }}
-            title="New collection"
-            disabled={saving}
-          >
-            +
-          </button>
-        </div>
-
-        {collections.map((col) => {
-          if (editingId === col.id) {
-            return (
-              <form
-                key={col.id}
-                className="sidebar-collection-edit-form"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  commitRename(col.id)
-                }}
-              >
-                <input
-                  autoFocus
-                  className="sidebar-collection-input"
-                  value={editingName}
-                  onChange={(e) => setEditingName(e.target.value)}
-                  onBlur={() => commitRename(col.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') {
-                      editCancelled.current = true
-                      setEditingId(null)
-                    }
-                  }}
-                  maxLength={60}
-                />
-              </form>
-            )
-          }
-
-          if (confirmDeleteId === col.id) {
-            return (
-              <div key={col.id} className="sidebar-collection-confirm">
-                <span className="sidebar-collection-confirm-text">Delete "{col.name}"?</span>
-                <button
-                  className="sidebar-collection-confirm-yes"
-                  onClick={() => confirmDelete(col.id)}
-                  disabled={saving}
-                >
-                  Yes
-                </button>
-                <button
-                  className="sidebar-collection-confirm-no"
-                  onClick={() => setConfirmDeleteId(null)}
-                  disabled={saving}
-                >
-                  No
-                </button>
-              </div>
-            )
-          }
-
-          return (
-            <div
-              key={col.id}
-              className={`sidebar-collection-row${location.pathname === `/collection/${col.id}` ? ' active' : ''}`}
-              onContextMenu={(e) => {
-                e.preventDefault()
-                setContextMenu({ id: col.id, x: e.clientX, y: e.clientY })
-              }}
-            >
-              <Link className="sidebar-collection-link" to={`/collection/${col.id}`}>
-                <span className="sidebar-collection-name">{col.name}</span>
-                <span className="sidebar-collection-count">{itemCounts[col.id] ?? 0}</span>
-              </Link>
-            </div>
-          )
-        })}
-
-        {showNewInput && (
-          <form
-            ref={newInputFormRef}
-            className="sidebar-collection-edit-form"
-            onSubmit={(e) => {
-              e.preventDefault()
-              commitCreate()
-            }}
-          >
-            <input
-              autoFocus
-              className="sidebar-collection-input"
-              placeholder="Collection name…"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onBlur={commitCreate}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  newCancelled.current = true
-                  setShowNewInput(false)
-                  setNewName('')
-                }
-              }}
-              maxLength={60}
-            />
-          </form>
-        )}
-
-        {collections.length === 0 && !showNewInput && (
-          <p className="sidebar-collections-empty">No collections yet</p>
-        )}
-
-        {collectionError && (
-          <p className="sidebar-collections-error" onClick={() => setCollectionError(null)}>
-            {collectionError}
-          </p>
-        )}
-      </section>
-
-      {/* ── Authors ─────────────────────────────────── */}
-      {authors.length > 0 && (
-        <section className="sidebar-authors">
-          <div className="sidebar-authors-header">
-            <h2 className="sidebar-authors-title">Authors</h2>
+      <div className="sidebar-scroll">
+        {/* ── Collections ─────────────────────────────── */}
+        <section className="sidebar-collections">
+          <div className="sidebar-section-header">
+            <h2 className="sidebar-section-title">Collections</h2>
             <button
-              className="sidebar-authors-toggle"
-              onClick={() => setAuthorsExpanded((s) => !s)}
-              aria-label={authorsExpanded ? 'Collapse authors' : 'Expand authors'}
+              className="sidebar-section-add"
+              onClick={() => {
+                setShowNewInput(true)
+                setEditingId(null)
+                setConfirmDeleteId(null)
+                newCancelled.current = false
+              }}
+              title="New collection"
+              disabled={saving}
             >
-              {authorsExpanded ? '▾' : '▸'}
+              +
             </button>
           </div>
-          {authorsExpanded &&
-            authors.map((author) => {
-              const encoded = encodeURIComponent(author)
-              const isActive = currentAuthor === author
+
+          {collections.map((col) => {
+            if (editingId === col.id) {
               return (
-                <div key={author} className={`sidebar-author-row${isActive ? ' active' : ''}`}>
-                  <Link className="sidebar-author-link" to={`/?author=${encoded}`} title={author}>
-                    {author}
-                  </Link>
-                  <span className="sidebar-author-count">{authorItemCounts[author] ?? 0}</span>
+                <form
+                  key={col.id}
+                  className="sidebar-collection-edit-form"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    commitRename(col.id)
+                  }}
+                >
+                  <input
+                    autoFocus
+                    className="sidebar-collection-input"
+                    value={editingName}
+                    onChange={(e) => setEditingName(e.target.value)}
+                    onBlur={() => commitRename(col.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        editCancelled.current = true
+                        setEditingId(null)
+                      }
+                    }}
+                    maxLength={60}
+                  />
+                </form>
+              )
+            }
+
+            if (confirmDeleteId === col.id) {
+              return (
+                <div key={col.id} className="sidebar-collection-confirm">
+                  <span className="sidebar-collection-confirm-text">Delete "{col.name}"?</span>
+                  <button
+                    className="sidebar-collection-confirm-yes"
+                    onClick={() => confirmDelete(col.id)}
+                    disabled={saving}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    className="sidebar-collection-confirm-no"
+                    onClick={() => setConfirmDeleteId(null)}
+                    disabled={saving}
+                  >
+                    No
+                  </button>
                 </div>
               )
-            })}
-        </section>
-      )}
-
-      {/* ── Capture jobs ─────────────────────────────── */}
-      {captureJobs.length > 0 && (
-        <section className="sidebar-captures">
-          <h2 className="sidebar-section-title sidebar-captures-title">
-            Capturing
-            {captureJobs.some((j) => j.status === 'running') && (
-              <span className="sidebar-captures-pulse" aria-hidden="true" />
-            )}
-          </h2>
-
-          {captureJobs.map((job) => {
-            const pct = jobProgress(job)
+            }
 
             return (
-              <div key={job.id} className={`capture-job capture-job--${job.status}`}>
-                <div className="capture-job-header">
-                  <span className="capture-job-url" title={job.url}>
-                    {job.status === 'done'
-                      ? `✓ ${job.title ?? displayUrl(job.url)}`
-                      : job.status === 'error'
-                        ? `✗ ${displayUrl(job.url)}`
-                        : displayUrl(job.url)}
-                  </span>
-                  {(job.status === 'error' || job.status === 'done') && (
-                    <button
-                      className="capture-job-dismiss"
-                      onClick={() => onDismissJob(job.id)}
-                      aria-label="Dismiss"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-
-                {/* Progress bar */}
-                <div className="capture-job-track">
-                  {pct !== null ? (
-                    <div className="capture-job-bar" style={{ width: `${pct}%` }} />
-                  ) : (
-                    <div className="capture-job-bar capture-job-bar--indeterminate" />
-                  )}
-                </div>
-
-                {/* Status line: message + ETA */}
-                <div className="capture-job-status">
-                  <span className="capture-job-msg">
-                    {job.status === 'error'
-                      ? (job.error ?? 'Capture failed.')
-                      : job.status === 'done'
-                        ? 'Saved to library'
-                        : job.msg}
-                  </span>
-                  {job.status === 'running' && <LiveEta job={job} />}
-                  {job.status === 'running' && job.chapter && job.total && (
-                    <span className="capture-job-count">
-                      {job.chapter}/{job.total}
-                    </span>
-                  )}
-                </div>
+              <div
+                key={col.id}
+                className={`sidebar-collection-row${location.pathname === `/collection/${col.id}` ? ' active' : ''}`}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  setContextMenu({ id: col.id, x: e.clientX, y: e.clientY })
+                }}
+              >
+                <Link className="sidebar-collection-link" to={`/collection/${col.id}`}>
+                  <span className="sidebar-collection-name">{col.name}</span>
+                  <span className="sidebar-collection-count">{itemCounts[col.id] ?? 0}</span>
+                </Link>
               </div>
             )
           })}
+
+          {showNewInput && (
+            <form
+              ref={newInputFormRef}
+              className="sidebar-collection-edit-form"
+              onSubmit={(e) => {
+                e.preventDefault()
+                commitCreate()
+              }}
+            >
+              <input
+                autoFocus
+                className="sidebar-collection-input"
+                placeholder="Collection name…"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onBlur={commitCreate}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    newCancelled.current = true
+                    setShowNewInput(false)
+                    setNewName('')
+                  }
+                }}
+                maxLength={60}
+              />
+            </form>
+          )}
+
+          {collections.length === 0 && !showNewInput && (
+            <p className="sidebar-collections-empty">No collections yet</p>
+          )}
+
+          {collectionError && (
+            <p className="sidebar-collections-error" onClick={() => setCollectionError(null)}>
+              {collectionError}
+            </p>
+          )}
         </section>
-      )}
+
+        {/* ── Authors ─────────────────────────────────── */}
+        {authors.length > 0 && (
+          <section className="sidebar-authors">
+            <div className="sidebar-authors-header">
+              <h2 className="sidebar-authors-title">Authors</h2>
+              <button
+                className="sidebar-authors-toggle"
+                onClick={() => setAuthorsExpanded((s) => !s)}
+                aria-label={authorsExpanded ? 'Collapse authors' : 'Expand authors'}
+              >
+                {authorsExpanded ? '▾' : '▸'}
+              </button>
+            </div>
+            {authorsExpanded &&
+              authors.map((author) => {
+                const encoded = encodeURIComponent(author)
+                const isActive = currentAuthor === author
+                return (
+                  <div key={author} className={`sidebar-author-row${isActive ? ' active' : ''}`}>
+                    <Link className="sidebar-author-link" to={`/?author=${encoded}`} title={author}>
+                      {author}
+                    </Link>
+                    <span className="sidebar-author-count">{authorItemCounts[author] ?? 0}</span>
+                  </div>
+                )
+              })}
+          </section>
+        )}
+
+        {/* ── Capture jobs ─────────────────────────────── */}
+        {captureJobs.length > 0 && (
+          <section className="sidebar-captures">
+            <h2 className="sidebar-section-title sidebar-captures-title">
+              Capturing
+              {captureJobs.some((j) => j.status === 'running') && (
+                <span className="sidebar-captures-pulse" aria-hidden="true" />
+              )}
+            </h2>
+
+            {captureJobs.map((job) => {
+              const pct = jobProgress(job)
+
+              return (
+                <div key={job.id} className={`capture-job capture-job--${job.status}`}>
+                  <div className="capture-job-header">
+                    <span className="capture-job-url" title={job.url}>
+                      {job.status === 'done'
+                        ? `✓ ${job.title ?? displayUrl(job.url)}`
+                        : job.status === 'error'
+                          ? `✗ ${displayUrl(job.url)}`
+                          : displayUrl(job.url)}
+                    </span>
+                    {(job.status === 'error' || job.status === 'done') && (
+                      <button
+                        className="capture-job-dismiss"
+                        onClick={() => onDismissJob(job.id)}
+                        aria-label="Dismiss"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Progress bar */}
+                  <div className="capture-job-track">
+                    {pct !== null ? (
+                      <div className="capture-job-bar" style={{ width: `${pct}%` }} />
+                    ) : (
+                      <div className="capture-job-bar capture-job-bar--indeterminate" />
+                    )}
+                  </div>
+
+                  {/* Status line: message + ETA */}
+                  <div className="capture-job-status">
+                    <span className="capture-job-msg">
+                      {job.status === 'error'
+                        ? (job.error ?? 'Capture failed.')
+                        : job.status === 'done'
+                          ? 'Saved to library'
+                          : job.msg}
+                    </span>
+                    {job.status === 'running' && <LiveEta job={job} />}
+                    {job.status === 'running' && job.chapter && job.total && (
+                      <span className="capture-job-count">
+                        {job.chapter}/{job.total}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </section>
+        )}
+      </div>
 
       {/* ── Collection context menu ─────────────────── */}
       {contextMenu && (

@@ -258,6 +258,7 @@ body,
 .library-layout {
   display: flex;
   height: 100vh;
+  overflow: hidden; /* contain children to the window; each pane scrolls internally */
 }
 
 .library-main {
@@ -616,6 +617,7 @@ body,
   flex-direction: column;
   gap: 24px;
   flex-shrink: 0;
+  overflow: hidden; /* clip; only the middle .sidebar-scroll region scrolls */
   -webkit-app-region: drag; /* sidebar top is draggable */
 }
 
@@ -623,6 +625,18 @@ body,
 .sidebar a,
 .sidebar button {
   -webkit-app-region: no-drag;
+}
+
+/* Middle region: collections + authors + capture jobs scroll here when the
+   sidebar is too short, while the top nav and the bottom footer stay pinned. */
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0; /* allow the flex child to shrink so overflow-y can engage */
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  -webkit-app-region: no-drag; /* wheel/trackpad scroll instead of window drag */
 }
 
 .sidebar-nav {
