@@ -1,5 +1,7 @@
 /* Discover — the recommendation feed. Mirrors the stats-layout full-page shell
-   and the item-card cover treatment, with its own card/badge/chip styling. */
+   and the item-card cover treatment, with its own card/badge/chip styling.
+   Colors come entirely from the app's theme tokens (globals.css :root /
+   html[data-theme=…]) so the page tracks every theme — no hardcoded palette. */
 
 .discover-layout {
   min-height: 100vh;
@@ -18,13 +20,13 @@
 .discover-back-btn {
   background: none;
   border: none;
-  color: var(--text-secondary, #888);
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 0.95rem;
   padding: 4px 8px;
 }
 .discover-back-btn:hover {
-  color: var(--text-primary, #eee);
+  color: var(--text);
 }
 
 .discover-title {
@@ -32,6 +34,7 @@
   font-weight: 600;
   margin: 0;
   flex: 1;
+  color: var(--text);
 }
 
 .discover-refresh-btn {
@@ -41,7 +44,7 @@
 }
 
 .discover-subtitle {
-  color: var(--text-secondary, #888);
+  color: var(--text-muted);
   font-size: 0.85rem;
   margin: 0 0 24px;
   min-height: 1.2em;
@@ -58,16 +61,20 @@
   display: flex;
   gap: 14px;
   padding: 14px;
-  border-radius: 10px;
-  background: var(--surface, #1c1c1e);
-  border: 1px solid var(--border, #2c2c2e);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  transition: border-color var(--t-fast, 0.12s);
+}
+.rec-card:hover {
+  border-color: var(--accent-dim);
 }
 
 .rec-card-cover {
   flex: 0 0 72px;
   width: 72px;
   height: 108px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -97,15 +104,16 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--accent-soft, #2f3a4a);
-  color: var(--accent, #7aa2d6);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
 }
 
 .rec-card-title {
   font-size: 0.98rem;
   font-weight: 600;
   line-height: 1.25;
+  color: var(--text);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -113,13 +121,13 @@
 }
 
 .rec-card-author {
-  color: var(--text-secondary, #999);
+  color: var(--text-muted);
   font-size: 0.82rem;
 }
 
 .rec-card-why {
   font-size: 0.7rem;
-  color: var(--text-secondary, #888);
+  color: var(--text-muted);
   margin-top: 2px;
 }
 
@@ -132,8 +140,8 @@
   font-size: 0.72rem;
   padding: 2px 7px;
   border-radius: 10px;
-  background: var(--chip-bg, #2a2a2c);
-  color: var(--text-secondary, #bbb);
+  background: var(--bg-hover);
+  color: var(--text-muted);
   white-space: nowrap;
 }
 
@@ -147,17 +155,21 @@
 .rec-card-action {
   font-size: 0.75rem;
   padding: 4px 9px;
-  border-radius: 6px;
-  border: 1px solid var(--border, #3a3a3c);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
   background: none;
-  color: var(--text-secondary, #ccc);
+  color: var(--text-muted);
   cursor: pointer;
 }
 .rec-card-action:hover {
-  background: var(--surface-hover, #2a2a2c);
-  color: var(--text-primary, #fff);
+  background: var(--bg-hover);
+  color: var(--text);
 }
 .rec-card-action--primary {
-  border-color: var(--accent, #4a6fa8);
-  color: var(--accent, #7aa2d6);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.rec-card-action--primary:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
 }
