@@ -41,9 +41,15 @@ export default tseslint.config(
     },
   },
 
-  // Main process + preload + tests (node globals).
+  // Main process + preload + tests + standalone Node scripts (node globals).
   {
-    files: ['electron/**/*.ts', 'test/**/*.ts', 'e2e/**/*.ts'],
+    files: [
+      'electron/**/*.ts',
+      'test/**/*.ts',
+      'e2e/**/*.ts',
+      'scripts/**/*.{js,mjs,cjs,ts}',
+      'spikes/**/*.{js,mjs,cjs,ts}',
+    ],
     languageOptions: { globals: { ...globals.node } },
   },
 
