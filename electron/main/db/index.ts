@@ -9,7 +9,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 17
+export const CURRENT_VERSION = 24
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -101,6 +101,120 @@ ALTER TABLE items ADD COLUMN chapter_end INTEGER DEFAULT NULL;`,
   16: `ALTER TABLE collection_items ADD COLUMN sort_order INTEGER DEFAULT NULL;`,
   17: `ALTER TABLE items ADD COLUMN rating REAL DEFAULT NULL;
 ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
+  // Recommender (Chunk 2): one embedding vector per item. Raw little-endian
+  // Float32Array in a BLOB; model_version + content_hash gate re-embedding.
+  // ON DELETE CASCADE drops the row when the item is hard-deleted. New table —
+  // lives here only, never in schema.ts SCHEMA (fresh-install baseline gotcha).
+  18: `
+    CREATE TABLE IF NOT EXISTS item_embeddings (
+      item_id       TEXT    PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+      embedding     BLOB    NOT NULL,
+      model_version TEXT    NOT NULL,
+      content_hash  TEXT    NOT NULL,
+      embedded_at   INTEGER NOT NULL
+    );
+  `,
+  // Recommender (Chunk 3): the cold-start "taste seeds" seam — free-text titles
+  // and vibe chips the user names in the (deferred, post-MVP) onboarding prompt,
+  // folded into the taste vector as high-weight synthetic likes. Empty in v1;
+  // the table exists now so lighting the seam up needs no future migration.
+  // New table — lives here only, never in schema.ts SCHEMA (baseline gotcha).
+  19: `
+    CREATE TABLE IF NOT EXISTS taste_seeds (
+      id         TEXT    PRIMARY KEY,
+      kind       TEXT    NOT NULL CHECK(kind IN ('title', 'vibe')),
+      text       TEXT    NOT NULL,
+      weight     REAL    NOT NULL DEFAULT 1.0,
+      created_at INTEGER NOT NULL
+    );
+  `,
+  // Recommender (Chunk 4): the two "real recommendations" seams.
+  //   dismissed_recommendations — books the user marked "not interested / already
+  //     read"; filtered out of future recs. Keyed by normalized title+author.
+  //   candidate_cache — a TTL cache of raw OpenLibrary search payloads keyed by
+  //     query, so repeat recommend() calls don't re-hit their free API.
+  // New tables — live here only, never in schema.ts SCHEMA (baseline gotcha).
+  20: `
+    CREATE TABLE IF NOT EXISTS dismissed_recommendations (
+      id           TEXT    PRIMARY KEY,
+      title        TEXT    NOT NULL,
+      author       TEXT,
+      source       TEXT,
+      dismissed_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS candidate_cache (
+      query_key    TEXT    PRIMARY KEY,
+      payload_json TEXT    NOT NULL,
+      fetched_at   INTEGER NOT NULL
+    );
+  `,
+  // Recommender (fanfic recall upgrade, F2): native structured tags + stats
+  // lifted from AO3/FFN at capture (F1).
+  //   item_source_tags — one row per (item, native tag), typed by category
+  //     (fandom/relationship/character/freeform/genre/warning). Drives tag-native
+  //     candidate queries + hybrid chip surfacing. Recommender-owned; distinct
+  //     from the user-facing `tags` table.
+  //   item_source_meta — per-item native stats (kudos/favs/follows, words,
+  //     status, rating) for future popularity priors / display.
+  // New tables — live here only, never in schema.ts SCHEMA (baseline gotcha).
+  21: `
+    CREATE TABLE IF NOT EXISTS item_source_tags (
+      item_id  TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      name     TEXT NOT NULL,
+      category TEXT NOT NULL,
+      PRIMARY KEY (item_id, name, category)
+    );
+    CREATE INDEX IF NOT EXISTS idx_item_source_tags_item_id ON item_source_tags(item_id);
+    CREATE INDEX IF NOT EXISTS idx_item_source_tags_name    ON item_source_tags(name, category);
+    CREATE TABLE IF NOT EXISTS item_source_meta (
+      item_id  TEXT    PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+      kudos    INTEGER,
+      favs     INTEGER,
+      follows  INTEGER,
+      words    INTEGER,
+      status   TEXT,
+      rating   TEXT,
+      source   TEXT
+    );
+  `,
+  // Recommender (autocomplete vocab bridge): a persistent raw→canonical tag cache.
+  // FFN captures use abbreviated names ("Harry P.") that don't match AO3's exact
+  // named-field tag vocabulary ("Harry Potter"); we resolve them once via AO3's
+  // autocomplete endpoint and cache the result here so each unique term hits the
+  // network at most once. `canonical` NULL = resolved to nothing (negative cache,
+  // so a dead term isn't re-fetched every recommend()). New table — MIGRATIONS only.
+  22: `
+    CREATE TABLE IF NOT EXISTS tag_alias (
+      raw         TEXT    NOT NULL,
+      kind        TEXT    NOT NULL,
+      canonical   TEXT,
+      resolved_at INTEGER NOT NULL,
+      PRIMARY KEY (raw, kind)
+    );
+  `,
+  // C5.2 — the Discover results cache: a single row holding the last recommend()
+  // output (JSON) + when it was generated, so opening Discover shows cards
+  // instantly (across restarts) while a fresh fetch is manual-only. Distinct from
+  // candidate_cache (per-query source payloads). New table — MIGRATIONS only.
+  23: `
+    CREATE TABLE IF NOT EXISTS discover_cache (
+      id           INTEGER PRIMARY KEY CHECK (id = 1),
+      cards_json   TEXT,
+      generated_at INTEGER
+    );
+  `,
+  // Perf: cache the embedding of each recommendation CANDIDATE (keyed by its
+  // sourceId — an OpenLibrary work key or a fic URL) so a Discover refresh reuses
+  // vectors from the last run instead of re-embedding every candidate on the model.
+  // `model_version` invalidates the cache when the model changes (mirrors
+  // item_embeddings). Not item-scoped, so no FK. New table — MIGRATIONS only.
+  24: `
+    CREATE TABLE IF NOT EXISTS candidate_embeddings (
+      source_id     TEXT    PRIMARY KEY,
+      embedding     BLOB    NOT NULL,
+      model_version TEXT    NOT NULL
+    );
+  `,
 }
 
 export function initDatabase(): void {

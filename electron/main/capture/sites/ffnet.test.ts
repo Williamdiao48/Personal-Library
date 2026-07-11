@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { JSDOM } from 'jsdom'
 
 // captureFfnet couples only to the network layer (fetch.ts): a BrowserWindow load
 // for chapter 1, session fetches for the rest, and a sequential browser re-fetch
@@ -10,7 +11,7 @@ vi.mock('../fetch', () => ({
   fetchPagesSequential: vi.fn(),
 }))
 
-import { captureFfnet } from './ffnet'
+import { captureFfnet, parseFfnMetadata, classifyFfnMetaLine } from './ffnet'
 import { fetchPageWithBrowser, fetchPagesWithSession, fetchPagesSequential } from '../fetch'
 
 const mockBrowser = vi.mocked(fetchPageWithBrowser)
@@ -26,6 +27,7 @@ function ffnCh1(
     chaptersMeta?: number | null // "Chapters: N" server-rendered text
     story?: string
     cover?: string | null // #profile_top img src
+    metaLine?: string | null // full #profile_top span.xgray metadata line (F1)
   } = {},
 ): string {
   const {
@@ -35,6 +37,7 @@ function ffnCh1(
     chaptersMeta = null,
     story = '<p>Chapter one.</p>',
     cover = null,
+    metaLine = null,
   } = opts
   const optionEls = options
     .map((t, i) => `<option value="${i + 1}"${i === 0 ? ' selected' : ''}>${t}</option>`)
@@ -44,6 +47,7 @@ function ffnCh1(
       ${title != null ? `<b class="xcontrast_txt">${title}</b>` : ''}
       ${author != null ? `<a class="xcontrast_txt" href="/u/1/x">${author}</a>` : ''}
       ${cover != null ? `<img src="${cover}">` : ''}
+      ${metaLine != null ? `<span class="xgray xcontrast_txt">${metaLine}</span>` : ''}
       ${chaptersMeta != null ? `<span>Rated: T - Chapters: ${chaptersMeta} - Words: 9000</span>` : ''}
     </div>
     <select id="chap_select">${optionEls}</select>
@@ -168,5 +172,80 @@ describe('captureFfnet', () => {
     const result = await captureFfnet('https://www.fanfiction.net/s/12345/1/my-slug')
     expect(result.html).toContain('Clean.')
     expect(result.html).not.toMatch(/script/i)
+  })
+
+  it('surfaces native FFN tags + stats on the captured content (F1)', async () => {
+    mockBrowser.mockResolvedValue(
+      ffnCh1({
+        options: ['1. First'],
+        metaLine:
+          'Rated: T - English - Adventure/Romance - Harry P., Hermione G. - Chapters: 1 - Words: 9,000 - Favs: 500 - Follows: 300 - Status: Complete - id: 1',
+      }),
+    )
+    const result = await captureFfnet('https://www.fanfiction.net/s/12345/1/my-slug')
+    expect(result.sourceTags).toContainEqual({ name: 'Adventure', category: 'genre' })
+    expect(result.sourceTags).toContainEqual({ name: 'Hermione G.', category: 'character' })
+    expect(result.sourceMeta).toMatchObject({ favs: 500, follows: 300, status: 'complete' })
+  })
+})
+
+describe('parseFfnMetadata', () => {
+  const ffnMeta = (line: string) =>
+    new JSDOM(`<div id="profile_top"><span class="xgray xcontrast_txt">${line}</span></div>`).window
+      .document
+
+  it('classifies genres, a pairing bracket, characters, and stats', () => {
+    const { tags, meta } = parseFfnMetadata(
+      ffnMeta(
+        'Rated: T - English - Adventure/Romance - [Harry P., Hermione G.] Ron W. - Chapters: 20 - Words: 50,000 - Favs: 500 - Follows: 300 - Published: 1/1/20 - Status: Complete - id: 123',
+      ),
+    )
+    expect(tags).toContainEqual({ name: 'Adventure', category: 'genre' })
+    expect(tags).toContainEqual({ name: 'Romance', category: 'genre' })
+    expect(tags).toContainEqual({ name: 'Harry P./Hermione G.', category: 'relationship' })
+    expect(tags.filter((t) => t.category === 'character').map((t) => t.name)).toEqual([
+      'Harry P.',
+      'Hermione G.',
+      'Ron W.',
+    ])
+    expect(meta).toMatchObject({
+      rating: 'T',
+      words: 50000,
+      favs: 500,
+      follows: 300,
+      status: 'complete',
+    })
+  })
+
+  it('handles the two-part Hurt/Comfort genre and defaults a WIP to in-progress', () => {
+    const { tags, meta } = parseFfnMetadata(
+      ffnMeta('Rated: M - English - Romance/Hurt/Comfort - Chapters: 3 - Words: 1,000'),
+    )
+    expect(tags.filter((t) => t.category === 'genre').map((t) => t.name)).toEqual([
+      'Romance',
+      'Hurt/Comfort',
+    ])
+    expect(meta.status).toBe('in-progress')
+  })
+
+  it('returns empty when the metadata line is absent', () => {
+    const doc = new JSDOM('<div id="profile_top"></div>').window.document
+    expect(parseFfnMetadata(doc)).toEqual({ tags: [], meta: {} })
+  })
+
+  it('lifts the fandom from the #pre_story_links breadcrumb (last anchor)', () => {
+    const doc = new JSDOM(
+      `<div id="pre_story_links"><a href="/book/">Books</a><a href="/book/Harry-Potter/">Harry Potter</a></div>
+       <div id="profile_top"><span class="xgray xcontrast_txt">Rated: T - English - Adventure - Words: 100</span></div>`,
+    ).window.document
+    const { tags } = parseFfnMetadata(doc)
+    expect(tags).toContainEqual({ name: 'Harry Potter', category: 'fandom' })
+    expect(tags).toContainEqual({ name: 'Adventure', category: 'genre' })
+  })
+
+  it('classifyFfnMetaLine parses a bare metadata line without any DOM', () => {
+    const { tags, meta } = classifyFfnMetaLine('Rated: M - English - Angst - Chapters: 2 - Favs: 9')
+    expect(tags).toContainEqual({ name: 'Angst', category: 'genre' })
+    expect(meta).toMatchObject({ rating: 'M', favs: 9, status: 'in-progress' })
   })
 })

@@ -1,5 +1,27 @@
 import { BrowserWindow, session as electronSession } from 'electron'
 
+// A native structured tag lifted from a fanfic site's own metadata block (AO3's
+// tag groups, FFN's #profile_top line) — the richest taste signal for a fic. The
+// `category` is what makes it more than a flat name: it drives tag-native
+// candidate queries (fandom-anchored) and hybrid chip surfacing (F2).
+export type TagCategory =
+  'fandom' | 'relationship' | 'character' | 'freeform' | 'genre' | 'rating' | 'warning'
+
+export interface SourceTag {
+  name: string
+  category: TagCategory
+}
+
+/** Native per-work stats from a fanfic site (all optional; sites differ). */
+export interface SourceMeta {
+  kudos?: number // AO3
+  favs?: number // FFN
+  follows?: number // FFN
+  words?: number
+  status?: 'complete' | 'in-progress'
+  rating?: string // e.g. AO3 "Explicit", FFN "Fiction T"
+}
+
 // Shared content shape returned by all site strategies
 export interface SiteContent {
   title: string
@@ -7,6 +29,8 @@ export interface SiteContent {
   html: string // sanitized HTML to store
   textContent: string // plain text for FTS and word count
   coverUrl?: string | null // absolute URL of a cover image to download (optional)
+  sourceTags?: SourceTag[] // native structured tags (AO3/FFN); absent for other sites
+  sourceMeta?: SourceMeta // native per-work stats (AO3/FFN)
 }
 
 // Explicit hardened prefs for the hidden capture windows (F6). These load
@@ -39,6 +63,46 @@ export async function fetchPage(url: string): Promise<string> {
   if (res.ok) return res.text()
   if (res.status === 403 || res.status === 429) return fetchPageWithBrowser(url)
   throw new Error(`Failed to fetch page: ${res.status} ${res.statusText}`)
+}
+
+// Plain fetch for JSON/XHR endpoints. Some sites (e.g. AO3's tag autocomplete)
+// 302-redirect to an HTML page unless the request looks like an XHR/JSON call, so
+// we send an `application/json` Accept + the XHR marker. Returns the raw body text
+// (caller parses). No browser fallback — a BrowserWindow returns HTML chrome, not
+// the JSON payload, and these endpoints aren't Cloudflare-gated like full pages.
+//
+// Retries transient failures (network error, timeout, or a 5xx/429 — AO3
+// intermittently returns 525 under bursts) with a short backoff, since a burst of
+// these calls otherwise drops results non-deterministically. A 4xx (other than 429)
+// is a real "no such thing" and is NOT retried.
+export async function fetchJson(url: string, retries = 2, timeoutMs = 15_000): Promise<string> {
+  const jsonSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+  let lastErr: unknown = new Error('fetchJson: no attempt made')
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    let res: Response | undefined
+    try {
+      res = await fetch(url, {
+        signal: AbortSignal.timeout(timeoutMs),
+        headers: {
+          ...BROWSER_HEADERS,
+          Accept: 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+      })
+    } catch (err) {
+      lastErr = err // network error / timeout → transient, retry
+    }
+    if (res) {
+      if (res.ok) return res.text()
+      // A 4xx (other than 429) is a real "no such thing" — fail fast, no retry.
+      if (res.status < 500 && res.status !== 429) {
+        throw new Error(`Failed to fetch JSON: ${res.status} ${res.statusText}`)
+      }
+      lastErr = new Error(`Failed to fetch JSON: ${res.status} ${res.statusText}`) // 5xx/429 → retry
+    }
+    if (attempt < retries) await jsonSleep(400 * (attempt + 1))
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('fetchJson failed')
 }
 
 // Opens a hidden BrowserWindow (real Chromium) to load the page.

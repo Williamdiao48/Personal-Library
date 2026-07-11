@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, memo } from 'react'
 import { Link, useSearchParams, useLocation } from 'react-router-dom'
 import type { Collection, CaptureJob } from '../../types'
 import { useUpdater } from '../../contexts/UpdaterContext'
+import { useSettings } from '../../contexts/SettingsContext'
 
 interface CollectionMgmt {
   collections: Collection[]
@@ -76,6 +77,7 @@ const Sidebar = memo(function Sidebar({
 
   const [searchParams] = useSearchParams()
   const location = useLocation()
+  const { settings } = useSettings()
   const currentFilter = searchParams.get('filter')
   const currentTag = searchParams.get('tag')
   const currentAuthor = searchParams.get('author')
@@ -525,6 +527,30 @@ const Sidebar = memo(function Sidebar({
           Trash
           {trashedCount > 0 && <span className="sidebar-trash-count">{trashedCount}</span>}
         </Link>
+        {settings.enableDiscover && (
+          <Link
+            className="sidebar-settings-btn"
+            to="/discover"
+            aria-label="Discover"
+            title="Discover"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+            </svg>
+            Discover
+          </Link>
+        )}
         <Link
           className="sidebar-settings-btn"
           to="/stats"

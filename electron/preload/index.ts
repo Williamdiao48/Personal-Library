@@ -208,4 +208,15 @@ contextBridge.exposeInMainWorld('api', {
   log: {
     writeError: (message: string) => ipcRenderer.invoke('log:writeError', message),
   },
+
+  // Discover (recommendations)
+  discover: {
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('discover:setEnabled', enabled),
+    get: () => ipcRenderer.invoke('discover:get'),
+    refresh: () => ipcRenderer.invoke('discover:refresh'),
+    more: (excludeSourceIds: string[]) => ipcRenderer.invoke('discover:more', excludeSourceIds),
+    dismiss: (card: import('../../src/types').Recommendation) =>
+      ipcRenderer.invoke('discover:dismiss', card),
+    openExternal: (url: string) => ipcRenderer.invoke('discover:openExternal', url),
+  },
 })

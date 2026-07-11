@@ -188,6 +188,42 @@ export interface BackupExportResult {
   fileSizeBytes: number
 }
 
+/** Which candidate generator produced a recommendation — drives the source badge. */
+export type RecommendationSource = 'book' | 'ao3' | 'ffn'
+
+/**
+ * A finished Discover recommendation card. Widened from the recommender engine's
+ * output so the UI has a source badge, an openable URL, and deterministic "why"
+ * chips (`matchedTags` — the candidate's own tags that overlap the reader's taste).
+ */
+export interface Recommendation {
+  title: string
+  author: string | null
+  coverUrl: string | null
+  /** Dedup identity: a work URL (AO3/FFN) or an OpenLibrary work key (`/works/OL…W`). */
+  sourceId: string
+  source: RecommendationSource
+  /** A resolved, openable http(s) URL to the source page. */
+  url: string
+  /** The candidate's own tags/subjects (fallback chips when there's no overlap). */
+  subjects: string[]
+  /** The subset of `subjects` that overlaps the reader's taste seeds — the "why". */
+  matchedTags: string[]
+  /** Max cosine to a taste centroid. */
+  score: number
+  /** Optional LLM "why we picked this" blurb — deferred past Chunk 5. */
+  why?: string
+}
+
+/** The Discover refresh result: cards + when they were generated + a cold-start flag. */
+export interface DiscoverResult {
+  cards: Recommendation[]
+  /** Epoch ms the cards were generated; null when there's no cached result yet. */
+  generatedAt: number | null
+  /** True when the library is too thin to have a taste vector (no cards possible yet). */
+  coldStart: boolean
+}
+
 // Type the window.api surface so the renderer gets full type-safety
 export interface Api {
   library: {
@@ -314,6 +350,23 @@ export interface Api {
   onCaptureError: (callback: (payload: { jobId: string; error: string }) => void) => () => void
   log: {
     writeError: (message: string) => Promise<void>
+  }
+  discover: {
+    /** Arm/disarm the background embedding backfill (gated on the enableDiscover setting). */
+    setEnabled: (enabled: boolean) => Promise<void>
+    /** The last cached picks + when they were generated; null when never run. */
+    get: () => Promise<{ cards: Recommendation[]; generatedAt: number } | null>
+    /** Run the engine, cache + return the result (with a cold-start flag). */
+    refresh: () => Promise<DiscoverResult>
+    /**
+     * "Load more": re-run the engine excluding the cards already shown this session,
+     * appending the next best picks to the cached feed. Empty `cards` = pool exhausted.
+     */
+    more: (excludeSourceIds: string[]) => Promise<{ cards: Recommendation[] }>
+    /** Exclude a card from future recs (not-interested / already-read). */
+    dismiss: (card: Recommendation) => Promise<void>
+    /** Open a card's http(s) source page in the external browser. */
+    openExternal: (url: string) => Promise<void>
   }
 }
 

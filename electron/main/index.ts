@@ -15,7 +15,9 @@ import { registerGoalsHandlers } from './ipc/goals'
 import { registerAnnotationHandlers } from './ipc/annotations'
 import { registerUpdaterHandlers } from './ipc/updater'
 import { registerLogHandlers } from './ipc/log'
+import { registerDiscoverHandlers } from './ipc/discover'
 import { shutdownParseWorker } from './workers/parse-host'
+import { shutdownBackfill } from './recommender/lifecycle'
 
 // Must be called before app.whenReady()
 protocol.registerSchemesAsPrivileged([
@@ -167,6 +169,7 @@ app.whenReady().then(() => {
     registerUpdaterHandlers()
     registerBackupHandlers()
     registerLogHandlers()
+    registerDiscoverHandlers()
   } catch (err) {
     dialog.showErrorBox(
       'Personal Library failed to start',
@@ -178,6 +181,11 @@ app.whenReady().then(() => {
 
   createWindow()
 
+  // The embedding backfill is NOT armed here. Embeddings serve only the Discover
+  // recommender, so the renderer arms it (via `discover:setEnabled`) once it has
+  // read the user's `enableDiscover` setting after boot — a user who keeps
+  // Discover off does no model load or embed work.
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -187,7 +195,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-// Tear down the sandboxed parse worker (F7) so it doesn't outlive the app.
+// Tear down the sandboxed workers (parse — F7; embed — C2.6) so they don't
+// outlive the app.
 app.on('will-quit', () => {
   shutdownParseWorker()
+  shutdownBackfill()
 })

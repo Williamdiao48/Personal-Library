@@ -33,6 +33,7 @@ vi.mock('electron', async (importOriginal) => {
 
 import {
   fetchPage,
+  fetchJson,
   fetchPageWithBrowser,
   fetchPagesSequential,
   fetchPagesWithSession,
@@ -82,6 +83,42 @@ describe('fetchPage', () => {
     win.webContents.executeJavaScript.mockResolvedValue('<html>recovered</html>')
     win.webContents.emit('did-finish-load')
     await expect(p).resolves.toBe('<html>recovered</html>')
+  })
+})
+
+describe('fetchJson', () => {
+  it('returns the raw body and requests JSON (Accept + XHR headers)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('[{"name":"Harry Potter"}]'))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(fetchJson('https://x.test/autocomplete/character?term=Harry')).resolves.toBe(
+      '[{"name":"Harry Potter"}]',
+    )
+    const headers = fetchMock.mock.calls[0][1].headers
+    expect(headers.Accept).toBe('application/json')
+    expect(headers['X-Requested-With']).toBe('XMLHttpRequest')
+  })
+
+  it('fails fast on a 4xx/3xx (no retry, no browser fallback)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(notOkResponse(302, 'Found'))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(fetchJson('https://x.test')).rejects.toThrow('Failed to fetch JSON: 302 Found')
+    expect(fetchMock).toHaveBeenCalledTimes(1) // not retried
+    expect(FakeBrowserWindow.instances.length).toBe(0)
+  })
+
+  it('retries a transient 5xx (e.g. AO3 525) and then succeeds', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(notOkResponse(525, 'Origin SSL'))
+      .mockResolvedValueOnce(okResponse('[]'))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(fetchJson('https://x.test')).resolves.toBe('[]')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('gives up after exhausting retries on a persistent 5xx', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(notOkResponse(525, 'Origin SSL')))
+    await expect(fetchJson('https://x.test', 0)).rejects.toThrow('525') // retries=0 → fail fast
   })
 })
 

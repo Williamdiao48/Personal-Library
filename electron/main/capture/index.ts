@@ -20,16 +20,8 @@ import { assertImportFile } from '../security/validation'
 import { assertHttpUrl, safeFetch } from '../security/net-guard'
 import { parseEpub } from '../workers/parse-host'
 import { PDFParse } from 'pdf-parse'
-
-// Fast non-crypto content hash — same algorithm as in library.ts.
-function computeContentHash(text: string): string {
-  let h = 0
-  const sample = text.length > 4000 ? text.slice(0, 2000) + text.slice(-2000) : text
-  for (let i = 0; i < sample.length; i++) {
-    h = (Math.imul(31, h) + sample.charCodeAt(i)) | 0
-  }
-  return `${text.length}:${h >>> 0}`
-}
+import { computeContentHash } from '../util/contentHash'
+import { persistSourceTags, siteKeyFromUrl } from '../recommender/sourceTags'
 
 export interface CaptureResult {
   id: string
@@ -183,6 +175,10 @@ async function saveToLibrary(
         SELECT rowid, title, author, ? FROM items WHERE id = ?
       `,
       ).run(textContent, id)
+
+      // Native AO3/FFN tags + stats (F1) → recommender tables + hybrid chips (F2).
+      // No-op for non-fanfic captures (content.sourceTags is undefined).
+      persistSourceTags(db, id, content.sourceTags, content.sourceMeta, siteKeyFromUrl(sourceUrl))
     })()
   } catch (err) {
     // Roll back any files written before the transaction failed

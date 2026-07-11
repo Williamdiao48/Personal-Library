@@ -457,6 +457,27 @@ export default function SettingsView() {
           </div>
         </section>
 
+        {/* ── Discover ── */}
+        <section className="settings-section">
+          <h3 className="settings-section-title">Discover</h3>
+
+          <div className="settings-row settings-row--top">
+            <div className="settings-row-stack">
+              <label className="settings-row-label" htmlFor="toggle-discover">
+                Enable recommendations
+              </label>
+              <span className="settings-row-hint">
+                Shows the Discover panel, which suggests fics and books based on your library.
+              </span>
+            </div>
+            <Toggle
+              id="toggle-discover"
+              checked={settings.enableDiscover}
+              onChange={(v) => updateSettings({ enableDiscover: v })}
+            />
+          </div>
+        </section>
+
         {/* ── Reading ── */}
         <section className="settings-section">
           <h3 className="settings-section-title">Reading</h3>

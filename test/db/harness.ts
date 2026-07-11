@@ -47,6 +47,9 @@ export interface SeedItemOverrides {
   date_saved?: number
   date_modified?: number
   deleted_at?: number | null
+  review?: string | null
+  content_hash?: string | null
+  rating?: number | null
 }
 
 export function seedItem(db: TestDb, over: SeedItemOverrides = {}): string {
@@ -54,10 +57,10 @@ export function seedItem(db: TestDb, over: SeedItemOverrides = {}): string {
   db.prepare(
     `INSERT INTO items
        (id, title, author, source_url, content_type, file_path, word_count,
-        cover_path, description, date_saved, date_modified, deleted_at)
+        cover_path, description, date_saved, date_modified, deleted_at, review, content_hash, rating)
      VALUES
        (@id, @title, @author, @source_url, @content_type, @file_path, @word_count,
-        @cover_path, @description, @date_saved, @date_modified, @deleted_at)`,
+        @cover_path, @description, @date_saved, @date_modified, @deleted_at, @review, @content_hash, @rating)`,
   ).run({
     id,
     title: over.title ?? 'Untitled',
@@ -71,8 +74,32 @@ export function seedItem(db: TestDb, over: SeedItemOverrides = {}): string {
     date_saved: over.date_saved ?? T0,
     date_modified: over.date_modified ?? T0,
     deleted_at: over.deleted_at ?? null,
+    review: over.review ?? null,
+    content_hash: over.content_hash ?? null,
+    rating: over.rating ?? null,
   })
   return id
+}
+
+export interface SeedEmbeddingOverrides {
+  embedding?: Buffer
+  model_version?: string
+  content_hash?: string
+  embedded_at?: number
+}
+
+/** Insert an item_embeddings row (migration 18) for an existing item. */
+export function seedEmbedding(db: TestDb, itemId: string, over: SeedEmbeddingOverrides = {}): void {
+  db.prepare(
+    `INSERT INTO item_embeddings (item_id, embedding, model_version, content_hash, embedded_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(
+    itemId,
+    over.embedding ?? Buffer.from([0, 0, 0, 0]),
+    over.model_version ?? 'test-model',
+    over.content_hash ?? 'h0',
+    over.embedded_at ?? T0,
+  )
 }
 
 export function seedTag(db: TestDb, name: string, color = '#6b7280'): string {

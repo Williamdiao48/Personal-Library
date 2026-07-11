@@ -36,6 +36,15 @@ describe('database bring-up', () => {
       'annotations',
       'goals',
       'goal_items',
+      'item_embeddings',
+      'taste_seeds',
+      'dismissed_recommendations',
+      'candidate_cache',
+      'item_source_tags',
+      'item_source_meta',
+      'tag_alias',
+      'discover_cache',
+      'candidate_embeddings',
     ]) {
       expect(tables).toContain(t)
     }
@@ -74,6 +83,178 @@ describe('database bring-up', () => {
     const db = openTestDb()
     expect(colsOf(db, 'annotations')).toContain('sort_order')
     expect(colsOf(db, 'collection_items')).toContain('sort_order')
+  })
+
+  // Migration 18 — the recommender embedding store.
+  it('item_embeddings has the expected columns', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'item_embeddings')).toEqual(
+      expect.arrayContaining([
+        'item_id',
+        'embedding',
+        'model_version',
+        'content_hash',
+        'embedded_at',
+      ]),
+    )
+  })
+
+  it('item_embeddings.item_id is the primary key', () => {
+    const db = openTestDb()
+    const pk = (
+      db.prepare(`PRAGMA table_info(item_embeddings)`).all() as { name: string; pk: number }[]
+    ).filter((c) => c.pk > 0)
+    expect(pk.map((c) => c.name)).toEqual(['item_id'])
+  })
+
+  it('drops an embedding row when its item is hard-deleted (ON DELETE CASCADE)', () => {
+    const db = openTestDb()
+    db.pragma('foreign_keys = ON')
+    db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified)
+       VALUES ('e1', 'T', NULL, NULL, 'article', 'e1.html', 1, NULL, NULL, 0, 0)`,
+    ).run()
+    db.prepare(
+      `INSERT INTO item_embeddings (item_id, embedding, model_version, content_hash, embedded_at)
+       VALUES ('e1', X'00', 'm', 'h', 0)`,
+    ).run()
+    expect(db.prepare(`SELECT COUNT(*) c FROM item_embeddings`).get()).toMatchObject({ c: 1 })
+    db.prepare(`DELETE FROM items WHERE id = 'e1'`).run()
+    expect(db.prepare(`SELECT COUNT(*) c FROM item_embeddings`).get()).toMatchObject({ c: 0 })
+  })
+
+  // Migration 19 — the recommender taste-seeds seam (Chunk 3).
+  it('taste_seeds has the expected columns', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'taste_seeds')).toEqual(
+      expect.arrayContaining(['id', 'kind', 'text', 'weight', 'created_at']),
+    )
+  })
+
+  it('taste_seeds.kind is constrained to title/vibe', () => {
+    const db = openTestDb()
+    const insert = (kind: string) =>
+      db
+        .prepare(
+          `INSERT INTO taste_seeds (id, kind, text, weight, created_at) VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(kind, kind, 'x', 1.0, 0)
+    expect(() => insert('title')).not.toThrow()
+    expect(() => insert('vibe')).not.toThrow()
+    expect(() => insert('nonsense')).toThrow()
+  })
+
+  // Migration 20 — the recommender "real recommendations" seams (Chunk 4).
+  it('dismissed_recommendations has the expected columns', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'dismissed_recommendations')).toEqual(
+      expect.arrayContaining(['id', 'title', 'author', 'source', 'dismissed_at']),
+    )
+  })
+
+  it('candidate_cache has the expected columns', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'candidate_cache')).toEqual(
+      expect.arrayContaining(['query_key', 'payload_json', 'fetched_at']),
+    )
+  })
+
+  it('candidate_cache.query_key is the primary key', () => {
+    const db = openTestDb()
+    const pk = (
+      db.prepare(`PRAGMA table_info(candidate_cache)`).all() as { name: string; pk: number }[]
+    ).filter((c) => c.pk > 0)
+    expect(pk.map((c) => c.name)).toEqual(['query_key'])
+  })
+
+  // Migration 21 — the fanfic recall upgrade's native-tag store (F2).
+  it('item_source_tags / item_source_meta have the expected columns', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'item_source_tags')).toEqual(
+      expect.arrayContaining(['item_id', 'name', 'category']),
+    )
+    expect(colsOf(db, 'item_source_meta')).toEqual(
+      expect.arrayContaining([
+        'item_id',
+        'kudos',
+        'favs',
+        'follows',
+        'words',
+        'status',
+        'rating',
+        'source',
+      ]),
+    )
+  })
+
+  it('drops source tags + meta when their item is hard-deleted (ON DELETE CASCADE)', () => {
+    const db = openTestDb()
+    db.pragma('foreign_keys = ON')
+    db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified)
+       VALUES ('s1', 'T', NULL, NULL, 'article', 's1.html', 1, NULL, NULL, 0, 0)`,
+    ).run()
+    db.prepare(
+      `INSERT INTO item_source_tags (item_id, name, category) VALUES ('s1', 'Harry Potter', 'fandom')`,
+    ).run()
+    db.prepare(`INSERT INTO item_source_meta (item_id, kudos) VALUES ('s1', 10)`).run()
+    db.prepare(`DELETE FROM items WHERE id = 's1'`).run()
+    expect(db.prepare(`SELECT COUNT(*) c FROM item_source_tags`).get()).toMatchObject({ c: 0 })
+    expect(db.prepare(`SELECT COUNT(*) c FROM item_source_meta`).get()).toMatchObject({ c: 0 })
+  })
+
+  // Migration 22 — the autocomplete vocab-bridge cache (raw→canonical tag names).
+  it('tag_alias has the expected columns and upserts by (raw, kind)', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'tag_alias')).toEqual(
+      expect.arrayContaining(['raw', 'kind', 'canonical', 'resolved_at']),
+    )
+    const upsert = db.prepare(
+      `INSERT INTO tag_alias (raw, kind, canonical, resolved_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(raw, kind) DO UPDATE SET canonical = excluded.canonical, resolved_at = excluded.resolved_at`,
+    )
+    upsert.run('Harry P.', 'character', 'Harry Potter', 1)
+    upsert.run('Harry P.', 'character', 'Harry Potter (Movies)', 2) // same key → updates
+    expect(db.prepare(`SELECT COUNT(*) c FROM tag_alias`).get()).toMatchObject({ c: 1 })
+    expect(db.prepare(`SELECT canonical FROM tag_alias`).get()).toMatchObject({
+      canonical: 'Harry Potter (Movies)',
+    })
+  })
+
+  // Migration 23 — the Discover results cache (single-row snapshot of recommend()).
+  it('discover_cache has the expected columns and is constrained to a single row', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'discover_cache')).toEqual(
+      expect.arrayContaining(['id', 'cards_json', 'generated_at']),
+    )
+    const upsert = db.prepare(
+      `INSERT INTO discover_cache (id, cards_json, generated_at) VALUES (1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET cards_json = excluded.cards_json, generated_at = excluded.generated_at`,
+    )
+    upsert.run('[]', 1)
+    upsert.run('[{"t":1}]', 2) // id is pinned to 1 → updates the same row
+    expect(db.prepare(`SELECT COUNT(*) c FROM discover_cache`).get()).toMatchObject({ c: 1 })
+    // The CHECK (id = 1) guard rejects any other row id.
+    expect(() =>
+      db
+        .prepare(`INSERT INTO discover_cache (id, cards_json, generated_at) VALUES (2, '[]', 1)`)
+        .run(),
+    ).toThrow()
+  })
+
+  // Migration 24 — the candidate-embedding perf cache (sourceId-keyed vectors).
+  it('candidate_embeddings has the expected columns and sourceId is the primary key', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'candidate_embeddings')).toEqual(
+      expect.arrayContaining(['source_id', 'embedding', 'model_version']),
+    )
+    const pk = (
+      db.prepare(`PRAGMA table_info(candidate_embeddings)`).all() as {
+        name: string
+        pk: number
+      }[]
+    ).filter((c) => c.pk > 0)
+    expect(pk.map((c) => c.name)).toEqual(['source_id'])
   })
 
   it('applies migrations incrementally from an empty (pre-schema) database', () => {
