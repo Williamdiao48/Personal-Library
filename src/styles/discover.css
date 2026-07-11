@@ -192,3 +192,85 @@
   color: var(--text-muted);
   opacity: 0.7;
 }
+
+/* Spinner beside "Finding more…". */
+.discover-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+  vertical-align: -2px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: discover-spin 0.7s linear infinite;
+}
+@keyframes discover-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── skeleton loading cards ────────────────────────────────────────────── */
+/* Ghost cards that fill the grid while the next page fetches, so a load that
+   takes a beat reads as active progress rather than a frozen page. They reuse
+   the .rec-card shell for identical dimensions; a swept gradient animates. */
+.rec-card--skeleton {
+  pointer-events: none;
+}
+.rec-card--skeleton:hover {
+  border-color: var(--border);
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--bg-hover) 25%,
+    color-mix(in srgb, var(--bg-hover) 45%, var(--border)) 37%,
+    var(--bg-hover) 63%
+  );
+  background-size: 200px 100%;
+  background-repeat: no-repeat;
+  animation: discover-shimmer 1.2s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes discover-shimmer {
+  0% {
+    background-position: -200px 0;
+  }
+  100% {
+    background-position: calc(200px + 100%) 0;
+  }
+}
+
+.skeleton-badge {
+  width: 38px;
+  height: 14px;
+}
+.skeleton-title {
+  width: 85%;
+  height: 15px;
+  margin-top: 2px;
+}
+.skeleton-line-short {
+  width: 55%;
+  height: 12px;
+}
+.skeleton-chip-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.skeleton-chip {
+  width: 56px;
+  height: 18px;
+  border-radius: 10px;
+}
+
+/* Respect reduced-motion: keep the placeholders, drop the animation. */
+@media (prefers-reduced-motion: reduce) {
+  .discover-spinner,
+  .skeleton-shimmer {
+    animation: none;
+  }
+}

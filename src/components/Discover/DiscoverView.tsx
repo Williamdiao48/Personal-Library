@@ -20,6 +20,24 @@ export function formatRelativeTime(ts: number, now: number = Date.now()): string
   return `${days}d ago`
 }
 
+/** A shimmering placeholder card shown in the grid while the next page loads. */
+function SkeletonCard() {
+  return (
+    <div className="rec-card rec-card--skeleton" aria-hidden="true">
+      <div className="rec-card-cover skeleton-shimmer" />
+      <div className="rec-card-body">
+        <div className="skeleton-shimmer skeleton-badge" />
+        <div className="skeleton-shimmer skeleton-title" />
+        <div className="skeleton-shimmer skeleton-line-short" />
+        <div className="skeleton-chip-row">
+          <div className="skeleton-shimmer skeleton-chip" />
+          <div className="skeleton-shimmer skeleton-chip" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function DiscoverView() {
   const navigate = useNavigate()
   const { addToast, updateToast } = useToast()
@@ -41,13 +59,21 @@ export default function DiscoverView() {
   const [exhausted, setExhausted] = useState(false)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
 
-  // Modal (Add to Library) — same parent-owned pattern as LibraryView.
+  // Modal (Add to Library) — same parent-owned pattern as LibraryView. We track the
+  // rec being added (not just its URL) so we can drop it from the feed once it's
+  // saved (it's now owned — it'd be filtered on the next refresh anyway).
   const [showAddModal, setShowAddModal] = useState(false)
   const [pendingUrl, setPendingUrl] = useState<string | undefined>(undefined)
+  const [pendingRec, setPendingRec] = useState<Recommendation | undefined>(undefined)
   const closeModal = () => {
     setShowAddModal(false)
     setPendingUrl(undefined)
+    setPendingRec(undefined)
   }
+
+  const removeCard = useCallback((sourceId: string) => {
+    setCards((prev) => prev.filter((c) => c.sourceId !== sourceId))
+  }, [])
 
   // On mount: show the cached snapshot instantly (no fetch).
   useEffect(() => {
@@ -135,6 +161,7 @@ export default function DiscoverView() {
 
   const handleAdd = (rec: Recommendation) => {
     setPendingUrl(rec.url)
+    setPendingRec(rec)
     setShowAddModal(true)
   }
 
@@ -208,10 +235,18 @@ export default function DiscoverView() {
                 onOpen={handleOpen}
               />
             ))}
+            {/* Shimmering placeholders so a fetch that takes a beat reads as "loading". */}
+            {loadingMore &&
+              Array.from({ length: 3 }, (_, i) => <SkeletonCard key={`skeleton-${i}`} />)}
           </div>
           {/* Sentinel: reveals more of the pool, then auto-loads the next page. */}
           <div ref={sentinelRef} className="discover-sentinel" aria-hidden="true" />
-          {loadingMore && <p className="discover-more-status">Finding more…</p>}
+          {loadingMore && (
+            <p className="discover-more-status">
+              <span className="discover-spinner" aria-hidden="true" />
+              Finding more…
+            </p>
+          )}
           {exhausted && (
             <p className="discover-more-status discover-more-end">You&apos;re all caught up</p>
           )}
@@ -223,10 +258,12 @@ export default function DiscoverView() {
           initialUrl={pendingUrl}
           onClose={closeModal}
           onSaved={(item) => {
+            if (pendingRec) removeCard(pendingRec.sourceId)
             addToast(`Added “${item.title}”`, 'success')
             closeModal()
           }}
           onJobStarted={(_jobId, _url) => {
+            if (pendingRec) removeCard(pendingRec.sourceId)
             addToast('Adding to library…', 'success')
             closeModal()
           }}

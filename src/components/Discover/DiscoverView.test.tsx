@@ -31,12 +31,22 @@ vi.mock('../../contexts/SettingsContext', () => ({
   useSettings: () => ({ settings: { enableDiscover: true } }),
 }))
 
-// AddItemModal is heavy (capture/library services) — stub it to surface initialUrl.
+// AddItemModal is heavy (capture/library services) — stub it to surface initialUrl
+// and expose a save trigger so the "card disappears once added" flow is testable.
 vi.mock('../Capture/AddItemModal', () => ({
-  default: ({ initialUrl, onClose }: { initialUrl?: string; onClose: () => void }) => (
+  default: ({
+    initialUrl,
+    onClose,
+    onSaved,
+  }: {
+    initialUrl?: string
+    onClose: () => void
+    onSaved: (item: { title: string }) => void
+  }) => (
     <div data-testid="add-modal">
       <span data-testid="modal-url">{initialUrl}</span>
       <button onClick={onClose}>close-modal</button>
+      <button onClick={() => onSaved({ title: 'Saved Item' })}>save-modal</button>
     </div>
   ),
 }))
@@ -139,6 +149,25 @@ describe('DiscoverView', () => {
     expect(screen.getByTestId('modal-url')).toHaveTextContent('https://ao3/works/42')
   })
 
+  it('drops a card from the feed once it has been added to the library', async () => {
+    svc.get.mockResolvedValue({
+      cards: [
+        rec({ title: 'Add Me', sourceId: 'id-add' }),
+        rec({ title: 'Keep Me', sourceId: 'id-keep' }),
+      ],
+      generatedAt: Date.now(),
+    })
+    renderView()
+    await screen.findByText('Add Me')
+
+    const user = userEvent.setup()
+    await user.click(screen.getAllByText('+ Add to Library')[0]) // "Add Me" is first
+    await user.click(screen.getByText('save-modal'))
+
+    await waitFor(() => expect(screen.queryByText('Add Me')).not.toBeInTheDocument())
+    expect(screen.getByText('Keep Me')).toBeInTheDocument()
+  })
+
   // N distinct cards for the infinite-scroll tests.
   const recs = (n: number, from = 1) =>
     Array.from({ length: n }, (_, i) =>
@@ -184,5 +213,22 @@ describe('DiscoverView', () => {
     // A further sentinel hit must NOT fire another engine call (exhausted latch).
     await act(async () => fireIntersection())
     expect(svc.more).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the loading indicator while the next page is in flight', async () => {
+    svc.get.mockResolvedValue({ cards: recs(2), generatedAt: Date.now() })
+    let resolveMore!: (v: { cards: Recommendation[] }) => void
+    svc.more.mockReturnValue(new Promise((r) => (resolveMore = r)))
+    renderView()
+    await screen.findByText('Fic 1')
+
+    await act(async () => fireIntersection())
+
+    // While more() is pending, the indicator is visible…
+    expect(await screen.findByText(/finding more/i)).toBeInTheDocument()
+
+    // …and it clears once the page resolves.
+    await act(async () => resolveMore({ cards: recs(1, 3) }))
+    await waitFor(() => expect(screen.queryByText(/finding more/i)).not.toBeInTheDocument())
   })
 })
