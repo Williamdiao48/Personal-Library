@@ -1,5 +1,6 @@
 import { get, run } from '../db'
 import type { SeedQuery } from './seedQueries'
+import { readCandidateCache, writeCandidateCache } from './candidateCache'
 
 // C4.3 — OpenLibrary candidate generation (§9 step 1). Turn seed queries into a
 // deduplicated set of real books: hit `search.json` (free, no key), normalize
@@ -9,7 +10,8 @@ import type { SeedQuery } from './seedQueries'
 // world — the normalizer is pure. Subjects-only in v1 (D-C4-2): no per-work
 // description fetch.
 
-const OPENLIBRARY_SEARCH = 'https://openlibrary.org/search.json'
+const OPENLIBRARY_ORIGIN = 'https://openlibrary.org'
+const OPENLIBRARY_SEARCH = `${OPENLIBRARY_ORIGIN}/search.json`
 // Fields we ask OpenLibrary for — subjects included so a single call yields the
 // candidate's embed text (title/author/subjects); no N+1 works fetch (D-C4-2).
 const FIELDS = 'key,title,author_name,subject,cover_i,isbn'
@@ -26,6 +28,8 @@ export interface CandidatesConfig {
   CACHE_TTL_MS: number
   FETCH_TIMEOUT_MS: number
   CONCURRENCY: number
+  DESCRIPTION_CONCURRENCY: number
+  DESCRIPTION_CACHE_TTL_MS: number
 }
 
 export const CANDIDATES: CandidatesConfig = {
@@ -35,18 +39,23 @@ export const CANDIDATES: CandidatesConfig = {
   CACHE_TTL_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
   FETCH_TIMEOUT_MS: 15_000,
   CONCURRENCY: 4, // in-flight OpenLibrary queries (robust API, same host)
+  DESCRIPTION_CONCURRENCY: 4, // in-flight per-work description fetches (same host as search)
+  DESCRIPTION_CACHE_TTL_MS: 30 * 24 * 60 * 60 * 1000, // 30 days — descriptions change rarely
 }
 
 /** Which generator produced a candidate — books vs. the fanfic sources. */
 export type SourceName = 'book' | 'ao3' | 'ffn'
 
-// Bumped whenever the *text* we embed for a candidate changes shape (e.g. adding
-// the fic summary to the metadata string). Threaded into both cache keys —
-// `candidate_cache` (the parsed Candidate[] keys) and `candidate_embeddings` (the
-// model_version) — so a recipe change invalidates stale entries instead of
-// re-issuing a shared-DB migration (branches collide on migration numbers). Old
-// rows orphan harmlessly and age out.
-export const CANDIDATE_TEXT_VERSION = 2
+// Bumped whenever the *text* we embed for a candidate changes shape. v2 folded the
+// fic summary into the metadata string; v3 folds the book description too (the
+// OpenLibrary N+1 works fetch). Threaded into both cache keys — `candidate_cache`
+// (the parsed Candidate[] keys) and `candidate_embeddings` (the model_version) — so
+// a recipe change invalidates stale entries instead of re-issuing a shared-DB
+// migration (branches collide on migration numbers). Old rows orphan harmlessly and
+// age out. (The per-work `oldesc:` description cache is deliberately NOT versioned:
+// a work's description is recipe-independent, so a future bump must not force
+// re-fetching descriptions that didn't change.)
+export const CANDIDATE_TEXT_VERSION = 3
 
 /**
  * A normalized recommendation candidate — the same content-only shape the rerank
@@ -134,6 +143,45 @@ export function normalizeOpenLibraryDoc(
   }
 }
 
+// ── book descriptions (the OpenLibrary N+1) ────────────────────────────────────
+// `search.json` carries no blurb, so a book's description comes from its own work
+// JSON (`/works/OL…W.json`). Folding it into the embed text separates books that
+// share subjects by plot/tone — the same content signal fics get from their summary
+// (tier 1). The parse helpers are pure; only fetchWorkDescription touches the
+// network + cache.
+
+/**
+ * OpenLibrary work descriptions are markdown-ish and frequently carry a trailing
+ * source-attribution block: a `----------` separator line then `[n]: http…` link
+ * definitions. Cut everything from the first separator line, drop any leftover
+ * bracketed link-definition lines, and collapse whitespace. Empty → null. Pure.
+ */
+export function cleanOlDescription(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const beforeSeparator = raw.split(/\n\s*-{3,}/)[0]
+  const cleaned = beforeSeparator
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*\[[^\]]+\]:\s*http/i.test(line)) // markdown link definitions
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return cleaned || null
+}
+
+/**
+ * Pull the description out of an OpenLibrary work JSON: it's either a plain string
+ * or a `{ type: '/type/text', value }` object, or absent. Cleaned via
+ * cleanOlDescription. Pure.
+ */
+export function extractOlDescription(json: unknown): string | null {
+  const d = (json as { description?: unknown } | null)?.description
+  if (typeof d === 'string') return cleanOlDescription(d)
+  if (d && typeof d === 'object' && typeof (d as { value?: unknown }).value === 'string') {
+    return cleanOlDescription((d as { value: string }).value)
+  }
+  return null
+}
+
 // ── candidate_cache (TTL) ──────────────────────────────────────────────────────
 
 interface CacheRow {
@@ -201,6 +249,41 @@ async function fetchDocsForQuery(
   }
 }
 
+/**
+ * A single work's description (the OpenLibrary N+1) — cache-first, per-work.
+ * Synthetic keys (no real work) and any fetch failure / absent blurb resolve to
+ * null, and that null is cached too so a blurb-less work isn't re-fetched every
+ * refresh. The `oldesc:` cache is deliberately NOT version-namespaced — a work's
+ * description is recipe-independent. Touches the network + candidate_cache.
+ */
+export async function fetchWorkDescription(
+  workKey: string,
+  cfg: CandidatesConfig,
+  now: number,
+): Promise<string | null> {
+  if (!workKey.startsWith('/works/')) return null // synthetic:… → nothing to fetch
+  const cacheKey = `oldesc:${workKey}`
+  const cached = readCandidateCache<{ description: string | null }>(
+    cacheKey,
+    cfg.DESCRIPTION_CACHE_TTL_MS,
+    now,
+  )
+  if (cached) return cached.description
+
+  let description: string | null = null
+  try {
+    const res = await fetch(`${OPENLIBRARY_ORIGIN}${workKey}.json`, {
+      signal: AbortSignal.timeout(cfg.FETCH_TIMEOUT_MS),
+      headers: OL_HEADERS,
+    })
+    if (res.ok) description = extractOlDescription(await res.json())
+  } catch {
+    description = null // degrade to metadata-only for this book
+  }
+  writeCandidateCache(cacheKey, { description }, now)
+  return description
+}
+
 /** Map `items` with at most `limit` calls in flight, preserving input order in the result. */
 async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(items.length)
@@ -241,5 +324,16 @@ export async function fetchCandidates(
       if (byId.size >= cfg.MAX_CANDIDATES) break
     }
   }
-  return [...byId.values()]
+
+  // Enrich each deduped book with its work description (the OpenLibrary N+1),
+  // bounded-concurrency and cache-first per-work — so descriptions influence the
+  // whole pool's ranking, and a warm refresh (all cached) fetches nothing.
+  return mapPool(
+    [...byId.values()],
+    cfg.DESCRIPTION_CONCURRENCY,
+    async (c): Promise<Candidate> => ({
+      ...c,
+      description: await fetchWorkDescription(c.sourceId, cfg, now),
+    }),
+  )
 }
