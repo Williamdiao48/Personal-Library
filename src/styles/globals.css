@@ -1660,9 +1660,13 @@ button:disabled {
 }
 
 .reader-header {
-  display: flex;
+  /* Three zones: nav-left | centered title | actions-right. The two 1fr side
+     columns render equal width, so the auto center column stays at the true
+     header center; the title truncates within it and never overlaps a side. */
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  position: relative; /* anchor for the absolutely-positioned title */
+  gap: 12px;
   /* Left padding clears the macOS hiddenInset traffic light cluster (~68px wide at x:12) */
   padding: 12px 24px 12px 80px;
   border-bottom: 1px solid var(--border);
@@ -1676,17 +1680,42 @@ button:disabled {
   -webkit-app-region: no-drag;
 }
 
+.reader-header-left,
+.reader-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.reader-header-left {
+  grid-column: 1;
+  justify-self: start;
+}
+.reader-header-right {
+  grid-column: 3;
+  justify-self: end;
+}
+
 .reader-header-title {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+  grid-column: 2;
+  justify-self: center;
+  min-width: 0; /* allow the grid item to shrink so the ellipsis engages */
+  max-width: 100%;
   font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 50%; /* prevent the title from overlapping the side buttons */
   pointer-events: none; /* title is display-only; don't block clicks on elements beneath */
+}
+
+/* The search bar takes the center column when open, stretched to fill it.
+   min-width widens the auto center track (flex:1 no longer applies as a grid
+   item) so the field stays comfortably wide, shrinking on narrow windows. */
+.reader-header > .reader-search-bar {
+  grid-column: 2;
+  justify-self: stretch;
+  min-width: min(460px, 46vw);
 }
 
 .reader-loading {

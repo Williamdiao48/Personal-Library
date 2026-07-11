@@ -1331,9 +1331,45 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     <div className="pdf-reader">
       {/* ── Header ───────────────────────────────────────────── */}
       <header className="reader-header">
-        <button className="epub-back-btn" onClick={onBack}>
-          ← Library
-        </button>
+        <div className="reader-header-left">
+          <button className="epub-back-btn" onClick={onBack}>
+            ← Library
+          </button>
+
+          {/* Page jump — hidden while search bar is open */}
+          {ready && !showSearch && (
+            <div className="epub-chapter-nav" style={{ maxWidth: 180 }}>
+              <div className="pdf-page-jump">
+                {editing ? (
+                  <input
+                    className="pdf-page-input"
+                    type="text"
+                    inputMode="numeric"
+                    value={pageInput}
+                    autoFocus
+                    onChange={(e) => setPageInput(e.target.value)}
+                    onKeyDown={handleInputKeyDown}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onBlur={commitEdit}
+                  />
+                ) : (
+                  <span
+                    className="pdf-page-display"
+                    onClick={startEditing}
+                    title="Click to jump to a page"
+                  >
+                    {viewMode === 'scroll'
+                      ? currentPage
+                      : rightPage
+                        ? `${currentPage}–${rightPage}`
+                        : currentPage}
+                  </span>
+                )}
+                <span className="pdf-page-sep">/ {totalPages}</span>
+              </div>
+            </div>
+          )}
+        </div>
 
         {showSearch ? (
           <SearchBar
@@ -1350,245 +1386,208 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
           <span className="reader-header-title">{item.title}</span>
         )}
 
-        {/* Page jump — hidden while search bar is open */}
-        {ready && !showSearch && (
-          <div className="epub-chapter-nav" style={{ maxWidth: 180 }}>
-            <div className="pdf-page-jump">
-              {editing ? (
-                <input
-                  className="pdf-page-input"
-                  type="text"
-                  inputMode="numeric"
-                  value={pageInput}
-                  autoFocus
-                  onChange={(e) => setPageInput(e.target.value)}
-                  onKeyDown={handleInputKeyDown}
-                  onFocus={(e) => e.currentTarget.select()}
-                  onBlur={commitEdit}
-                />
-              ) : (
-                <span
-                  className="pdf-page-display"
-                  onClick={startEditing}
-                  title="Click to jump to a page"
-                >
-                  {viewMode === 'scroll'
-                    ? currentPage
-                    : rightPage
-                      ? `${currentPage}–${rightPage}`
-                      : currentPage}
-                </span>
-              )}
-              <span className="pdf-page-sep">/ {totalPages}</span>
-            </div>
-          </div>
-        )}
-
-        {/* Convert to EPUB — hidden once a derived EPUB exists or search is open */}
-        {ready && !hasEpub && !convertedId && !showSearch && (
-          <button
-            className="epub-top-btn"
-            style={{ marginLeft: '12px' }}
-            onClick={handleConvert}
-            disabled={converting}
-            title="Convert this PDF to EPUB for better reading"
-          >
-            ⇄ EPUB
-          </button>
-        )}
-
-        {/* Search button */}
-        {ready && !showSearch && (
-          <button
-            className="epub-top-btn reader-search-btn"
-            onClick={openSearch}
-            aria-label="Search in content"
-            title="Search (⌘F)"
-          >
-            <svg
-              viewBox="0 0 16 16"
-              width="13"
-              height="13"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.7"
-              strokeLinecap="round"
-              aria-hidden="true"
+        <div className="reader-header-right">
+          {/* Convert to EPUB — hidden once a derived EPUB exists or search is open */}
+          {ready && !hasEpub && !convertedId && !showSearch && (
+            <button
+              className="epub-top-btn"
+              onClick={handleConvert}
+              disabled={converting}
+              title="Convert this PDF to EPUB for better reading"
             >
-              <circle cx="6.5" cy="6.5" r="4.5" />
-              <line x1="10.5" y1="10.5" x2="14" y2="14" />
-            </svg>
-          </button>
-        )}
+              ⇄ EPUB
+            </button>
+          )}
 
-        {/* Bookmark toggle */}
-        {ready && !showSearch && (
-          <button
-            className={`epub-top-btn${isBookmarked ? ' active' : ''}`}
-            style={{ marginLeft: '4px' }}
-            onClick={handleBookmarkToggle}
-            title={isBookmarked ? 'Remove bookmark' : 'Bookmark this page'}
-            aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark this page'}
-          >
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-              <path
-                d="M3 2h10v13l-5-3-5 3V2z"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                fill={isBookmarked ? 'currentColor' : 'none'}
-              />
-            </svg>
-          </button>
-        )}
-
-        {/* Bookmarks panel toggle */}
-        {ready && !showSearch && (
-          <button
-            className={`epub-top-btn${showBookmarks ? ' active' : ''}`}
-            style={{ marginLeft: '4px' }}
-            onClick={() => {
-              setShowBookmarks((s) => !s)
-              setShowPanel(false)
-            }}
-            aria-label="Bookmarks"
-            title="Bookmarks"
-          >
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-              <path d="M2 2h12v12l-4-2.5L6 14V2z" stroke="currentColor" strokeWidth="1.5" />
-              <line x1="5" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.2" />
-              <line x1="5" y1="9" x2="9" y2="9" stroke="currentColor" strokeWidth="1.2" />
-            </svg>
-          </button>
-        )}
-
-        {/* Add note at current page */}
-        {ready && !showSearch && (
-          <button
-            className="epub-top-btn"
-            style={{ marginLeft: '4px' }}
-            onClick={handleAddNote}
-            title="Add note at this page"
-            aria-label="Add note"
-          >
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-              <path
-                d="M2 3h12v8H9l-3 3V11H2V3z"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                fill="none"
-              />
-            </svg>
-          </button>
-        )}
-
-        {/* Annotations panel toggle */}
-        {ready && !showSearch && (
-          <button
-            className={`epub-top-btn${showPanel ? ' active' : ''}`}
-            style={{ marginLeft: '4px' }}
-            onClick={() => {
-              setShowPanel((s) => !s)
-              setShowBookmarks(false)
-            }}
-            aria-label="Annotations"
-            title="Annotations"
-          >
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-              <rect x="1" y="3" width="14" height="2" rx="1" fill="currentColor" opacity="0.5" />
-              <rect x="1" y="7" width="10" height="2" rx="1" fill="currentColor" opacity="0.5" />
-              <rect x="1" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.5" />
-            </svg>
-          </button>
-        )}
-
-        {/* Scroll / Spread mode toggle */}
-        {ready && !showSearch && (
-          <button
-            className={`epub-top-btn${viewMode === 'scroll' ? ' active' : ''}`}
-            title={viewMode === 'scroll' ? 'Spread view' : 'Scroll view'}
-            aria-label={viewMode === 'scroll' ? 'Switch to spread view' : 'Switch to scroll view'}
-            onClick={() => {
-              const next: ViewMode = viewMode === 'spread' ? 'scroll' : 'spread'
-              localStorage.setItem(LS_PDF_VIEW_MODE, next)
-              viewModeRef.current = next
-              setViewMode(next)
-              requestAnimationFrame(() => {
-                if (next === 'scroll') {
-                  scrollPageDivRefs.current
-                    .get(currentPageRef.current)
-                    ?.scrollIntoView({ behavior: 'instant', block: 'start' })
-                } else {
-                  goTo(currentPageRef.current) // re-snap to spread start
-                }
-              })
-            }}
-          >
-            {viewMode === 'scroll' ? (
+          {/* Search button */}
+          {ready && !showSearch && (
+            <button
+              className="epub-top-btn reader-search-btn"
+              onClick={openSearch}
+              aria-label="Search in content"
+              title="Search (⌘F)"
+            >
               <svg
                 viewBox="0 0 16 16"
                 width="13"
                 height="13"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth="1.5"
+                strokeWidth="1.7"
+                strokeLinecap="round"
                 aria-hidden="true"
               >
-                <rect x="1" y="2" width="6" height="12" rx="1" />
-                <rect x="9" y="2" width="6" height="12" rx="1" />
+                <circle cx="6.5" cy="6.5" r="4.5" />
+                <line x1="10.5" y1="10.5" x2="14" y2="14" />
               </svg>
-            ) : (
-              <svg
-                viewBox="0 0 16 16"
-                width="13"
-                height="13"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                aria-hidden="true"
-              >
-                <rect x="3" y="1" width="10" height="14" rx="1" />
-                <line x1="5" y1="5" x2="11" y2="5" />
-                <line x1="5" y1="8" x2="11" y2="8" />
-                <line x1="5" y1="11" x2="9" y2="11" />
+            </button>
+          )}
+
+          {/* Bookmark toggle */}
+          {ready && !showSearch && (
+            <button
+              className={`epub-top-btn${isBookmarked ? ' active' : ''}`}
+              onClick={handleBookmarkToggle}
+              title={isBookmarked ? 'Remove bookmark' : 'Bookmark this page'}
+              aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark this page'}
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+                <path
+                  d="M3 2h10v13l-5-3-5 3V2z"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  fill={isBookmarked ? 'currentColor' : 'none'}
+                />
               </svg>
-            )}
-          </button>
-        )}
+            </button>
+          )}
 
-        {/* Aa zoom settings */}
-        <div className="epub-settings-wrapper">
-          <button
-            className={`epub-top-btn${showSettings ? ' active' : ''}`}
-            onClick={() => {
-              setShowSettings((s) => !s)
-              setShowSearch(false)
-            }}
-            aria-label="Zoom settings"
-          >
-            Aa
-          </button>
+          {/* Bookmarks panel toggle */}
+          {ready && !showSearch && (
+            <button
+              className={`epub-top-btn${showBookmarks ? ' active' : ''}`}
+              onClick={() => {
+                setShowBookmarks((s) => !s)
+                setShowPanel(false)
+              }}
+              aria-label="Bookmarks"
+              title="Bookmarks"
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+                <path d="M2 2h12v12l-4-2.5L6 14V2z" stroke="currentColor" strokeWidth="1.5" />
+                <line x1="5" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.2" />
+                <line x1="5" y1="9" x2="9" y2="9" stroke="currentColor" strokeWidth="1.2" />
+              </svg>
+            </button>
+          )}
 
-          {showSettings && (
-            <>
-              <div className="epub-settings-overlay" onClick={() => setShowSettings(false)} />
-              <div className="epub-settings-panel">
-                <div className="epub-settings-row">
-                  <span className="epub-settings-label">Zoom</span>
-                  <div className="epub-settings-group">
-                    {ZOOM_LEVELS.map((z) => (
-                      <button
-                        key={z}
-                        className={`epub-settings-btn${zoom === z ? ' active' : ''}`}
-                        onClick={() => setZoomAndSave(z)}
-                      >
-                        {Math.round(z * 100)}%
-                      </button>
-                    ))}
+          {/* Add note at current page */}
+          {ready && !showSearch && (
+            <button
+              className="epub-top-btn"
+              onClick={handleAddNote}
+              title="Add note at this page"
+              aria-label="Add note"
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+                <path
+                  d="M2 3h12v8H9l-3 3V11H2V3z"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  fill="none"
+                />
+              </svg>
+            </button>
+          )}
+
+          {/* Annotations panel toggle */}
+          {ready && !showSearch && (
+            <button
+              className={`epub-top-btn${showPanel ? ' active' : ''}`}
+              onClick={() => {
+                setShowPanel((s) => !s)
+                setShowBookmarks(false)
+              }}
+              aria-label="Annotations"
+              title="Annotations"
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+                <rect x="1" y="3" width="14" height="2" rx="1" fill="currentColor" opacity="0.5" />
+                <rect x="1" y="7" width="10" height="2" rx="1" fill="currentColor" opacity="0.5" />
+                <rect x="1" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.5" />
+              </svg>
+            </button>
+          )}
+
+          {/* Scroll / Spread mode toggle */}
+          {ready && !showSearch && (
+            <button
+              className={`epub-top-btn${viewMode === 'scroll' ? ' active' : ''}`}
+              title={viewMode === 'scroll' ? 'Spread view' : 'Scroll view'}
+              aria-label={viewMode === 'scroll' ? 'Switch to spread view' : 'Switch to scroll view'}
+              onClick={() => {
+                const next: ViewMode = viewMode === 'spread' ? 'scroll' : 'spread'
+                localStorage.setItem(LS_PDF_VIEW_MODE, next)
+                viewModeRef.current = next
+                setViewMode(next)
+                requestAnimationFrame(() => {
+                  if (next === 'scroll') {
+                    scrollPageDivRefs.current
+                      .get(currentPageRef.current)
+                      ?.scrollIntoView({ behavior: 'instant', block: 'start' })
+                  } else {
+                    goTo(currentPageRef.current) // re-snap to spread start
+                  }
+                })
+              }}
+            >
+              {viewMode === 'scroll' ? (
+                <svg
+                  viewBox="0 0 16 16"
+                  width="13"
+                  height="13"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  aria-hidden="true"
+                >
+                  <rect x="1" y="2" width="6" height="12" rx="1" />
+                  <rect x="9" y="2" width="6" height="12" rx="1" />
+                </svg>
+              ) : (
+                <svg
+                  viewBox="0 0 16 16"
+                  width="13"
+                  height="13"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="1" width="10" height="14" rx="1" />
+                  <line x1="5" y1="5" x2="11" y2="5" />
+                  <line x1="5" y1="8" x2="11" y2="8" />
+                  <line x1="5" y1="11" x2="9" y2="11" />
+                </svg>
+              )}
+            </button>
+          )}
+
+          {/* Aa zoom settings */}
+          <div className="epub-settings-wrapper">
+            <button
+              className={`epub-top-btn${showSettings ? ' active' : ''}`}
+              onClick={() => {
+                setShowSettings((s) => !s)
+                setShowSearch(false)
+              }}
+              aria-label="Zoom settings"
+            >
+              Aa
+            </button>
+
+            {showSettings && (
+              <>
+                <div className="epub-settings-overlay" onClick={() => setShowSettings(false)} />
+                <div className="epub-settings-panel">
+                  <div className="epub-settings-row">
+                    <span className="epub-settings-label">Zoom</span>
+                    <div className="epub-settings-group">
+                      {ZOOM_LEVELS.map((z) => (
+                        <button
+                          key={z}
+                          className={`epub-settings-btn${zoom === z ? ' active' : ''}`}
+                          onClick={() => setZoomAndSave(z)}
+                        >
+                          {Math.round(z * 100)}%
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            </>
-          )}
+              </>
+            )}
+          </div>
         </div>
       </header>
 

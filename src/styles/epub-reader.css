@@ -306,7 +306,8 @@
   gap: 6px;
   min-width: 0;
   max-width: 280px;
-  margin-left: auto; /* push chapter nav + Aa to the right */
+  /* Lives in the left zone now (beside ← Library); spacing comes from the
+     zone's flex gap, so no margin-left:auto. */
 }
 
 .epub-chapter-arrow {

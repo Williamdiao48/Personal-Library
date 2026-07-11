@@ -955,9 +955,61 @@ export default function EpubReader({ item, onBack }: Props) {
     <div className={`epub-reader epub-theme-${theme}`}>
       {/* ── Combined reader header ─────────────────────────────── */}
       <header className="reader-header">
-        <button className="epub-back-btn" onClick={onBack}>
-          ← Library
-        </button>
+        <div className="reader-header-left">
+          <button className="epub-back-btn" onClick={onBack}>
+            ← Library
+          </button>
+
+          {/* Chapter navigation */}
+          {!showSearch && (
+            <div className="epub-chapter-nav">
+              <button
+                className="epub-chapter-arrow"
+                onClick={() => jumpToChapter(chapter - 1)}
+                disabled={chapter === 0}
+              >
+                ‹
+              </button>
+
+              <div className="epub-chapter-dropdown-wrapper">
+                <button className="epub-chapter-btn" onClick={() => setShowChapterList((s) => !s)}>
+                  {chapter + 1}. {ch.title} ▾
+                </button>
+
+                {showChapterList && (
+                  <>
+                    <div
+                      className="epub-settings-overlay"
+                      onClick={() => setShowChapterList(false)}
+                    />
+                    <div className="epub-chapter-list" style={{ left: 0, right: 'auto' }}>
+                      {book.chapters.map((c, i) => (
+                        <button
+                          key={i}
+                          className={`epub-chapter-item${i === chapter ? ' active' : ''}`}
+                          onClick={() => {
+                            jumpToChapter(i)
+                            setShowChapterList(false)
+                          }}
+                        >
+                          {i + 1}. {c.title}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <button
+                className="epub-chapter-arrow"
+                onClick={() => jumpToChapter(chapter + 1)}
+                disabled={chapter === book.chapters.length - 1}
+              >
+                ›
+              </button>
+            </div>
+          )}
+        </div>
 
         {showSearch ? (
           <SearchBar
@@ -973,232 +1025,181 @@ export default function EpubReader({ item, onBack }: Props) {
           <span className="reader-header-title">{item.title}</span>
         )}
 
-        {/* Chapter navigation — right side, before search + Aa */}
-        {!showSearch && (
-          <div className="epub-chapter-nav">
+        <div className="reader-header-right">
+          {/* Search button */}
+          {!showSearch && (
             <button
-              className="epub-chapter-arrow"
-              onClick={() => jumpToChapter(chapter - 1)}
-              disabled={chapter === 0}
+              className="epub-top-btn reader-search-btn"
+              onClick={openSearch}
+              aria-label="Search in content"
+              title="Search (⌘F)"
             >
-              ‹
-            </button>
-
-            <div className="epub-chapter-dropdown-wrapper">
-              <button className="epub-chapter-btn" onClick={() => setShowChapterList((s) => !s)}>
-                {chapter + 1}. {ch.title} ▾
-              </button>
-
-              {showChapterList && (
-                <>
-                  <div
-                    className="epub-settings-overlay"
-                    onClick={() => setShowChapterList(false)}
-                  />
-                  <div className="epub-chapter-list" style={{ left: 'auto', right: 0 }}>
-                    {book.chapters.map((c, i) => (
-                      <button
-                        key={i}
-                        className={`epub-chapter-item${i === chapter ? ' active' : ''}`}
-                        onClick={() => {
-                          jumpToChapter(i)
-                          setShowChapterList(false)
-                        }}
-                      >
-                        {i + 1}. {c.title}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-
-            <button
-              className="epub-chapter-arrow"
-              onClick={() => jumpToChapter(chapter + 1)}
-              disabled={chapter === book.chapters.length - 1}
-            >
-              ›
-            </button>
-          </div>
-        )}
-
-        {/* Search button */}
-        {!showSearch && (
-          <button
-            className="epub-top-btn reader-search-btn"
-            onClick={openSearch}
-            aria-label="Search in content"
-            title="Search (⌘F)"
-          >
-            <svg
-              viewBox="0 0 16 16"
-              width="13"
-              height="13"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.7"
-              strokeLinecap="round"
-              aria-hidden="true"
-            >
-              <circle cx="6.5" cy="6.5" r="4.5" />
-              <line x1="10.5" y1="10.5" x2="14" y2="14" />
-            </svg>
-          </button>
-        )}
-
-        {/* Bookmark toggle */}
-        {!showSearch && (
-          <button
-            className={`epub-top-btn${isBookmarked ? ' active' : ''}`}
-            onClick={handleBookmarkToggle}
-            aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark this page'}
-            title={isBookmarked ? 'Remove bookmark' : 'Bookmark'}
-            style={{ marginLeft: '4px' }}
-          >
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-              <path
-                d="M3 2h10v13l-5-3-5 3V2z"
+              <svg
+                viewBox="0 0 16 16"
+                width="13"
+                height="13"
+                fill="none"
                 stroke="currentColor"
-                strokeWidth="1.5"
-                fill={isBookmarked ? 'currentColor' : 'none'}
-              />
-            </svg>
-          </button>
-        )}
-
-        {/* Bookmarks panel toggle */}
-        {!showSearch && (
-          <button
-            className={`epub-top-btn${showBookmarks ? ' active' : ''}`}
-            onClick={() => {
-              setShowBookmarks((s) => !s)
-              setShowPanel(false)
-            }}
-            aria-label="Bookmarks"
-            title="Bookmarks"
-            style={{ marginLeft: '4px' }}
-          >
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-              <path d="M2 2h12v12l-4-2.5L6 14V2z" stroke="currentColor" strokeWidth="1.5" />
-              <line x1="5" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.2" />
-              <line x1="5" y1="9" x2="9" y2="9" stroke="currentColor" strokeWidth="1.2" />
-            </svg>
-          </button>
-        )}
-
-        {/* Annotations panel toggle */}
-        {!showSearch && (
-          <button
-            className={`epub-top-btn${showPanel ? ' active' : ''}`}
-            onClick={() => {
-              setShowPanel((s) => !s)
-              setShowBookmarks(false)
-            }}
-            aria-label="Annotations"
-            title="Annotations"
-            style={{ marginLeft: '4px' }}
-          >
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-              <rect x="1" y="3" width="14" height="2" rx="1" fill="currentColor" opacity="0.5" />
-              <rect x="1" y="7" width="10" height="2" rx="1" fill="currentColor" opacity="0.5" />
-              <rect x="1" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.5" />
-            </svg>
-          </button>
-        )}
-
-        <div className="epub-settings-wrapper">
-          <button
-            className={`epub-top-btn${showSettings ? ' active' : ''}`}
-            onClick={() => {
-              setShowSettings((s) => !s)
-              setShowSearch(false)
-            }}
-            aria-label="Reader settings"
-          >
-            Aa
-          </button>
-
-          {showSettings && (
-            <>
-              <div className="epub-settings-overlay" onClick={() => setShowSettings(false)} />
-
-              <div className="epub-settings-panel">
-                <div className="epub-settings-row">
-                  <span className="epub-settings-label">Text size</span>
-                  <div className="epub-settings-group">
-                    <button className="epub-settings-btn" onClick={() => adjustFontSize(-1)}>
-                      A−
-                    </button>
-                    <span className="epub-settings-size-display">{fontSize}</span>
-                    <button className="epub-settings-btn" onClick={() => adjustFontSize(+1)}>
-                      A+
-                    </button>
-                  </div>
-                </div>
-
-                <div className="epub-settings-row">
-                  <span className="epub-settings-label">Font</span>
-                  <div className="epub-settings-group">
-                    {(['serif', 'sans', 'mono'] as FontFamily[]).map((ff) => (
-                      <button
-                        key={ff}
-                        className={`epub-settings-btn${fontFamily === ff ? ' active' : ''}`}
-                        onClick={() => setFontFamilyAndSave(ff)}
-                      >
-                        {ff.charAt(0).toUpperCase() + ff.slice(1)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="epub-settings-row">
-                  <span className="epub-settings-label">Spacing</span>
-                  <div className="epub-settings-group">
-                    {([1.4, 1.7, 2.1] as const).map((v) => (
-                      <button
-                        key={v}
-                        className={`epub-settings-btn${lineHeight === v ? ' active' : ''}`}
-                        onClick={() => setLineHeightAndSave(v)}
-                      >
-                        {v === 1.4 ? 'Tight' : v === 1.7 ? 'Normal' : 'Wide'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="epub-settings-row">
-                  <span className="epub-settings-label">Width</span>
-                  <div className="epub-settings-group">
-                    {(['narrow', 'normal', 'wide'] as ColPadding[]).map((v) => (
-                      <button
-                        key={v}
-                        className={`epub-settings-btn${colPadding === v ? ' active' : ''}`}
-                        onClick={() => setColPaddingAndSave(v)}
-                      >
-                        {v.charAt(0).toUpperCase() + v.slice(1)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="epub-settings-row">
-                  <span className="epub-settings-label">Theme</span>
-                  <div className="epub-settings-group">
-                    {(['dark', 'light', 'sepia'] as Theme[]).map((t) => (
-                      <button
-                        key={t}
-                        className={`epub-settings-btn${theme === t ? ' active' : ''}`}
-                        onClick={() => setThemeAndSave(t)}
-                      >
-                        {t.charAt(0).toUpperCase() + t.slice(1)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </>
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <circle cx="6.5" cy="6.5" r="4.5" />
+                <line x1="10.5" y1="10.5" x2="14" y2="14" />
+              </svg>
+            </button>
           )}
+
+          {/* Bookmark toggle */}
+          {!showSearch && (
+            <button
+              className={`epub-top-btn${isBookmarked ? ' active' : ''}`}
+              onClick={handleBookmarkToggle}
+              aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark this page'}
+              title={isBookmarked ? 'Remove bookmark' : 'Bookmark'}
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+                <path
+                  d="M3 2h10v13l-5-3-5 3V2z"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  fill={isBookmarked ? 'currentColor' : 'none'}
+                />
+              </svg>
+            </button>
+          )}
+
+          {/* Bookmarks panel toggle */}
+          {!showSearch && (
+            <button
+              className={`epub-top-btn${showBookmarks ? ' active' : ''}`}
+              onClick={() => {
+                setShowBookmarks((s) => !s)
+                setShowPanel(false)
+              }}
+              aria-label="Bookmarks"
+              title="Bookmarks"
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+                <path d="M2 2h12v12l-4-2.5L6 14V2z" stroke="currentColor" strokeWidth="1.5" />
+                <line x1="5" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.2" />
+                <line x1="5" y1="9" x2="9" y2="9" stroke="currentColor" strokeWidth="1.2" />
+              </svg>
+            </button>
+          )}
+
+          {/* Annotations panel toggle */}
+          {!showSearch && (
+            <button
+              className={`epub-top-btn${showPanel ? ' active' : ''}`}
+              onClick={() => {
+                setShowPanel((s) => !s)
+                setShowBookmarks(false)
+              }}
+              aria-label="Annotations"
+              title="Annotations"
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+                <rect x="1" y="3" width="14" height="2" rx="1" fill="currentColor" opacity="0.5" />
+                <rect x="1" y="7" width="10" height="2" rx="1" fill="currentColor" opacity="0.5" />
+                <rect x="1" y="11" width="7" height="2" rx="1" fill="currentColor" opacity="0.5" />
+              </svg>
+            </button>
+          )}
+
+          <div className="epub-settings-wrapper">
+            <button
+              className={`epub-top-btn${showSettings ? ' active' : ''}`}
+              onClick={() => {
+                setShowSettings((s) => !s)
+                setShowSearch(false)
+              }}
+              aria-label="Reader settings"
+            >
+              Aa
+            </button>
+
+            {showSettings && (
+              <>
+                <div className="epub-settings-overlay" onClick={() => setShowSettings(false)} />
+
+                <div className="epub-settings-panel">
+                  <div className="epub-settings-row">
+                    <span className="epub-settings-label">Text size</span>
+                    <div className="epub-settings-group">
+                      <button className="epub-settings-btn" onClick={() => adjustFontSize(-1)}>
+                        A−
+                      </button>
+                      <span className="epub-settings-size-display">{fontSize}</span>
+                      <button className="epub-settings-btn" onClick={() => adjustFontSize(+1)}>
+                        A+
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="epub-settings-row">
+                    <span className="epub-settings-label">Font</span>
+                    <div className="epub-settings-group">
+                      {(['serif', 'sans', 'mono'] as FontFamily[]).map((ff) => (
+                        <button
+                          key={ff}
+                          className={`epub-settings-btn${fontFamily === ff ? ' active' : ''}`}
+                          onClick={() => setFontFamilyAndSave(ff)}
+                        >
+                          {ff.charAt(0).toUpperCase() + ff.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="epub-settings-row">
+                    <span className="epub-settings-label">Spacing</span>
+                    <div className="epub-settings-group">
+                      {([1.4, 1.7, 2.1] as const).map((v) => (
+                        <button
+                          key={v}
+                          className={`epub-settings-btn${lineHeight === v ? ' active' : ''}`}
+                          onClick={() => setLineHeightAndSave(v)}
+                        >
+                          {v === 1.4 ? 'Tight' : v === 1.7 ? 'Normal' : 'Wide'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="epub-settings-row">
+                    <span className="epub-settings-label">Width</span>
+                    <div className="epub-settings-group">
+                      {(['narrow', 'normal', 'wide'] as ColPadding[]).map((v) => (
+                        <button
+                          key={v}
+                          className={`epub-settings-btn${colPadding === v ? ' active' : ''}`}
+                          onClick={() => setColPaddingAndSave(v)}
+                        >
+                          {v.charAt(0).toUpperCase() + v.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="epub-settings-row">
+                    <span className="epub-settings-label">Theme</span>
+                    <div className="epub-settings-group">
+                      {(['dark', 'light', 'sepia'] as Theme[]).map((t) => (
+                        <button
+                          key={t}
+                          className={`epub-settings-btn${theme === t ? ' active' : ''}`}
+                          onClick={() => setThemeAndSave(t)}
+                        >
+                          {t.charAt(0).toUpperCase() + t.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
