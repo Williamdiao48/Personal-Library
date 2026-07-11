@@ -11,6 +11,7 @@ const cand = (over: Partial<Candidate> = {}): Candidate => ({
   coverUrl: null,
   sourceId: '/x',
   isbn: null,
+  description: null,
   source: 'book',
   ...over,
 })

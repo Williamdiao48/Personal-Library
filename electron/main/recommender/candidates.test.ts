@@ -50,6 +50,7 @@ describe('normalizeOpenLibraryDoc', () => {
       coverUrl: 'https://covers.openlibrary.org/b/id/42-M.jpg',
       sourceId: '/works/OL1W',
       isbn: '9780000000001',
+      description: null, // search.json has no blurb — books stay metadata-only
       source: 'book',
     })
   })
@@ -67,6 +68,7 @@ describe('normalizeOpenLibraryDoc', () => {
       subjects: [],
       coverUrl: null,
       isbn: null,
+      description: null,
     })
   })
 

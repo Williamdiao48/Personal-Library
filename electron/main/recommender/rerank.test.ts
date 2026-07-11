@@ -45,6 +45,7 @@ const cand = (over: Partial<Candidate> = {}): Candidate => ({
   coverUrl: null,
   sourceId: '/works/OL1W',
   isbn: null,
+  description: null,
   source: 'book',
   ...over,
 })
@@ -403,6 +404,37 @@ describe('recommend', () => {
     }
     const out = await recommend(stubEmbedder, [src], undefined, { excludeIds: ['/works/C1'] })
     expect(out.map((c) => c.sourceId)).toEqual(['/works/C2'])
+  })
+
+  it("folds a fic's description (summary) into the text it embeds", async () => {
+    seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
+    const seen: string[] = []
+    const spyEmbedder: Embedder = {
+      modelVersion: 'stub',
+      dim: 2,
+      embed: async (texts) => {
+        seen.push(...texts)
+        return texts.map(() => v(1, 0))
+      },
+    }
+    const src: CandidateSource = {
+      name: 'ao3',
+      fetch: async () => [
+        cand({
+          title: 'A Fic',
+          author: 'Ficcer',
+          sourceId: 'https://ao3/works/9',
+          source: 'ao3',
+          description: 'Rivals forced together over one long winter.',
+        }),
+      ],
+    }
+    await recommend(spyEmbedder, [src])
+    // The candidate reaches the model with its summary in the metadata string, so
+    // the vector reflects plot/tone — not just categorical tags.
+    expect(
+      seen.some((t) => t.includes('description: Rivals forced together over one long winter.')),
+    ).toBe(true)
   })
 
   it('unions injected sources and dedups a cross-source title|author collision (F4)', async () => {

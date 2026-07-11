@@ -21,6 +21,7 @@ import {
   type FfnQuery,
 } from './ffn'
 import type { TasteSeeds } from '../tasteSeeds'
+import { CANDIDATE_TEXT_VERSION } from '../candidates'
 
 // fetchPagesSequential resolves to one HTML string per requested URL, in order.
 const mockFetch = vi.mocked(fetchPagesSequential)
@@ -34,11 +35,14 @@ const emptySeeds = (): TasteSeeds => ({
   genres: [],
 })
 
+// Story One mirrors real FFN markup: the summary and the `.xgray` meta line share
+// the `.z-indent` wrapper. Story Two has no summary wrapper (meta only) to prove the
+// null path — and that subjects still parse from a non-nested `.xgray`.
 const RESULTS_HTML = `<div id="content_wrapper">
   <div class="z-list zhover">
     <a class="stitle" href="/s/111/1/Story-One">Story One</a>
     <a href="/u/5/Ava">Ava</a>
-    <div class="z-padtop2 xgray">Rated: T - English - Adventure/Romance - Harry P., Hermione G. - Chapters: 5 - Words: 10,000 - Favs: 100 - Status: Complete - id: 111</div>
+    <div class="z-indent z-padtop">Harry finds a mysterious map that changes everything.<div class="z-padtop2 xgray">Rated: T - English - Adventure/Romance - Harry P., Hermione G. - Chapters: 5 - Words: 10,000 - Favs: 100 - Status: Complete - id: 111</div></div>
   </div>
   <div class="z-list zhover">
     <a class="stitle" href="/s/222/1/Story-Two">Story Two</a>
@@ -84,6 +88,10 @@ describe('parseFfnResultsPage', () => {
       expect.arrayContaining(['Adventure', 'Romance', 'Harry P.', 'Hermione G.']),
     )
     expect(cands[1].subjects).toEqual(['Angst'])
+    // The summary is folded into `description`, excluding the nested `.xgray` meta;
+    // a row without a `.z-indent` wrapper yields null.
+    expect(cands[0].description).toBe('Harry finds a mysterious map that changes everything.')
+    expect(cands[1].description).toBeNull()
   })
 })
 
@@ -109,6 +117,12 @@ describe('fetchFfnCandidates', () => {
     ])
     await fetchFfnCandidates([q], { now: 2000 }) // within TTL
     expect(mockFetch).toHaveBeenCalledTimes(1)
+
+    // The cache key carries the embed-text version so a recipe bump re-scrapes.
+    const key = db.prepare(`SELECT query_key FROM candidate_cache LIMIT 1`).get() as {
+      query_key: string
+    }
+    expect(key.query_key.startsWith(`ffn:v${CANDIDATE_TEXT_VERSION}:`)).toBe(true)
   })
 
   it('soft-fails when the batch fetch throws, without sinking the source', async () => {

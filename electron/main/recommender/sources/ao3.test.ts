@@ -19,6 +19,7 @@ import {
   AO3_SOURCE,
   type Ao3Query,
 } from './ao3'
+import { CANDIDATE_TEXT_VERSION } from '../candidates'
 import type { Ao3TagSeeds, LengthProfile } from '../tasteSeeds'
 
 const mockFetchPage = vi.mocked(fetchPage)
@@ -45,6 +46,7 @@ const RESULTS_HTML = `<ol class="work index group">
       <li class="characters"><a class="tag">Hermione Granger</a></li>
       <li class="freeforms"><a class="tag">Slow Burn</a></li>
     </ul>
+    <blockquote class="userstuff summary">Rivals forced together over one long winter.</blockquote>
   </li>
   <li class="work blurb group" id="work_2">
     <div class="header module">
@@ -136,6 +138,10 @@ describe('parseAo3ResultsPage', () => {
       'Hermione Granger',
       'Slow Burn',
     ])
+    // The blurb's summary is folded into the candidate as `description`; a blurb
+    // with no summary block yields null.
+    expect(cands[0].description).toBe('Rivals forced together over one long winter.')
+    expect(cands[1].description).toBeNull()
   })
 
   it('drops a blurb with no work link', () => {
@@ -166,6 +172,12 @@ describe('fetchAo3Candidates', () => {
     const out = await fetchAo3Candidates([relQ], { now: 1000, delayMs: 0 })
     expect(mockFetchPage).toHaveBeenCalledTimes(2) // PAGES_PER_QUERY
     expect(out.map((c) => c.title)).toEqual(['First Fic', 'Second Fic', 'Third Fic'])
+
+    // The cache key carries the embed-text version so a recipe bump re-scrapes.
+    const key = db.prepare(`SELECT query_key FROM candidate_cache LIMIT 1`).get() as {
+      query_key: string
+    }
+    expect(key.query_key.startsWith(`ao3:v${CANDIDATE_TEXT_VERSION}:`)).toBe(true)
 
     const cached = await fetchAo3Candidates([relQ], { now: 2000, delayMs: 0 }) // within TTL
     expect(mockFetchPage).toHaveBeenCalledTimes(2) // no new fetches

@@ -4,7 +4,7 @@ import { itemMetadataText } from './embeddingText'
 import { cosine } from './vectorMath'
 import { buildTaste, type TasteResult } from './taste'
 import { buildTasteSeeds } from './tasteSeeds'
-import { candidateKey, type Candidate, type SourceName } from './candidates'
+import { candidateKey, CANDIDATE_TEXT_VERSION, type Candidate, type SourceName } from './candidates'
 import { unionCandidates, type CandidateSource } from './candidateSource'
 import { loadCandidateVectors, saveCandidateVectors } from './candidateEmbeddings'
 import { openLibrarySource } from './sources/openLibrary'
@@ -340,22 +340,30 @@ export async function recommend(
   const kept = filterCandidates(fetched, snapshot.exclude)
   if (kept.length === 0) return []
 
-  // Embed each kept candidate's Tier-A metadata text (D-C4-1), reusing vectors
-  // cached by sourceId (model-versioned) from a prior refresh — so only candidates
-  // we haven't embedded before hit the model. Running the model is the main-thread /
-  // CPU cost of a warm refresh, so this is the biggest warm-path saving.
+  // Embed each kept candidate's Tier-A metadata text (D-C4-1) — now including a fic's
+  // summary as a content signal — reusing vectors cached by sourceId from a prior
+  // refresh so only candidates we haven't embedded before hit the model (the main
+  // warm-path saving). The cache key folds in CANDIDATE_TEXT_VERSION so bumping the
+  // embed-text recipe (e.g. adding the summary) invalidates stale thin vectors
+  // instead of needing a shared-DB migration.
+  const candCacheVersion = `${embedder.modelVersion}|${CANDIDATE_TEXT_VERSION}`
   const vecById = loadCandidateVectors(
     kept.map((c) => c.sourceId),
-    embedder.modelVersion,
+    candCacheVersion,
   )
   const misses = kept.filter((c) => !vecById.has(c.sourceId))
   if (misses.length > 0) {
     const missVecs = await embedder.embed(
-      misses.map((c) => itemMetadataText({ title: c.title, author: c.author }, c.subjects)),
+      misses.map((c) =>
+        itemMetadataText(
+          { title: c.title, author: c.author, description: c.description },
+          c.subjects,
+        ),
+      ),
     )
     saveCandidateVectors(
       misses.map((c, i) => ({ sourceId: c.sourceId, vec: missVecs[i] })),
-      embedder.modelVersion,
+      candCacheVersion,
     )
     misses.forEach((c, i) => vecById.set(c.sourceId, missVecs[i]))
   }

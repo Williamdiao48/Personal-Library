@@ -3,7 +3,7 @@ import { fetchPagesSequential } from '../../capture/fetch'
 import { classifyFfnMetaLine } from '../../capture/sites/ffnet'
 import type { LikedItem } from '../taste'
 import type { CandidateSource } from '../candidateSource'
-import type { Candidate } from '../candidates'
+import { CANDIDATE_TEXT_VERSION, type Candidate } from '../candidates'
 import { buildTasteSeeds, type TasteSeeds } from '../tasteSeeds'
 import { readCandidateCache, writeCandidateCache } from '../candidateCache'
 
@@ -79,6 +79,15 @@ export function parseFfnBlurb(el: Element, cfg = FFN_SOURCE): Candidate | null {
   const subjects = classifyFfnMetaLine(metaText)
     .tags.map((t) => t.name)
     .slice(0, cfg.MAX_SUBJECTS_PER_BLURB)
+  // The summary + meta line share the `.z-indent` wrapper; clone it and drop the
+  // nested `.xgray` meta so `description` is the blurb text alone (no "Rated: …").
+  let description: string | null = null
+  const indent = el.querySelector('.z-indent')
+  if (indent) {
+    const clone = indent.cloneNode(true) as Element
+    clone.querySelector('.xgray')?.remove()
+    description = clone.textContent?.trim() || null
+  }
 
   return {
     title,
@@ -87,6 +96,7 @@ export function parseFfnBlurb(el: Element, cfg = FFN_SOURCE): Candidate | null {
     coverUrl: null,
     sourceId: `${FFN_ORIGIN}/s/${idMatch[1]}`,
     isbn: null,
+    description,
     source: 'ffn',
   }
 }
@@ -122,7 +132,11 @@ export async function fetchFfnCandidates(
   const cached = new Map<string, Candidate[]>()
   const misses: FfnQuery[] = []
   for (const q of queries) {
-    const hit = readCandidateCache<Candidate[]>(`ffn:${q.url}`, cfg.CACHE_TTL_MS, now)
+    const hit = readCandidateCache<Candidate[]>(
+      `ffn:v${CANDIDATE_TEXT_VERSION}:${q.url}`,
+      cfg.CACHE_TTL_MS,
+      now,
+    )
     if (hit) cached.set(q.url, hit)
     else misses.push(q)
   }
@@ -137,7 +151,7 @@ export async function fetchFfnCandidates(
       )
       misses.forEach((q, i) => {
         const cands = parseFfnResultsPage(htmls[i] ?? '', cfg)
-        writeCandidateCache(`ffn:${q.url}`, cands, now)
+        writeCandidateCache(`ffn:v${CANDIDATE_TEXT_VERSION}:${q.url}`, cands, now)
         fetched.set(q.url, cands)
       })
     } catch {

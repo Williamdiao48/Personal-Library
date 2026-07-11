@@ -40,11 +40,20 @@ export const CANDIDATES: CandidatesConfig = {
 /** Which generator produced a candidate — books vs. the fanfic sources. */
 export type SourceName = 'book' | 'ao3' | 'ffn'
 
+// Bumped whenever the *text* we embed for a candidate changes shape (e.g. adding
+// the fic summary to the metadata string). Threaded into both cache keys —
+// `candidate_cache` (the parsed Candidate[] keys) and `candidate_embeddings` (the
+// model_version) — so a recipe change invalidates stale entries instead of
+// re-issuing a shared-DB migration (branches collide on migration numbers). Old
+// rows orphan harmlessly and age out.
+export const CANDIDATE_TEXT_VERSION = 2
+
 /**
  * A normalized recommendation candidate — the same content-only shape the rerank
  * embeds, whether it's an OpenLibrary book or an AO3/FFN fic. For fics, `subjects`
  * carries the work's native tags (so it embeds exactly like a book's subjects) and
- * `isbn` is null.
+ * `isbn` is null. `description` is a fic's summary/blurb (books: null — OpenLibrary
+ * `search.json` carries no blurb), folded into the embed text as a content signal.
  */
 export interface Candidate {
   title: string
@@ -54,6 +63,8 @@ export interface Candidate {
   /** OpenLibrary work key (`/works/OL45804W`) or a fic's work URL; the dedup identity. */
   sourceId: string
   isbn: string | null
+  /** A fic's summary/blurb (already in the scraped results page); null for books. */
+  description: string | null
   /** The generator that produced this candidate (dedup namespacing, display, diversity). */
   source: SourceName
 }
@@ -118,6 +129,7 @@ export function normalizeOpenLibraryDoc(
     coverUrl: coverUrlFromId(doc.cover_i),
     sourceId,
     isbn: doc.isbn?.[0]?.trim() || null,
+    description: null, // search.json has no blurb; book descriptions are a deferred N+1 tier
     source: 'book',
   }
 }

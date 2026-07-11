@@ -2,7 +2,7 @@ import { JSDOM } from 'jsdom'
 import { fetchPage } from '../../capture/fetch'
 import type { LikedItem } from '../taste'
 import type { CandidateSource } from '../candidateSource'
-import type { Candidate } from '../candidates'
+import { CANDIDATE_TEXT_VERSION, type Candidate } from '../candidates'
 import {
   buildAo3RawSeeds,
   buildLengthProfile,
@@ -145,8 +145,20 @@ export function parseAo3Blurb(li: Element, cfg = AO3_SOURCE): Candidate | null {
     'li.characters a.tag',
     'li.freeforms a.tag',
   ]).slice(0, cfg.MAX_SUBJECTS_PER_BLURB)
+  // The blurb's summary sits in `blockquote.userstuff.summary` — already in the
+  // page we scraped, so folding it into the embed text costs no extra network.
+  const description = li.querySelector('blockquote.summary')?.textContent?.trim() || null
 
-  return { title, author, subjects, coverUrl: null, sourceId, isbn: null, source: 'ao3' }
+  return {
+    title,
+    author,
+    subjects,
+    coverUrl: null,
+    sourceId,
+    isbn: null,
+    description,
+    source: 'ao3',
+  }
 }
 
 /** Parse every blurb in an AO3 works-index results page. Pure. */
@@ -183,7 +195,7 @@ export async function fetchAo3Candidates(
     for (let page = 1; page <= cfg.PAGES_PER_QUERY; page++) {
       if (byId.size >= cfg.MAX_CANDIDATES || requests >= cfg.MAX_REQUESTS) break
       const url = ao3PageUrl(query, page)
-      const key = `ao3:${url}`
+      const key = `ao3:v${CANDIDATE_TEXT_VERSION}:${url}`
       let cands = readCandidateCache<Candidate[]>(key, cfg.CACHE_TTL_MS, now)
       if (!cands) {
         if (delayMs > 0 && requests > 0) await sleep(delayMs)
