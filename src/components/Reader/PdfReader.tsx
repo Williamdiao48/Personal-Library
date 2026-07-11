@@ -687,13 +687,15 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     }
 
     load()
+    // Capture the stable render-task Map so cleanup doesn't read a changed ref.
+    const scrollTasks = scrollRenderTasks.current
     return () => {
       cancelled = true
       pdfWorker?.destroy()
       leftRenderTaskRef.current?.cancel()
       rightRenderTaskRef.current?.cancel()
-      scrollRenderTasks.current.forEach((t) => t.cancel())
-      scrollRenderTasks.current.clear()
+      scrollTasks.forEach((t) => t.cancel())
+      scrollTasks.clear()
       if (saveTimer.current) clearTimeout(saveTimer.current)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -882,10 +884,12 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     )
     scrollPageDivRefs.current.forEach((div) => renderIO.observe(div))
 
+    // Capture the stable render-task Map so cleanup doesn't read a changed ref.
+    const scrollTasks = scrollRenderTasks.current
     return () => {
       renderIO.disconnect()
-      scrollRenderTasks.current.forEach((t) => t.cancel())
-      scrollRenderTasks.current.clear()
+      scrollTasks.forEach((t) => t.cancel())
+      scrollTasks.clear()
     }
   }, [viewMode, pageDims, renderKey])
 

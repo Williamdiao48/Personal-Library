@@ -84,7 +84,7 @@ export default function ReaderView() {
     return () => {
       cancelled = true
     }
-  }, [id])
+  }, [id, navigate])
 
   if (loadError)
     return (

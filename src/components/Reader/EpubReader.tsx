@@ -676,7 +676,8 @@ export default function EpubReader({ item, onBack }: Props) {
 
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, []) // stable — all navigation uses refs; state setters are stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable: navigation uses refs; state setters are stable
+  }, [])
 
   // ── Internal EPUB link navigation ─────────────────────────────
   useEffect(() => {
@@ -711,7 +712,8 @@ export default function EpubReader({ item, onBack }: Props) {
 
     container.addEventListener('click', handleLinkClick)
     return () => container.removeEventListener('click', handleLinkClick)
-  }, [chapter]) // re-attach when chapter HTML is replaced
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-attach when the chapter HTML is replaced
+  }, [chapter])
 
   // ── Note mark click + context menu handlers ───────────────────
   useEffect(() => {

@@ -43,9 +43,7 @@ vi.mock('./BookmarksPanel', () => ({ default: () => <div>BOOKMARKS PANEL</div> }
 vi.mock('./NotePopover', () => ({ default: () => null }))
 vi.mock('./AnnotationContextMenu', () => ({ default: () => null }))
 
-import { libraryService } from '../../services/library'
 import { readerService } from '../../services/reader'
-const lib = libraryService as unknown as Record<string, ReturnType<typeof vi.fn>>
 const reader = readerService as unknown as Record<string, ReturnType<typeof vi.fn>>
 
 const mkItem = (over: Partial<Item> = {}): Item =>

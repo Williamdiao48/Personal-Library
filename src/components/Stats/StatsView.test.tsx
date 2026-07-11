@@ -9,7 +9,7 @@ import StatsView, {
   buildHeatmapGrid,
   heatLevel,
 } from './StatsView'
-import type { DailyReading, Goal, Item, ItemStats } from '../../types'
+import type { Goal, Item, ItemStats } from '../../types'
 
 // ── Pure helper unit tests ──────────────────────────────────────────────────
 

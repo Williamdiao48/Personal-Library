@@ -33,9 +33,9 @@ describe('parseAutocompleteTop', () => {
 
 // ── resolveAo3Tag (network + cache) ───────────────────────────────────────────
 describe('resolveAo3Tag', () => {
-  let db: TestDb
+  let _db: TestDb
   beforeEach(() => {
-    db = openTestDb()
+    _db = openTestDb()
     mockFetchPage.mockReset()
   })
   afterEach(() => closeTestDb())
@@ -118,9 +118,9 @@ describe('parsePairingMatch', () => {
 
 // ── resolvePairing (network + cache) ──────────────────────────────────────────
 describe('resolvePairing', () => {
-  let db: TestDb
+  let _db: TestDb
   beforeEach(() => {
-    db = openTestDb()
+    _db = openTestDb()
     mockFetchPage.mockReset()
   })
   afterEach(() => closeTestDb())
@@ -147,9 +147,9 @@ describe('resolvePairing', () => {
 
 // ── resolveAo3Seeds (merge + partition) ───────────────────────────────────────
 describe('resolveAo3Seeds', () => {
-  let db: TestDb
+  let _db: TestDb
   beforeEach(() => {
-    db = openTestDb()
+    _db = openTestDb()
     mockFetchPage.mockReset()
     // Map each raw term to its canonical top hit (or [] = unresolvable).
     const map: Record<string, string[]> = {

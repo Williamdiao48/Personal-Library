@@ -64,14 +64,14 @@ export function useTextHighlight(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, contentKey])
 
-  // Clear marks when the hook unmounts
+  // Clear marks when the hook unmounts. Capture the container at mount (it's
+  // stable for the hook's life) so the cleanup doesn't read a possibly-changed ref.
   useEffect(() => {
+    const container = containerRef.current
     return () => {
-      const container = containerRef.current
       if (container) clearMarks(container)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [containerRef])
 
   const goNext = useCallback(() => {
     const marks = marksRef.current
