@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import type { Annotation, HighlightColor } from '../../types'
+import type { Annotation, AnnotationTheme, HighlightColor } from '../../types'
 import { HIGHLIGHT_COLORS, DEFAULT_HIGHLIGHT_COLOR } from '../../constants/highlightColors'
+import ThemePicker from '../Annotations/ThemePicker'
 
 interface Props {
   x: number
@@ -10,6 +11,10 @@ interface Props {
   onUpdate: (id: string, noteText: string | null) => void
   onSetColor: (id: string, color: HighlightColor) => void
   onClose: () => void
+  /** Theme vocabulary + persist hook. When onSetThemes is omitted the Themes… entry is hidden. */
+  allThemes?: AnnotationTheme[]
+  onSetThemes?: (id: string, themes: AnnotationTheme[]) => void
+  onVocabChange?: () => void
 }
 
 function truncate(text: string, max: number): string {
@@ -24,10 +29,16 @@ export default function AnnotationContextMenu({
   onUpdate,
   onSetColor,
   onClose,
+  allThemes,
+  onSetThemes,
+  onVocabChange,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [editing, setEditing] = useState(false)
+  const [themeEditing, setThemeEditing] = useState(false)
   const [editText, setEditText] = useState(annotation.note_text ?? '')
+  // Local copy of the theme set for instant feedback; persisted via onSetThemes.
+  const [themes, setThemes] = useState<AnnotationTheme[]>(annotation.themes ?? [])
 
   // Position: center on mark, prefer above, fall back to below near top
   const left = Math.min(Math.max(x - 80, 8), window.innerWidth - 176)
@@ -38,6 +49,7 @@ export default function AnnotationContextMenu({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (editing) setEditing(false)
+        else if (themeEditing) setThemeEditing(false)
         else onClose()
       }
     }
@@ -50,7 +62,7 @@ export default function AnnotationContextMenu({
       document.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('mousedown', onMouseDown)
     }
-  }, [onClose, editing])
+  }, [onClose, editing, themeEditing])
 
   function saveEdit() {
     const trimmed = editText.trim() || null
@@ -61,7 +73,7 @@ export default function AnnotationContextMenu({
   return (
     <div
       ref={ref}
-      className={`note-popover annot-ctx-menu${editing ? ' annot-ctx-editing' : ''}`}
+      className={`note-popover annot-ctx-menu${editing || themeEditing ? ' annot-ctx-editing' : ''}`}
       style={{
         left,
         top,
@@ -100,6 +112,26 @@ export default function AnnotationContextMenu({
             </button>
             <button className="annot-cancel-btn" onClick={() => setEditing(false)}>
               Cancel
+            </button>
+          </div>
+        </div>
+      ) : themeEditing ? (
+        <div className="annot-ctx-edit annot-ctx-themes">
+          <p className="annot-ctx-themes-label">Themes</p>
+          <ThemePicker
+            value={themes}
+            allThemes={allThemes ?? []}
+            onVocabChange={onVocabChange}
+            idSuffix={annotation.id}
+            autoFocus
+            onChange={(next) => {
+              setThemes(next)
+              onSetThemes?.(annotation.id, next)
+            }}
+          />
+          <div className="annotation-note-actions" style={{ marginTop: 6 }}>
+            <button className="annot-save-btn" onClick={() => setThemeEditing(false)}>
+              Done
             </button>
           </div>
         </div>
@@ -150,7 +182,18 @@ export default function AnnotationContextMenu({
               Copy text
             </button>
           )}
-          {(annotation.type === 'note' || annotation.selected_text) && (
+          {onSetThemes && (
+            <button
+              className="annot-ctx-btn"
+              onClick={() => {
+                setThemes(annotation.themes ?? [])
+                setThemeEditing(true)
+              }}
+            >
+              Themes{themes.length > 0 ? ` (${themes.length})` : '…'}
+            </button>
+          )}
+          {(annotation.type === 'note' || annotation.selected_text || onSetThemes) && (
             <div className="annot-ctx-divider" />
           )}
           <button

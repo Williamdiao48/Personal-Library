@@ -10,7 +10,8 @@ import AnnotationsPanel from './AnnotationsPanel'
 import BookmarksPanel from './BookmarksPanel'
 import NotePopover from './NotePopover'
 import AnnotationContextMenu from './AnnotationContextMenu'
-import type { Item, Annotation, HighlightColor } from '../../types'
+import ThemePicker from '../Annotations/ThemePicker'
+import type { Item, Annotation, AnnotationTheme, HighlightColor } from '../../types'
 import '../../styles/reader.css'
 import '../../styles/epub-reader.css' // reuse settings panel + button styles
 
@@ -134,6 +135,7 @@ export default function HtmlReader({
     initialText?: string
   } | null>(null)
   const [noteText, setNoteText] = useState('')
+  const [noteThemes, setNoteThemes] = useState<AnnotationTheme[]>([])
 
   function adjustFontSize(delta: number) {
     const next = Math.max(12, Math.min(32, fontSize + delta))
@@ -322,25 +324,37 @@ export default function HtmlReader({
   function handleSelectionNote(range: Range) {
     const pos = getCurrentPosition()
     setNoteText('')
+    setNoteThemes([])
     setNoteEditorState({ range, position: pos, chapterIdx: annotChapterIndex })
+  }
+
+  function closeNoteEditor() {
+    setNoteEditorState(null)
+    setNoteText('')
+    setNoteThemes([])
   }
 
   async function saveNote() {
     if (!noteEditorState) return
     const text = noteText.trim()
     if (!text) {
-      setNoteEditorState(null)
+      closeNoteEditor()
       return
     }
     if (noteEditorState.existingId) {
       await annot.updateNote(noteEditorState.existingId, text)
+      await annot.setAnnotationThemes(noteEditorState.existingId, noteThemes)
     } else {
-      await annot.createNote(noteEditorState.position, text, noteEditorState.range ?? undefined)
+      await annot.createNote(
+        noteEditorState.position,
+        text,
+        noteEditorState.range ?? undefined,
+        noteThemes,
+      )
       // Clear the text selection after saving
       window.getSelection()?.removeAllRanges()
     }
-    setNoteEditorState(null)
-    setNoteText('')
+    closeNoteEditor()
   }
 
   function handleJumpToAnnotation(annotation: Annotation) {
@@ -723,7 +737,7 @@ export default function HtmlReader({
   const ch = chapters?.[currentChapter]
 
   const noteEditorModal = noteEditorState && (
-    <div className="note-editor-overlay" onClick={() => setNoteEditorState(null)}>
+    <div className="note-editor-overlay" onClick={closeNoteEditor}>
       <div className="note-editor-modal" onClick={(e) => e.stopPropagation()}>
         <div className="note-editor-header">
           {noteEditorState.existingId ? 'Edit note' : 'Add note'}
@@ -743,25 +757,28 @@ export default function HtmlReader({
               saveNote()
             }
             if (e.key === 'Escape') {
-              setNoteEditorState(null)
-              setNoteText('')
+              closeNoteEditor()
             }
           }}
           autoFocus
           rows={4}
           placeholder="Write a note…"
         />
+        <div className="note-editor-themes">
+          <label className="note-editor-themes-label">Themes</label>
+          <ThemePicker
+            value={noteThemes}
+            onChange={setNoteThemes}
+            allThemes={annot.allThemes}
+            onVocabChange={annot.refreshThemes}
+            idSuffix="note"
+          />
+        </div>
         <div className="note-editor-actions">
           <button className="annot-save-btn" onClick={saveNote}>
             Save
           </button>
-          <button
-            className="annot-cancel-btn"
-            onClick={() => {
-              setNoteEditorState(null)
-              setNoteText('')
-            }}
-          >
+          <button className="annot-cancel-btn" onClick={closeNoteEditor}>
             Cancel
           </button>
         </div>
@@ -1125,6 +1142,9 @@ export default function HtmlReader({
             }}
             onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
             onSetColor={annot.setHighlightColor}
+            allThemes={annot.allThemes}
+            onSetThemes={annot.setAnnotationThemes}
+            onVocabChange={annot.refreshThemes}
             onClose={() => setContextMenu(null)}
           />
         )}
@@ -1199,6 +1219,9 @@ export default function HtmlReader({
             }}
             onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
             onSetColor={annot.setHighlightColor}
+            allThemes={annot.allThemes}
+            onSetThemes={annot.setAnnotationThemes}
+            onVocabChange={annot.refreshThemes}
             onClose={() => setContextMenu(null)}
           />
         )}
@@ -1249,6 +1272,9 @@ export default function HtmlReader({
             setContextMenu(null)
           }}
           onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
+          allThemes={annot.allThemes}
+          onSetThemes={annot.setAnnotationThemes}
+          onVocabChange={annot.refreshThemes}
           onClose={() => setContextMenu(null)}
         />
       )}

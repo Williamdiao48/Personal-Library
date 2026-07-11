@@ -1083,6 +1083,13 @@
 .annot-ctx-edit {
   padding: 8px;
 }
+.annot-ctx-themes-label {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: #9a9a9a;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 
 /* Inline note popover */
 .note-popover {

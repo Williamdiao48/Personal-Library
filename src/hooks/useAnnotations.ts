@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { annotationsService } from '../services/annotationsService'
-import type { Annotation, AnnotationType, CreateAnnotationPayload, HighlightColor } from '../types'
+import { annotationsService, annotationThemesService } from '../services/annotationsService'
+import type {
+  Annotation,
+  AnnotationTheme,
+  AnnotationType,
+  CreateAnnotationPayload,
+  HighlightColor,
+} from '../types'
 import { DEFAULT_HIGHLIGHT_COLOR } from '../constants/highlightColors'
 
 interface UseAnnotationsOptions {
@@ -15,12 +21,22 @@ export interface UseAnnotationsReturn {
   annotations: Annotation[]
   createBookmark: (position: number) => Promise<void>
   createHighlight: (range: Range, position: number, color?: HighlightColor) => Promise<void>
-  createNote: (position: number, noteText: string, range?: Range) => Promise<void>
+  createNote: (
+    position: number,
+    noteText: string,
+    range?: Range,
+    themes?: AnnotationTheme[],
+  ) => Promise<void>
   updateNote: (id: string, noteText: string | null) => Promise<void>
   setHighlightColor: (id: string, color: HighlightColor) => Promise<void>
   deleteAnnotation: (id: string) => Promise<void>
   swapAnnotationOrder: (id1: string, id2: string) => Promise<void>
   applyHighlightsToDOM: (chapterIndex: number | null) => void
+  /** Theme vocabulary shared by the note composer + the context menu. */
+  allThemes: AnnotationTheme[]
+  refreshThemes: () => void
+  /** Replace an annotation's theme link set and patch local state. */
+  setAnnotationThemes: (id: string, themes: AnnotationTheme[]) => Promise<void>
 }
 
 // ── DOM helpers ────────────────────────────────────────────────────────────
@@ -218,6 +234,7 @@ function reanchorHighlight(annotation: Annotation, container: HTMLElement): void
 export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsReturn {
   const { itemId, contentRef, chapterIndex } = opts
   const [annotations, setAnnotations] = useState<Annotation[]>([])
+  const [allThemes, setAllThemes] = useState<AnnotationTheme[]>([])
   // Track the last chapter we applied highlights for, to avoid redundant work
   const appliedChapterRef = useRef<number | null>(undefined as unknown as number | null)
 
@@ -226,6 +243,16 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
     appliedChapterRef.current = undefined as unknown as number | null
     annotationsService.getForItem(itemId).then(setAnnotations)
   }, [itemId])
+
+  const refreshThemes = useCallback(() => {
+    annotationThemesService.list().then(setAllThemes)
+  }, [])
+
+  // Load the theme vocabulary once so the note composer + context menu can
+  // suggest/attach themes at creation time.
+  useEffect(() => {
+    refreshThemes()
+  }, [refreshThemes])
 
   const createBookmark = useCallback(
     async (position: number) => {
@@ -266,7 +293,7 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
   )
 
   const createNote = useCallback(
-    async (position: number, noteText: string, range?: Range) => {
+    async (position: number, noteText: string, range?: Range, themes?: AnnotationTheme[]) => {
       let text: string | null = null
       let contextBefore: string | null = null
       let contextAfter: string | null = null
@@ -291,12 +318,28 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
         note_text: noteText,
       }
       const created = await annotationsService.create(payload)
+      // Attach any themes chosen in the composer (create returns themes:[]).
+      if (themes && themes.length > 0) {
+        await annotationsService.setThemes(
+          created.id,
+          themes.map((t) => t.id),
+        )
+        created.themes = themes
+      }
       setAnnotations((prev) => [...prev, created])
       // If anchored to text, immediately paint the mark
       if (range && text) applyMarkToRange(range, created.id, 'note')
     },
     [itemId, chapterIndex],
   )
+
+  const setAnnotationThemes = useCallback(async (id: string, themes: AnnotationTheme[]) => {
+    await annotationsService.setThemes(
+      id,
+      themes.map((t) => t.id),
+    )
+    setAnnotations((prev) => prev.map((a) => (a.id === id ? { ...a, themes } : a)))
+  }, [])
 
   const updateNote = useCallback(async (id: string, noteText: string | null) => {
     await annotationsService.updateNote(id, noteText)
@@ -380,5 +423,8 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
     deleteAnnotation,
     swapAnnotationOrder,
     applyHighlightsToDOM,
+    allThemes,
+    refreshThemes,
+    setAnnotationThemes,
   }
 }

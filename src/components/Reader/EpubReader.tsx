@@ -10,7 +10,8 @@ import AnnotationsPanel from './AnnotationsPanel'
 import BookmarksPanel from './BookmarksPanel'
 import NotePopover from './NotePopover'
 import AnnotationContextMenu from './AnnotationContextMenu'
-import type { Item, EpubBook, Annotation, HighlightColor } from '../../types'
+import ThemePicker from '../Annotations/ThemePicker'
+import type { Item, EpubBook, Annotation, AnnotationTheme, HighlightColor } from '../../types'
 import '../../styles/epub-reader.css'
 
 const SAVE_DEBOUNCE_MS = 600
@@ -132,6 +133,7 @@ export default function EpubReader({ item, onBack }: Props) {
     initialText?: string
   } | null>(null)
   const [noteText, setNoteText] = useState('')
+  const [noteThemes, setNoteThemes] = useState<AnnotationTheme[]>([])
 
   const outerRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -275,24 +277,36 @@ export default function EpubReader({ item, onBack }: Props) {
 
   function handleSelectionNote(range: Range) {
     setNoteText('')
+    setNoteThemes([])
     setNoteEditorState({ range, position: getCurrentEpubPosition() })
+  }
+
+  function closeNoteEditor() {
+    setNoteEditorState(null)
+    setNoteText('')
+    setNoteThemes([])
   }
 
   async function saveNote() {
     if (!noteEditorState) return
     const text = noteText.trim()
     if (!text) {
-      setNoteEditorState(null)
+      closeNoteEditor()
       return
     }
     if (noteEditorState.existingId) {
       await annot.updateNote(noteEditorState.existingId, text)
+      await annot.setAnnotationThemes(noteEditorState.existingId, noteThemes)
     } else {
-      await annot.createNote(noteEditorState.position, text, noteEditorState.range ?? undefined)
+      await annot.createNote(
+        noteEditorState.position,
+        text,
+        noteEditorState.range ?? undefined,
+        noteThemes,
+      )
       window.getSelection()?.removeAllRanges()
     }
-    setNoteEditorState(null)
-    setNoteText('')
+    closeNoteEditor()
   }
 
   function handleJumpToAnnotation(annotation: Annotation) {
@@ -905,7 +919,7 @@ export default function EpubReader({ item, onBack }: Props) {
   } as React.CSSProperties
 
   const noteEditorModal = noteEditorState && (
-    <div className="note-editor-overlay" onClick={() => setNoteEditorState(null)}>
+    <div className="note-editor-overlay" onClick={closeNoteEditor}>
       <div className="note-editor-modal" onClick={(e) => e.stopPropagation()}>
         <div className="note-editor-header">
           {noteEditorState.existingId ? 'Edit note' : 'Add note'}
@@ -925,25 +939,28 @@ export default function EpubReader({ item, onBack }: Props) {
               saveNote()
             }
             if (e.key === 'Escape') {
-              setNoteEditorState(null)
-              setNoteText('')
+              closeNoteEditor()
             }
           }}
           autoFocus
           rows={4}
           placeholder="Write a note…"
         />
+        <div className="note-editor-themes">
+          <label className="note-editor-themes-label">Themes</label>
+          <ThemePicker
+            value={noteThemes}
+            onChange={setNoteThemes}
+            allThemes={annot.allThemes}
+            onVocabChange={annot.refreshThemes}
+            idSuffix="note"
+          />
+        </div>
         <div className="note-editor-actions">
           <button className="annot-save-btn" onClick={saveNote}>
             Save
           </button>
-          <button
-            className="annot-cancel-btn"
-            onClick={() => {
-              setNoteEditorState(null)
-              setNoteText('')
-            }}
-          >
+          <button className="annot-cancel-btn" onClick={closeNoteEditor}>
             Cancel
           </button>
         </div>
@@ -1324,6 +1341,9 @@ export default function EpubReader({ item, onBack }: Props) {
           }}
           onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
           onSetColor={annot.setHighlightColor}
+          allThemes={annot.allThemes}
+          onSetThemes={annot.setAnnotationThemes}
+          onVocabChange={annot.refreshThemes}
           onClose={() => setContextMenu(null)}
         />
       )}

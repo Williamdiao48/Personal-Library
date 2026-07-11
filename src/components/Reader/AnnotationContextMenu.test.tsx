@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
+import type { Annotation, AnnotationTheme } from '../../types'
+
+// ThemePicker (rendered by the Themes… view) pulls in the services; stub them.
+const createTheme = vi.fn()
+vi.mock('../../services/annotationsService', () => ({
+  annotationsService: { setThemes: vi.fn().mockResolvedValue(undefined) },
+  annotationThemesService: { create: (name: string) => createTheme(name) },
+}))
+
 import AnnotationContextMenu from './AnnotationContextMenu'
-import type { Annotation } from '../../types'
 
 const annot = (over: Partial<Annotation> = {}): Annotation =>
   ({
@@ -121,5 +129,48 @@ describe('AnnotationContextMenu', () => {
     const props = renderMenu()
     fireEvent.mouseDown(document.body)
     expect(props.onClose).toHaveBeenCalled()
+  })
+})
+
+describe('AnnotationContextMenu — Themes…', () => {
+  const themes: AnnotationTheme[] = [{ id: 't1', name: 'symbolism', created_at: 0 }]
+
+  it('hides the Themes entry when onSetThemes is not provided', () => {
+    renderMenu()
+    expect(screen.queryByRole('button', { name: /^Themes/ })).toBeNull()
+  })
+
+  it('shows Themes… (with a count) and opens the picker seeded with existing themes', () => {
+    renderMenu({
+      annotation: annot({ type: 'highlight', note_text: null, themes }),
+      allThemes: themes,
+      onSetThemes: vi.fn(),
+    })
+    // Count reflects the seeded themes.
+    fireEvent.click(screen.getByRole('button', { name: 'Themes (1)' }))
+    // Picker view: the existing chip + the add input are shown.
+    expect(screen.getByText('symbolism')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Add theme…')).toBeInTheDocument()
+  })
+
+  it('removing a theme in the picker calls onSetThemes with the new set', () => {
+    const onSetThemes = vi.fn()
+    renderMenu({
+      annotation: annot({ type: 'highlight', note_text: null, themes }),
+      allThemes: themes,
+      onSetThemes,
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Themes (1)' }))
+    fireEvent.click(screen.getByLabelText('Remove theme symbolism'))
+    expect(onSetThemes).toHaveBeenCalledWith('a1', [])
+  })
+
+  it('shows Themes… with no count when the annotation has none', () => {
+    renderMenu({
+      annotation: annot({ type: 'highlight', note_text: null, themes: [] }),
+      allThemes: [],
+      onSetThemes: vi.fn(),
+    })
+    expect(screen.getByRole('button', { name: 'Themes…' })).toBeInTheDocument()
   })
 })

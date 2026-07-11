@@ -23,7 +23,8 @@ import { useAnnotations } from '../../hooks/useAnnotations'
 import SearchBar from './SearchBar'
 import AnnotationsPanel from './AnnotationsPanel'
 import BookmarksPanel from './BookmarksPanel'
-import type { Item, ConvertChapter, Annotation } from '../../types'
+import ThemePicker from '../Annotations/ThemePicker'
+import type { Item, ConvertChapter, Annotation, AnnotationTheme } from '../../types'
 import ConvertProgress from './ConvertProgress'
 import '../../styles/epub-reader.css'
 
@@ -545,6 +546,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     initialText?: string
   } | null>(null)
   const [noteText, setNoteText] = useState('')
+  const [noteThemes, setNoteThemes] = useState<AnnotationTheme[]>([])
 
   const annot = useAnnotations({
     itemId: item.id,
@@ -566,23 +568,30 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
 
   function handleAddNote() {
     setNoteText('')
+    setNoteThemes([])
     setNoteEditorState({})
+  }
+
+  function closeNoteEditor() {
+    setNoteEditorState(null)
+    setNoteText('')
+    setNoteThemes([])
   }
 
   async function savePdfNote() {
     if (!noteEditorState) return
     const text = noteText.trim()
     if (!text) {
-      setNoteEditorState(null)
+      closeNoteEditor()
       return
     }
     if (noteEditorState.existingId) {
       await annot.updateNote(noteEditorState.existingId, text)
+      await annot.setAnnotationThemes(noteEditorState.existingId, noteThemes)
     } else {
-      await annot.createNote(currentPageRef.current, text)
+      await annot.createNote(currentPageRef.current, text, undefined, noteThemes)
     }
-    setNoteEditorState(null)
-    setNoteText('')
+    closeNoteEditor()
   }
 
   function handleJumpToAnnotation(annotation: Annotation) {
@@ -1680,7 +1689,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
 
       {/* Note editor modal */}
       {noteEditorState && (
-        <div className="note-editor-overlay" onClick={() => setNoteEditorState(null)}>
+        <div className="note-editor-overlay" onClick={closeNoteEditor}>
           <div className="note-editor-modal" onClick={(e) => e.stopPropagation()}>
             <div className="note-editor-header">
               {noteEditorState.existingId
@@ -1697,25 +1706,28 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
                   savePdfNote()
                 }
                 if (e.key === 'Escape') {
-                  setNoteEditorState(null)
-                  setNoteText('')
+                  closeNoteEditor()
                 }
               }}
               autoFocus
               rows={4}
               placeholder="Write a note…"
             />
+            <div className="note-editor-themes">
+              <label className="note-editor-themes-label">Themes</label>
+              <ThemePicker
+                value={noteThemes}
+                onChange={setNoteThemes}
+                allThemes={annot.allThemes}
+                onVocabChange={annot.refreshThemes}
+                idSuffix="note"
+              />
+            </div>
             <div className="note-editor-actions">
               <button className="annot-save-btn" onClick={savePdfNote}>
                 Save
               </button>
-              <button
-                className="annot-cancel-btn"
-                onClick={() => {
-                  setNoteEditorState(null)
-                  setNoteText('')
-                }}
-              >
+              <button className="annot-cancel-btn" onClick={closeNoteEditor}>
                 Cancel
               </button>
             </div>

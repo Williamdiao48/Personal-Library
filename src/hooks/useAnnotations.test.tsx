@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useAnnotations, clearAnnotationMarks } from './useAnnotations'
-import type { Annotation } from '../types'
+import type { Annotation, AnnotationTheme } from '../types'
 
 vi.mock('../services/annotationsService', () => ({
   annotationsService: {
@@ -9,13 +9,18 @@ vi.mock('../services/annotationsService', () => ({
     create: vi.fn(),
     updateNote: vi.fn().mockResolvedValue(undefined),
     setColor: vi.fn().mockResolvedValue(undefined),
+    setThemes: vi.fn().mockResolvedValue(undefined),
     delete: vi.fn().mockResolvedValue(undefined),
     swapSortOrder: vi.fn().mockResolvedValue(undefined),
   },
+  annotationThemesService: {
+    list: vi.fn().mockResolvedValue([]),
+  },
 }))
-import { annotationsService } from '../services/annotationsService'
+import { annotationsService, annotationThemesService } from '../services/annotationsService'
 
 const svc = annotationsService as unknown as Record<string, ReturnType<typeof vi.fn>>
+const themeSvc = annotationThemesService as unknown as Record<string, ReturnType<typeof vi.fn>>
 
 function ann(over: Partial<Annotation>): Annotation {
   return {
@@ -402,6 +407,61 @@ describe('useAnnotations — reloads on item change', () => {
     rerender({ id: 'item2' })
     await waitFor(() => expect(result.current.annotations.map((a) => a.id)).toEqual(['i2a', 'i2b']))
     expect(svc.getForItem).toHaveBeenCalledWith('item2')
+  })
+})
+
+describe('useAnnotations — themes at creation', () => {
+  const themes: AnnotationTheme[] = [
+    { id: 't1', name: 'symbolism', created_at: 0 },
+    { id: 't2', name: 'time', created_at: 0 },
+  ]
+
+  it('loads the theme vocabulary on mount', async () => {
+    themeSvc.list.mockResolvedValueOnce(themes)
+    const { result } = setup([])
+    await waitFor(() => expect(result.current.allThemes).toHaveLength(2))
+    expect(themeSvc.list).toHaveBeenCalled()
+    expect(result.current.allThemes.map((t) => t.id)).toEqual(['t1', 't2'])
+  })
+
+  it('createNote with themes links them and merges them into state', async () => {
+    const container = document.createElement('div')
+    container.innerHTML = '<p>body text</p>'
+    const { result } = setupWith(container, [])
+    await waitFor(() => expect(svc.getForItem).toHaveBeenCalled())
+    svc.create.mockResolvedValue(ann({ id: 'n1', type: 'note', note_text: 'hi', themes: [] }))
+
+    await act(async () => {
+      await result.current.createNote(0.5, 'hi', undefined, themes)
+    })
+
+    expect(svc.setThemes).toHaveBeenCalledWith('n1', ['t1', 't2'])
+    const created = result.current.annotations.find((a) => a.id === 'n1')
+    expect(created?.themes.map((t) => t.id)).toEqual(['t1', 't2'])
+  })
+
+  it('createNote without themes does not call setThemes', async () => {
+    const container = document.createElement('div')
+    container.innerHTML = '<p>body text</p>'
+    const { result } = setupWith(container, [])
+    await waitFor(() => expect(svc.getForItem).toHaveBeenCalled())
+    svc.create.mockResolvedValue(ann({ id: 'n2', type: 'note', note_text: 'hi', themes: [] }))
+
+    await act(async () => {
+      await result.current.createNote(0.5, 'hi')
+    })
+    expect(svc.setThemes).not.toHaveBeenCalled()
+  })
+
+  it('setAnnotationThemes persists the id set and patches local state', async () => {
+    const { result } = setup([ann({ id: 'a1', type: 'highlight', themes: [] })])
+    await waitFor(() => expect(result.current.annotations).toHaveLength(1))
+
+    await act(async () => {
+      await result.current.setAnnotationThemes('a1', themes)
+    })
+    expect(svc.setThemes).toHaveBeenCalledWith('a1', ['t1', 't2'])
+    expect(result.current.annotations[0].themes.map((t) => t.id)).toEqual(['t1', 't2'])
   })
 })
 

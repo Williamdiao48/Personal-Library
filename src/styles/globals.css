@@ -3313,6 +3313,18 @@ html[data-theme='sepia'] .item-card-refresh-status--error {
   border-color: rgba(255, 255, 255, 0.28);
 }
 
+.note-editor-themes {
+  margin-top: 12px;
+}
+.note-editor-themes-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: #9a9a9a;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .note-editor-actions {
   display: flex;
   gap: 8px;
