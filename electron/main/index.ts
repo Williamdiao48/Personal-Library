@@ -19,6 +19,15 @@ import { registerDiscoverHandlers } from './ipc/discover'
 import { shutdownParseWorker } from './workers/parse-host'
 import { shutdownBackfill } from './recommender/lifecycle'
 
+// Stop WebRTC from reaching out to STUN servers. The hidden capture windows
+// (capture/fetch.ts) load real pages whose bot-detection/fingerprinting scripts
+// open an RTCPeerConnection to stun.l.google.com; Chromium then spams
+// "Failed to resolve address for stun.l.google.com" (ERR_NAME_NOT_RESOLVED) to
+// the log. We never use WebRTC, and disabling non-proxied UDP keeps the API
+// present (so those scripts see no difference) while preventing the STUN traffic.
+// Must be set before app is ready.
+app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp')
+
 // Must be called before app.whenReady()
 protocol.registerSchemesAsPrivileged([
   { scheme: 'library', privileges: { secure: true, standard: true, supportFetchAPI: true } },
