@@ -211,6 +211,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // Discover (recommendations)
   discover: {
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('discover:setEnabled', enabled),
     get: () => ipcRenderer.invoke('discover:get'),
     refresh: () => ipcRenderer.invoke('discover:refresh'),
     more: (excludeSourceIds: string[]) => ipcRenderer.invoke('discover:more', excludeSourceIds),

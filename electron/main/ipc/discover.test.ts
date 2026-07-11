@@ -12,6 +12,8 @@ import type { Recommendation } from '../../../src/types'
 
 const recommendMock = vi.fn<(...a: unknown[]) => Promise<Recommendation[]>>(async () => [])
 const buildTasteMock = vi.fn(() => ({ centroids: [new Float32Array([1])], liked: [] }))
+const armBackfillMock = vi.fn()
+const disarmBackfillMock = vi.fn()
 // Hoisted so the (hoisted) vi.mock factory below can reference it eagerly — a plain
 // top-level const would be read before initialization.
 const { workerEmbedderStub } = vi.hoisted(() => ({
@@ -23,6 +25,10 @@ vi.mock('../recommender/rerank', () => ({
 }))
 vi.mock('../workers/embed-host', () => ({ workerEmbedder: workerEmbedderStub }))
 vi.mock('../recommender/taste', () => ({ buildTaste: () => buildTasteMock() }))
+vi.mock('../recommender/lifecycle', () => ({
+  armBackfill: () => armBackfillMock(),
+  disarmBackfill: () => disarmBackfillMock(),
+}))
 
 import { registerDiscoverHandlers } from './discover'
 
@@ -48,6 +54,20 @@ beforeEach(() => {
   registerDiscoverHandlers()
 })
 afterEach(() => closeTestDb())
+
+describe('discover:setEnabled', () => {
+  it('arms the backfill when enabled', async () => {
+    await invoke('discover:setEnabled', true)
+    expect(armBackfillMock).toHaveBeenCalledTimes(1)
+    expect(disarmBackfillMock).not.toHaveBeenCalled()
+  })
+
+  it('disarms the backfill when disabled', async () => {
+    await invoke('discover:setEnabled', false)
+    expect(disarmBackfillMock).toHaveBeenCalledTimes(1)
+    expect(armBackfillMock).not.toHaveBeenCalled()
+  })
+})
 
 describe('discover:get', () => {
   it('returns null when nothing has been cached yet', async () => {

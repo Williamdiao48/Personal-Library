@@ -13,7 +13,13 @@ const { scheduleBackfill, shutdownEmbedWorker, workerEmbedHost } = vi.hoisted(()
 vi.mock('./backfill', () => ({ scheduleBackfill }))
 vi.mock('../workers/embed-host', () => ({ workerEmbedHost, shutdownEmbedWorker }))
 
-import { armBackfill, triggerBackfill, shutdownBackfill, _resetLifecycle } from './lifecycle'
+import {
+  armBackfill,
+  disarmBackfill,
+  triggerBackfill,
+  shutdownBackfill,
+  _resetLifecycle,
+} from './lifecycle'
 
 beforeEach(() => {
   _resetLifecycle()
@@ -52,5 +58,19 @@ describe('backfill lifecycle', () => {
   it('shutdownBackfill is a no-op if no backfill ever fired', () => {
     shutdownBackfill()
     expect(shutdownEmbedWorker).not.toHaveBeenCalled()
+  })
+
+  it('disarmBackfill tears down the worker and stops further triggers', async () => {
+    armBackfill()
+    await vi.waitFor(() => expect(scheduleBackfill).toHaveBeenCalledTimes(1))
+
+    disarmBackfill()
+    expect(shutdownEmbedWorker).toHaveBeenCalledTimes(1)
+
+    // Disarmed: a subsequent content-change trigger must NOT re-fire a backfill.
+    triggerBackfill()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(scheduleBackfill).toHaveBeenCalledTimes(1)
   })
 })

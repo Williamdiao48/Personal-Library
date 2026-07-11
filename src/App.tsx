@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Routes, Route } from 'react-router-dom'
-import { SettingsProvider } from './contexts/SettingsContext'
+import { SettingsProvider, useSettings } from './contexts/SettingsContext'
+import { discoverService } from './services/discover'
 import { ToastProvider, useToast } from './contexts/ToastContext'
 import { UpdaterProvider, useUpdater } from './contexts/UpdaterContext'
 import LibraryView from './components/Library/LibraryView'
@@ -69,10 +70,23 @@ function UpdaterListener() {
   return null
 }
 
+/** Syncs the renderer-owned `enableDiscover` setting to the main process, which
+ *  gates the background embedding backfill on it (embeddings serve only Discover).
+ *  Must live inside SettingsProvider. */
+function DiscoverBackfillSync() {
+  const { settings } = useSettings()
+  useEffect(() => {
+    if (!window.api?.discover) return
+    void discoverService.setEnabled(settings.enableDiscover)
+  }, [settings.enableDiscover])
+  return null
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
       <SettingsProvider>
+        <DiscoverBackfillSync />
         <UpdaterProvider>
           <ToastProvider>
             <UpdaterListener />

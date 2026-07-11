@@ -38,10 +38,24 @@ export function triggerBackfill(): void {
   fire()
 }
 
-/** Called once at app start: arm triggers and kick the initial backfill pass. */
+/**
+ * Arm triggers and kick the initial backfill pass. Called when Discover is
+ * enabled (the renderer syncs the setting after boot — embeddings exist only to
+ * serve the recommender, so a user who keeps Discover off does no embed work).
+ * Idempotent-ish: re-arming re-fires, but the underlying schedule is debounced.
+ */
 export function armBackfill(): void {
   armed = true
   fire()
+}
+
+/**
+ * Disarm triggers and tear down the embed worker — called when Discover is turned
+ * off so no further embedding runs and the model's memory is released.
+ */
+export function disarmBackfill(): void {
+  armed = false
+  embedHostMod?.shutdownEmbedWorker()
 }
 
 /**

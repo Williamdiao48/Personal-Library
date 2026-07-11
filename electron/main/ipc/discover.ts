@@ -4,6 +4,7 @@ import { recommend } from '../recommender/rerank'
 import { workerEmbedder } from '../workers/embed-host'
 import { buildTaste } from '../recommender/taste'
 import { isHttpUrl } from './capture'
+import { armBackfill, disarmBackfill } from '../recommender/lifecycle'
 import type { Recommendation } from '../../../src/types'
 
 // C5.3 — the Discover IPC seam. Wires the headless recommender engine
@@ -51,6 +52,15 @@ function writeCache(cards: Recommendation[], generatedAt: number): void {
 }
 
 export function registerDiscoverHandlers(): void {
+  // Enable/disable the whole recommender's background work. Settings live in the
+  // renderer's localStorage, so the renderer syncs `enableDiscover` here after boot
+  // (and on toggle). Embeddings exist only to serve Discover, so arming the backfill
+  // is gated on this — Discover off ⇒ no model load, no embed passes.
+  ipcMain.handle('discover:setEnabled', (_e, enabled: boolean): void => {
+    if (enabled) armBackfill()
+    else disarmBackfill()
+  })
+
   // Instant: the last cached picks (no network, no model). null = never run yet.
   ipcMain.handle('discover:get', (): CachedDiscover | null => readCache())
 

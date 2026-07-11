@@ -46,6 +46,12 @@ jobs:
       - name: Rebuild native modules
         run: npx electron-rebuild -f -w better-sqlite3
 
+      # Vendor the embedding model into resources/models (gitignored, not in the
+      # checkout) BEFORE packaging — electron-builder copies it via extraResources.
+      # Without this the published app ships with no model and Discover is dead.
+      - name: Fetch embedding model
+        run: npm run fetch:model
+
       - name: Build
         run: npm run build
 

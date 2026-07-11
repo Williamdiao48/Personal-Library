@@ -17,7 +17,7 @@ import { registerUpdaterHandlers } from './ipc/updater'
 import { registerLogHandlers } from './ipc/log'
 import { registerDiscoverHandlers } from './ipc/discover'
 import { shutdownParseWorker } from './workers/parse-host'
-import { armBackfill, shutdownBackfill } from './recommender/lifecycle'
+import { shutdownBackfill } from './recommender/lifecycle'
 
 // Must be called before app.whenReady()
 protocol.registerSchemesAsPrivileged([
@@ -181,10 +181,10 @@ app.whenReady().then(() => {
 
   createWindow()
 
-  // Kick a background embedding backfill for any missing/stale item vectors
-  // (C2.6). Debounced + off-thread (worker), so it never competes with startup
-  // or blocks the UI; a no-op once everything is embedded.
-  armBackfill()
+  // The embedding backfill is NOT armed here. Embeddings serve only the Discover
+  // recommender, so the renderer arms it (via `discover:setEnabled`) once it has
+  // read the user's `enableDiscover` setting after boot — a user who keeps
+  // Discover off does no model load or embed work.
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

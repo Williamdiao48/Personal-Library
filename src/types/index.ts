@@ -352,6 +352,8 @@ export interface Api {
     writeError: (message: string) => Promise<void>
   }
   discover: {
+    /** Arm/disarm the background embedding backfill (gated on the enableDiscover setting). */
+    setEnabled: (enabled: boolean) => Promise<void>
     /** The last cached picks + when they were generated; null when never run. */
     get: () => Promise<{ cards: Recommendation[]; generatedAt: number } | null>
     /** Run the engine, cache + return the result (with a cold-start flag). */
