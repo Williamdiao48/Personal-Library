@@ -785,20 +785,27 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       .filter(
         (a) => a.position === pageNum && a.rects && (a.type === 'highlight' || a.type === 'note'),
       )
-      .flatMap((a) =>
-        parseRects(a.rects).map((rect, ri) => {
+      .flatMap((a) => {
+        const rects = parseRects(a.rects)
+        const isNote = a.type === 'note'
+        return rects.map((rect, ri) => {
           const box = scaleRectToPx(rect, scale)
+          // Notes read like the HTML/EPUB marks: transparent + dashed underline,
+          // with the ✱ marker on the final rect only (parity with inline marks).
+          const cls = isNote
+            ? `pdf-highlight-rect is-note${ri === rects.length - 1 ? ' is-note-end' : ''}`
+            : 'pdf-highlight-rect'
           return (
             <div
               key={`${a.id}-${ri}`}
-              className={`pdf-highlight-rect${a.type === 'note' ? ' is-note' : ''}`}
+              className={cls}
               data-annotation-id={a.id}
-              data-color={a.color ?? 'yellow'}
+              data-color={isNote ? undefined : (a.color ?? 'yellow')}
               style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
             />
           )
-        }),
-      )
+        })
+      })
   }
 
   // Conversion state
