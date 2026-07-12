@@ -264,6 +264,11 @@ describe('database bring-up', () => {
     expect(colsOf(db, 'annotations')).toContain('color')
   })
 
+  it('annotations.rects exists (migration 27 — PDF highlight geometry)', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'annotations')).toContain('rects')
+  })
+
   // Migration 26 — annotation themes.
   it('annotation_themes / annotation_theme_links have the expected columns', () => {
     const db = openTestDb()

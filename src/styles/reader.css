@@ -131,6 +131,13 @@
   flex-shrink: 0;
 }
 
+/* Per-page stack: canvas + selectable text layer + highlight overlays.
+   In scroll mode .pdf-scroll-page plays this role (already position:relative). */
+.pdf-page-canvas-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
 /* Rendered PDF canvas */
 .pdf-page-outer canvas {
   display: block;
@@ -225,6 +232,90 @@
   box-shadow: 0 4px 32px rgba(0, 0, 0, 0.6);
   width: 100%;
   height: 100%;
+}
+
+/* ── PDF text layer (selectable, transparent) ─────────────────
+   Minimal reimplementation of pdf.js v5's text_layer_builder.css so we don't
+   have to import the whole viewer stylesheet. --scale-factor /
+   --total-scale-factor are set inline per page in buildTextLayer(). */
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 2;
+  --user-unit: 1;
+  --total-scale-factor: calc(var(--scale-factor) * var(--user-unit));
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.textLayer .markedContent {
+  display: contents;
+}
+.textLayer ::selection {
+  background: rgba(120, 150, 255, 0.4);
+}
+.textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+.textLayer.selecting .endOfContent {
+  top: 0;
+}
+
+/* ── PDF highlight / note overlays ────────────────────────────
+   Absolutely-positioned rects (rect × liveScale) over the text layer.
+   pointer-events:none so text selection works everywhere; interaction
+   (right-click / click-to-read) is hit-tested in JS against the stored rects. */
+.pdf-highlight-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+.pdf-highlight-rect {
+  position: absolute;
+  border-radius: 2px;
+  background: rgba(250, 204, 21, 0.4); /* yellow default */
+}
+.pdf-highlight-rect[data-color='green'] {
+  background: rgba(74, 222, 128, 0.4);
+}
+.pdf-highlight-rect[data-color='blue'] {
+  background: rgba(96, 165, 250, 0.4);
+}
+.pdf-highlight-rect[data-color='pink'] {
+  background: rgba(244, 114, 182, 0.4);
+}
+/* Notes get a subtle underline accent so they read differently from highlights */
+.pdf-highlight-rect.is-note {
+  border-bottom: 2px solid rgba(0, 0, 0, 0.35);
 }
 
 /* ── PDF → EPUB conversion modal ───────────────────────────── */

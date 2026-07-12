@@ -70,6 +70,29 @@ describe('annotations IPC', () => {
     expect(a.color).toBeNull()
   })
 
+  it('round-trips PDF highlight geometry (rects JSON), null when omitted', async () => {
+    const item = seedItem(db, {})
+    const withRects = (await invoke('annotations:create', {
+      item_id: item,
+      type: 'highlight',
+      position: 3, // PDF page number
+      selected_text: 'quote',
+      color: 'blue',
+      rects: '[[1,2,3,4],[5,6,7,8]]',
+    })) as any
+    expect(withRects.rects).toBe('[[1,2,3,4],[5,6,7,8]]')
+
+    const list = (await invoke('annotations:getForItem', item)) as any[]
+    expect(list[0].rects).toBe('[[1,2,3,4],[5,6,7,8]]')
+
+    const noRects = (await invoke('annotations:create', {
+      item_id: item,
+      type: 'note',
+      position: 0.5,
+    })) as any
+    expect(noRects.rects).toBeNull()
+  })
+
   it('updateNote edits note text', async () => {
     const item = seedItem(db, {})
     const a = (await invoke('annotations:create', {

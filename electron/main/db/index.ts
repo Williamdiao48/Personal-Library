@@ -9,7 +9,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 26
+export const CURRENT_VERSION = 27
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -239,6 +239,13 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
     );
     CREATE INDEX IF NOT EXISTS idx_ann_theme_links_theme ON annotation_theme_links(theme_id);
   `,
+  // PDF highlight geometry: a nullable JSON array of [x, y, w, h] rectangles in
+  // scale-1 viewport pixels (page top-left origin), so redraw is just rect ×
+  // liveScale — no PDF user-space Y-flip and no text re-matching. NULL for every
+  // non-PDF annotation (HTML/EPUB re-anchor by selected_text). MIGRATIONS only,
+  // never in schema.ts SCHEMA baseline (fresh-install duplicate-column gotcha);
+  // numbered 27 to sit above the shared library.db's max version (26).
+  27: `ALTER TABLE annotations ADD COLUMN rects TEXT DEFAULT NULL;`,
 }
 
 export function initDatabase(): void {

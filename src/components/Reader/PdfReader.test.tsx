@@ -13,6 +13,10 @@ import PdfReader, {
   tryOutlineChapters,
   tryAnnotationChapters,
   detectRunningText,
+  clientRectsToScale1,
+  scaleRectToPx,
+  pointInRects,
+  parseRects,
   type TextItem,
 } from './PdfReader'
 import type { Item } from '../../types'
@@ -447,6 +451,50 @@ describe('PdfReader — convert to EPUB', () => {
     fireEvent.click(screen.getByText('⇄ EPUB'))
     fireEvent.click(screen.getByText('cancel-convert')) // handleCancelConvert
     await waitFor(() => expect(screen.queryByText('CONVERT PROGRESS')).toBeNull())
+  })
+})
+
+describe('PdfReader — highlight geometry helpers', () => {
+  it('clientRectsToScale1 converts client rects to scale-1 px relative to the page origin', () => {
+    // A rect at client (150, 250) size 100×20, page wrapper origin (100, 200), scale 2.
+    const rects = [{ left: 150, top: 250, width: 100, height: 20 }]
+    expect(clientRectsToScale1(rects, 100, 200, 2)).toEqual([[25, 25, 50, 10]])
+  })
+
+  it('clientRectsToScale1 drops sub-pixel slivers and guards a non-positive scale', () => {
+    const rects = [
+      { left: 100, top: 200, width: 0.4, height: 20 }, // too thin
+      { left: 100, top: 200, width: 40, height: 40 },
+    ]
+    expect(clientRectsToScale1(rects, 100, 200, 1)).toEqual([[0, 0, 40, 40]])
+    expect(clientRectsToScale1(rects, 100, 200, 0)).toEqual([])
+  })
+
+  it('scaleRectToPx multiplies a scale-1 rect by the live scale', () => {
+    expect(scaleRectToPx([10, 20, 30, 40], 1.5)).toEqual({
+      left: 15,
+      top: 30,
+      width: 45,
+      height: 60,
+    })
+  })
+
+  it('pointInRects hit-tests a point against scale-1 rects (inclusive edges)', () => {
+    const rects = [
+      [0, 0, 10, 10],
+      [50, 50, 20, 20],
+    ]
+    expect(pointInRects(rects, 5, 5)).toBe(true)
+    expect(pointInRects(rects, 60, 60)).toBe(true)
+    expect(pointInRects(rects, 70, 70)).toBe(true) // right/bottom edge inclusive
+    expect(pointInRects(rects, 30, 30)).toBe(false) // gap between rects
+  })
+
+  it('parseRects tolerates null and malformed JSON', () => {
+    expect(parseRects(null)).toEqual([])
+    expect(parseRects('not json')).toEqual([])
+    expect(parseRects('{"x":1}')).toEqual([]) // object, not array
+    expect(parseRects('[[1,2,3,4]]')).toEqual([[1, 2, 3, 4]])
   })
 })
 

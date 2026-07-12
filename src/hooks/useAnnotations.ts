@@ -27,6 +27,21 @@ export interface UseAnnotationsReturn {
     range?: Range,
     themes?: AnnotationTheme[],
   ) => Promise<void>
+  /** PDF highlight: geometry-anchored (rects in scale-1 viewport px), no DOM mark. */
+  createPdfHighlight: (
+    page: number,
+    rects: number[][],
+    text: string,
+    color?: HighlightColor,
+  ) => Promise<void>
+  /** PDF note: geometry-anchored, optional themes attached at creation. */
+  createPdfNote: (
+    page: number,
+    rects: number[][],
+    text: string,
+    noteText: string,
+    themes?: AnnotationTheme[],
+  ) => Promise<void>
   updateNote: (id: string, noteText: string | null) => Promise<void>
   setHighlightColor: (id: string, color: HighlightColor) => Promise<void>
   deleteAnnotation: (id: string) => Promise<void>
@@ -333,6 +348,62 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
     [itemId, chapterIndex],
   )
 
+  // ── PDF geometry-anchored creation ─────────────────────────────────────────
+  // PDFs render to canvas, so highlights can't be DOM marks. They store rects in
+  // scale-1 viewport px (page top-left origin); PdfReader draws them as overlays.
+  const createPdfHighlight = useCallback(
+    async (
+      page: number,
+      rects: number[][],
+      text: string,
+      color: HighlightColor = DEFAULT_HIGHLIGHT_COLOR,
+    ) => {
+      if (rects.length === 0 || text.trim().length < 1) return
+      const payload: CreateAnnotationPayload = {
+        item_id: itemId,
+        type: 'highlight',
+        chapter_index: null,
+        position: page,
+        selected_text: text,
+        color,
+        rects: JSON.stringify(rects),
+      }
+      const created = await annotationsService.create(payload)
+      setAnnotations((prev) => [...prev, created])
+    },
+    [itemId],
+  )
+
+  const createPdfNote = useCallback(
+    async (
+      page: number,
+      rects: number[][],
+      text: string,
+      noteText: string,
+      themes?: AnnotationTheme[],
+    ) => {
+      const payload: CreateAnnotationPayload = {
+        item_id: itemId,
+        type: 'note',
+        chapter_index: null,
+        position: page,
+        selected_text: text || null,
+        note_text: noteText,
+        rects: rects.length > 0 ? JSON.stringify(rects) : null,
+      }
+      const created = await annotationsService.create(payload)
+      if (themes && themes.length > 0) {
+        await annotationsService.setThemes(
+          created.id,
+          themes.map((t) => t.id),
+        )
+        created.themes = themes
+      }
+      setAnnotations((prev) => [...prev, created])
+    },
+    [itemId],
+  )
+
   const setAnnotationThemes = useCallback(async (id: string, themes: AnnotationTheme[]) => {
     await annotationsService.setThemes(
       id,
@@ -418,6 +489,8 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
     createBookmark,
     createHighlight,
     createNote,
+    createPdfHighlight,
+    createPdfNote,
     updateNote,
     setHighlightColor,
     deleteAnnotation,

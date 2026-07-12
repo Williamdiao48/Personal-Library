@@ -181,6 +181,9 @@ export interface Annotation {
   note_text: string | null
   color: HighlightColor | null // null = legacy highlight → default yellow
   themes: AnnotationTheme[] // attached themes; [] when none (populated by IPC)
+  // PDF-only: JSON array of [x, y, w, h] rects in scale-1 viewport px (page
+  // top-left origin). null for HTML/EPUB (they re-anchor by selected_text).
+  rects: string | null
   created_at: number // unix ms
   sort_order: number | null
 }
@@ -215,6 +218,7 @@ export interface CreateAnnotationPayload {
   context_after?: string | null
   note_text?: string | null
   color?: HighlightColor | null
+  rects?: string | null // PDF-only geometry JSON; see Annotation.rects
 }
 
 export interface BackupExportResult {

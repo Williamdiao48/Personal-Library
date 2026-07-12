@@ -465,6 +465,68 @@ describe('useAnnotations — themes at creation', () => {
   })
 })
 
+describe('useAnnotations — PDF geometry-anchored creation', () => {
+  it('createPdfHighlight builds a rects payload (position=page, chapter=null) and appends', async () => {
+    const { result } = setup([])
+    await waitFor(() => expect(svc.getForItem).toHaveBeenCalled())
+    svc.create.mockResolvedValue(
+      ann({ id: 'ph1', type: 'highlight', position: 3, selected_text: 'quote' }),
+    )
+
+    await act(async () => {
+      await result.current.createPdfHighlight(3, [[1, 2, 3, 4]], 'quote', 'blue')
+    })
+
+    expect(svc.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'highlight',
+        position: 3,
+        chapter_index: null,
+        selected_text: 'quote',
+        color: 'blue',
+        rects: '[[1,2,3,4]]',
+      }),
+    )
+    expect(result.current.annotations.map((a) => a.id)).toContain('ph1')
+  })
+
+  it('createPdfHighlight ignores an empty rect set or blank text', async () => {
+    const { result } = setup([])
+    await waitFor(() => expect(svc.getForItem).toHaveBeenCalled())
+
+    await act(async () => {
+      await result.current.createPdfHighlight(3, [], 'quote', 'blue')
+      await result.current.createPdfHighlight(3, [[1, 2, 3, 4]], '   ', 'blue')
+    })
+    expect(svc.create).not.toHaveBeenCalled()
+  })
+
+  it('createPdfNote stores geometry + selected_text and attaches themes', async () => {
+    const themes: AnnotationTheme[] = [{ id: 't1', name: 'symbolism', created_at: 0 }]
+    const { result } = setup([])
+    await waitFor(() => expect(svc.getForItem).toHaveBeenCalled())
+    svc.create.mockResolvedValue(
+      ann({ id: 'pn1', type: 'note', position: 2, note_text: 'my note' }),
+    )
+
+    await act(async () => {
+      await result.current.createPdfNote(2, [[0, 0, 5, 5]], 'sel', 'my note', themes)
+    })
+
+    expect(svc.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'note',
+        position: 2,
+        selected_text: 'sel',
+        note_text: 'my note',
+        rects: '[[0,0,5,5]]',
+      }),
+    )
+    expect(svc.setThemes).toHaveBeenCalledWith('pn1', ['t1'])
+    expect(result.current.annotations.map((a) => a.id)).toContain('pn1')
+  })
+})
+
 describe('clearAnnotationMarks', () => {
   it('unwraps annotation marks and preserves their text', () => {
     const container = document.createElement('div')

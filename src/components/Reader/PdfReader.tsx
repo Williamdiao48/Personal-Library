@@ -24,7 +24,10 @@ import SearchBar from './SearchBar'
 import AnnotationsPanel from './AnnotationsPanel'
 import BookmarksPanel from './BookmarksPanel'
 import ThemePicker from '../Annotations/ThemePicker'
-import type { Item, ConvertChapter, Annotation, AnnotationTheme } from '../../types'
+import TextSelectionPopup from './TextSelectionPopup'
+import AnnotationContextMenu from './AnnotationContextMenu'
+import NotePopover from './NotePopover'
+import type { Item, ConvertChapter, Annotation, AnnotationTheme, HighlightColor } from '../../types'
 import ConvertProgress from './ConvertProgress'
 import '../../styles/epub-reader.css'
 
@@ -46,6 +49,9 @@ interface PageDim {
   width: number
   height: number
 }
+
+type PdfPage = Awaited<ReturnType<PDFDocumentProxy['getPage']>>
+type PdfViewport = ReturnType<PdfPage['getViewport']>
 
 function loadSavedZoom(): ZoomLevel {
   const n = Number(localStorage.getItem(LS_PDF_ZOOM))
@@ -75,6 +81,64 @@ export function median(nums: number[]): number {
   const s = [...nums].sort((a, b) => a - b)
   const m = Math.floor(s.length / 2)
   return s.length % 2 !== 0 ? s[m] : (s[m - 1] + s[m]) / 2
+}
+
+// ── PDF highlight geometry (pure, unit-tested) ──────────────────────────────
+// Highlights are stored as [x, y, w, h] rects in "scale-1 viewport pixels" (the
+// page's top-left origin at scale 1). Redraw is just rect × liveScale, so the
+// same stored value tracks the text through any zoom/fit without re-matching.
+
+/** Convert DOM client rects (from a Range) into scale-1 px rects relative to a
+ *  page wrapper's top-left. Drops sub-pixel slivers. `originLeft/Top` are the
+ *  wrapper's client-rect origin; `scale` is the page's current render scale. */
+export function clientRectsToScale1(
+  rects: ArrayLike<{ left: number; top: number; width: number; height: number }>,
+  originLeft: number,
+  originTop: number,
+  scale: number,
+): number[][] {
+  const out: number[][] = []
+  if (scale <= 0) return out
+  for (let i = 0; i < rects.length; i++) {
+    const r = rects[i]
+    if (r.width < 1 || r.height < 1) continue
+    out.push([
+      (r.left - originLeft) / scale,
+      (r.top - originTop) / scale,
+      r.width / scale,
+      r.height / scale,
+    ])
+  }
+  return out
+}
+
+/** Position/size for an overlay div: scale-1 rect × liveScale → CSS px. */
+export function scaleRectToPx(
+  rect: number[],
+  scale: number,
+): { left: number; top: number; width: number; height: number } {
+  return {
+    left: rect[0] * scale,
+    top: rect[1] * scale,
+    width: rect[2] * scale,
+    height: rect[3] * scale,
+  }
+}
+
+/** True if scale-1 point (px1x, px1y) falls inside any of the rects. */
+export function pointInRects(rects: number[][], px1x: number, px1y: number): boolean {
+  return rects.some(([x, y, w, h]) => px1x >= x && px1x <= x + w && px1y >= y && px1y <= y + h)
+}
+
+/** Parse the stored rects JSON, tolerating null/garbage → []. */
+export function parseRects(json: string | null): number[][] {
+  if (!json) return []
+  try {
+    const a = JSON.parse(json)
+    return Array.isArray(a) ? a : []
+  } catch {
+    return []
+  }
 }
 
 export interface PdfLine {
@@ -523,6 +587,13 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   const viewModeRef = useRef<ViewMode>(loadSavedViewMode())
   const scrollRestoredRef = useRef(false) // restore position only once per PDF load
 
+  // Text-layer refs (selectable, transparent DOM over each canvas) + the live
+  // TextLayer instances, so we can cancel/rebuild them on re-render.
+  const leftTextLayerRef = useRef<HTMLDivElement>(null)
+  const rightTextLayerRef = useRef<HTMLDivElement>(null)
+  const scrollTextLayerRefs = useRef<Map<number, HTMLDivElement>>(new Map()) // page → textLayer div
+  const textLayerInstances = useRef<Map<number, { cancel: () => void }>>(new Map()) // page → TextLayer
+
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
   const [totalPages, setTotalPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
@@ -544,9 +615,26 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   const [noteEditorState, setNoteEditorState] = useState<{
     existingId?: string
     initialText?: string
+    // Selection-anchored note (from a text selection, not the page-level button):
+    page?: number
+    rects?: number[][]
+    selectedText?: string
   } | null>(null)
   const [noteText, setNoteText] = useState('')
   const [noteThemes, setNoteThemes] = useState<AnnotationTheme[]>([])
+  // Current render scale per page (drives highlight-overlay sizing). Updated
+  // whenever a page renders; a scale change (zoom) re-renders the overlays.
+  const [pageScales, setPageScales] = useState<Record<number, number>>({})
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    annotation: Annotation
+  } | null>(null)
+  const [notePopup, setNotePopup] = useState<{
+    x: number
+    y: number
+    annotation: Annotation
+  } | null>(null)
 
   const annot = useAnnotations({
     itemId: item.id,
@@ -588,6 +676,16 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     if (noteEditorState.existingId) {
       await annot.updateNote(noteEditorState.existingId, text)
       await annot.setAnnotationThemes(noteEditorState.existingId, noteThemes)
+    } else if (noteEditorState.rects && noteEditorState.page) {
+      // Note anchored to a text selection → store geometry like a highlight.
+      await annot.createPdfNote(
+        noteEditorState.page,
+        noteEditorState.rects,
+        noteEditorState.selectedText ?? '',
+        text,
+        noteThemes,
+      )
+      window.getSelection()?.removeAllRanges()
     } else {
       await annot.createNote(currentPageRef.current, text, undefined, noteThemes)
     }
@@ -596,6 +694,111 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
 
   function handleJumpToAnnotation(annotation: Annotation) {
     goTo(annotation.position)
+  }
+
+  // ── Text selection → highlight / note (geometry-anchored) ─────────────────
+  // Map a selection Range to the page it starts on + its rects in scale-1 px.
+  // Client rects that fall on a *different* page (scroll mode) are dropped, so a
+  // cross-page selection anchors to its start page (MVP).
+  function rangeToPageAndRects(range: Range): { page: number; rects: number[][] } | null {
+    const startEl =
+      range.startContainer instanceof HTMLElement
+        ? range.startContainer
+        : (range.startContainer.parentElement ?? null)
+    const wrap = startEl?.closest<HTMLElement>('[data-page]') ?? null
+    if (!wrap) return null
+    const pageNum = Number(wrap.dataset.page)
+    const scale = pageScales[pageNum]
+    if (!pageNum || !scale) return null
+    const origin = wrap.getBoundingClientRect()
+    const onPage = Array.from(range.getClientRects()).filter((r) => {
+      const cy = r.top + r.height / 2
+      return cy >= origin.top - 2 && cy <= origin.bottom + 2
+    })
+    const rects = clientRectsToScale1(onPage, origin.left, origin.top, scale)
+    if (rects.length === 0) return null
+    return { page: pageNum, rects }
+  }
+
+  function handleSelectionHighlight(range: Range, color: HighlightColor) {
+    const info = rangeToPageAndRects(range)
+    if (!info) return
+    annot.createPdfHighlight(info.page, info.rects, range.toString().trim(), color)
+    window.getSelection()?.removeAllRanges()
+  }
+
+  function handleSelectionNote(range: Range) {
+    const info = rangeToPageAndRects(range)
+    if (!info) return
+    setNoteText('')
+    setNoteThemes([])
+    setNoteEditorState({
+      page: info.page,
+      rects: info.rects,
+      selectedText: range.toString().trim(),
+    })
+  }
+
+  // ── Interact with existing highlights (hit-test, since overlays are
+  // pointer-events:none so text selection works everywhere) ─────────────────
+  function annotationAtPagePoint(
+    pageNum: number,
+    clientX: number,
+    clientY: number,
+    wrap: HTMLElement,
+  ) {
+    const scale = pageScales[pageNum]
+    if (!scale) return null
+    const r = wrap.getBoundingClientRect()
+    const px1x = (clientX - r.left) / scale
+    const px1y = (clientY - r.top) / scale
+    // Iterate newest-first so a later highlight on top wins.
+    for (let i = annot.annotations.length - 1; i >= 0; i--) {
+      const a = annot.annotations[i]
+      if (a.position !== pageNum || !a.rects) continue
+      if (pointInRects(parseRects(a.rects), px1x, px1y)) return a
+    }
+    return null
+  }
+
+  function handlePageContextMenu(e: React.MouseEvent<HTMLElement>, pageNum: number) {
+    const hit = annotationAtPagePoint(pageNum, e.clientX, e.clientY, e.currentTarget)
+    if (!hit) return
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY, annotation: hit })
+  }
+
+  function handlePageClick(e: React.MouseEvent<HTMLElement>, pageNum: number) {
+    const sel = window.getSelection()
+    if (sel && !sel.isCollapsed) return // don't hijack an active text selection
+    const hit = annotationAtPagePoint(pageNum, e.clientX, e.clientY, e.currentTarget)
+    if (hit && hit.type === 'note') {
+      setNotePopup({ x: e.clientX, y: e.clientY, annotation: hit })
+    }
+  }
+
+  // Render the highlight/note overlays for one page (scale-1 rects × liveScale).
+  function pageOverlays(pageNum: number) {
+    const scale = pageScales[pageNum]
+    if (!scale) return null
+    return annot.annotations
+      .filter(
+        (a) => a.position === pageNum && a.rects && (a.type === 'highlight' || a.type === 'note'),
+      )
+      .flatMap((a) =>
+        parseRects(a.rects).map((rect, ri) => {
+          const box = scaleRectToPx(rect, scale)
+          return (
+            <div
+              key={`${a.id}-${ri}`}
+              className={`pdf-highlight-rect${a.type === 'note' ? ' is-note' : ''}`}
+              data-annotation-id={a.id}
+              data-color={a.color ?? 'yellow'}
+              style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
+            />
+          )
+        }),
+      )
   }
 
   // Conversion state
@@ -624,6 +827,12 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     return (el: HTMLCanvasElement | null) => {
       if (el) scrollCanvasRefs.current.set(page, el)
       else scrollCanvasRefs.current.delete(page)
+    }
+  }
+  function setScrollTextLayer(page: number) {
+    return (el: HTMLDivElement | null) => {
+      if (el) scrollTextLayerRefs.current.set(page, el)
+      else scrollTextLayerRefs.current.delete(page)
     }
   }
 
@@ -759,6 +968,44 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     }
   }, [pdfDoc]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Build the selectable, transparent pdf.js text layer over a page canvas, and
+  // record the render scale (drives highlight-overlay sizing). Cancels any prior
+  // layer for the page first. pdf.js needs --scale-factor on the container.
+  const buildTextLayer = useCallback(
+    async (
+      pageNum: number,
+      page: PdfPage,
+      container: HTMLDivElement | null,
+      viewport: PdfViewport,
+    ) => {
+      if (!container) return
+      textLayerInstances.current.get(pageNum)?.cancel()
+      container.innerHTML = ''
+      // pdf.js v5 positions text spans from these CSS vars; set both since we
+      // don't import pdf.js's own stylesheet (which normally derives one).
+      container.style.setProperty('--scale-factor', String(viewport.scale))
+      container.style.setProperty('--total-scale-factor', String(viewport.scale))
+      container.style.width = `${Math.round(viewport.width)}px`
+      container.style.height = `${Math.round(viewport.height)}px`
+      const tl = new pdfjsLib.TextLayer({
+        // streamTextContent yields the same items getTextContent does, streamed.
+        textContentSource: page.streamTextContent(),
+        container,
+        viewport,
+      })
+      textLayerInstances.current.set(pageNum, tl)
+      try {
+        await tl.render()
+      } catch {
+        /* cancelled — a newer render superseded this one */
+      }
+      setPageScales((prev) =>
+        prev[pageNum] === viewport.scale ? prev : { ...prev, [pageNum]: viewport.scale },
+      )
+    },
+    [],
+  )
+
   // ── 2. Render the current spread (left + right canvases) ────────
   // Both pages are rendered in parallel onto two separate canvases.
   // Each canvas gets half the viewport width for its fit-to-screen scale.
@@ -786,6 +1033,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     async function renderOnePage(
       pageNum: number,
       canvas: HTMLCanvasElement,
+      textContainer: HTMLDivElement | null,
       setTask: (t: RenderTask | null) => void,
     ) {
       const page = await doc!.getPage(pageNum)
@@ -801,6 +1049,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       try {
         await task.promise
         if (!cancelled) setTask(null)
+        if (!cancelled) await buildTextLayer(pageNum, page, textContainer, vp)
       } catch (err: unknown) {
         const name = err instanceof Error ? err.name : ''
         if (name !== 'RenderingCancelledException') {
@@ -809,12 +1058,12 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       }
     }
 
-    renderOnePage(currentPage, leftC, (t) => {
+    renderOnePage(currentPage, leftC, leftTextLayerRef.current, (t) => {
       leftRenderTaskRef.current = t
     })
     const rightC = rightCanvasRef.current
     if (showRight && rightC) {
-      renderOnePage(currentPage + 1, rightC, (t) => {
+      renderOnePage(currentPage + 1, rightC, rightTextLayerRef.current, (t) => {
         rightRenderTaskRef.current = t
       })
     }
@@ -824,7 +1073,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       leftRenderTaskRef.current?.cancel()
       rightRenderTaskRef.current?.cancel()
     }
-  }, [currentPage, pdfDoc, zoom, renderKey, loading, totalPages])
+  }, [currentPage, pdfDoc, zoom, renderKey, loading, totalPages, buildTextLayer])
 
   // ── 3. ResizeObserver — re-render when the container resizes ────
 
@@ -866,6 +1115,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       try {
         await task.promise
         scrollRenderTasks.current.delete(pageNum)
+        await buildTextLayer(pageNum, page, scrollTextLayerRefs.current.get(pageNum) ?? null, vp)
       } catch (err: unknown) {
         if (err instanceof Error && err.name !== 'RenderingCancelledException') {
           console.error('[PdfReader] scroll render error p', pageNum, err)
@@ -878,6 +1128,11 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       scrollRenderTasks.current.delete(pageNum)
       const canvas = scrollCanvasRefs.current.get(pageNum)
       if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
+      // Tear down the text layer too; overlays stay in the DOM but are off-screen.
+      textLayerInstances.current.get(pageNum)?.cancel()
+      textLayerInstances.current.delete(pageNum)
+      const tl = scrollTextLayerRefs.current.get(pageNum)
+      if (tl) tl.innerHTML = ''
     }
 
     const renderIO = new IntersectionObserver(
@@ -895,12 +1150,15 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
 
     // Capture the stable render-task Map so cleanup doesn't read a changed ref.
     const scrollTasks = scrollRenderTasks.current
+    const textLayers = textLayerInstances.current
     return () => {
       renderIO.disconnect()
       scrollTasks.forEach((t) => t.cancel())
       scrollTasks.clear()
+      textLayers.forEach((t) => t.cancel())
+      textLayers.clear()
     }
-  }, [viewMode, pageDims, renderKey])
+  }, [viewMode, pageDims, renderKey, buildTextLayer])
 
   // ── 4. Navigation ───────────────────────────────────────────────
 
@@ -1609,8 +1867,28 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
           {/* Two-page spread — left canvas always present, right only when there's a page */}
           {ready && viewMode === 'spread' && (
             <div className="pdf-spread">
-              <canvas ref={leftCanvasRef} />
-              {showRight && <canvas ref={rightCanvasRef} />}
+              <div
+                className="pdf-page-canvas-wrap"
+                data-page={currentPage}
+                onContextMenu={(e) => handlePageContextMenu(e, currentPage)}
+                onClick={(e) => handlePageClick(e, currentPage)}
+              >
+                <canvas ref={leftCanvasRef} />
+                <div className="textLayer" ref={leftTextLayerRef} />
+                <div className="pdf-highlight-layer">{pageOverlays(currentPage)}</div>
+              </div>
+              {showRight && (
+                <div
+                  className="pdf-page-canvas-wrap"
+                  data-page={currentPage + 1}
+                  onContextMenu={(e) => handlePageContextMenu(e, currentPage + 1)}
+                  onClick={(e) => handlePageClick(e, currentPage + 1)}
+                >
+                  <canvas ref={rightCanvasRef} />
+                  <div className="textLayer" ref={rightTextLayerRef} />
+                  <div className="pdf-highlight-layer">{pageOverlays(currentPage + 1)}</div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1630,8 +1908,12 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
                     className="pdf-scroll-page"
                     style={{ height: dispH, width: dispW }}
                     data-page={pageNum}
+                    onContextMenu={(e) => handlePageContextMenu(e, pageNum)}
+                    onClick={(e) => handlePageClick(e, pageNum)}
                   >
                     <canvas ref={setScrollCanvas(pageNum)} />
+                    <div className="textLayer" ref={setScrollTextLayer(pageNum)} />
+                    <div className="pdf-highlight-layer">{pageOverlays(pageNum)}</div>
                   </div>
                 )
               })}
@@ -1733,6 +2015,45 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Text-selection popup (highlight swatches + Note) over the text layer */}
+      {ready && (
+        <TextSelectionPopup
+          containerRef={outerRef}
+          clearTrigger={`${currentPage}-${renderKey}-${zoom}-${viewMode}`}
+          onHighlight={handleSelectionHighlight}
+          onNote={handleSelectionNote}
+        />
+      )}
+
+      {/* Right-click an existing highlight → recolor / themes / edit / delete */}
+      {contextMenu && (
+        <AnnotationContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          annotation={contextMenu.annotation}
+          onDelete={(id) => {
+            annot.deleteAnnotation(id)
+            setContextMenu(null)
+          }}
+          onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
+          onSetColor={annot.setHighlightColor}
+          allThemes={annot.allThemes}
+          onSetThemes={annot.setAnnotationThemes}
+          onVocabChange={annot.refreshThemes}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {/* Click a note highlight → read its note */}
+      {notePopup && (
+        <NotePopover
+          x={notePopup.x}
+          y={notePopup.y}
+          annotation={notePopup.annotation}
+          onClose={() => setNotePopup(null)}
+        />
       )}
 
       {/* ── Conversion progress modal ─────────────────────────── */}
