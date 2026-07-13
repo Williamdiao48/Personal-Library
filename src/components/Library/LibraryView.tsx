@@ -2,10 +2,11 @@ import { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } fr
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { libraryService, tagService, collectionService } from '../../services/library'
-import type { Item, Tag, Collection, RefreshResult, CaptureJob, ReadingStatus } from '../../types'
+import type { Item, Tag, Collection, RefreshResult, ReadingStatus } from '../../types'
 import { getEffectiveStatus } from '../../types'
 import { useSettings } from '../../contexts/SettingsContext'
 import { useToast } from '../../contexts/ToastContext'
+import { useCaptureJobs } from '../../contexts/CaptureJobsContext'
 import type { SortBy } from '../../contexts/SettingsContext'
 import ItemCard from './ItemCard'
 import Sidebar from './Sidebar'
@@ -20,6 +21,7 @@ import MultiSelect from '../ui/MultiSelect'
 export default function LibraryView() {
   const { settings, updateSettings } = useSettings()
   const { addToast, updateToast } = useToast()
+  const { captureJobs, startJob, dismissJob } = useCaptureJobs()
 
   const [items, setItems] = useState<Item[]>([])
   const [trashedCount, setTrashedCount] = useState(0)
@@ -42,7 +44,6 @@ export default function LibraryView() {
   const [showBulkCol, setShowBulkCol] = useState(false)
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [bulkDeleteConfirming, setBulkDeleteConfirming] = useState(false)
-  const [captureJobs, setCaptureJobs] = useState<CaptureJob[]>([])
   const [appendModalItem, setAppendModalItem] = useState<Item | null>(null)
 
   const sortBy = settings.defaultSort
@@ -95,52 +96,13 @@ export default function LibraryView() {
   }, [searchQuery])
 
   // ── Capture job management ─────────────────────────────────────
-
-  // Parse "Fetching chapter N of M…" or "Found M chapters…" from progress msg
-  function parseChapterProgress(msg: string): { chapter?: number; total?: number } {
-    const chMatch = /chapter (\d+) of (\d+)/i.exec(msg)
-    if (chMatch) return { chapter: parseInt(chMatch[1]), total: parseInt(chMatch[2]) }
-    const totalMatch = /\b(\d+) chapters?\b/i.exec(msg)
-    if (totalMatch) return { total: parseInt(totalMatch[1]) }
-    return {}
-  }
-
-  function handleJobStarted(jobId: string, url: string) {
-    setCaptureJobs((prev) => [
-      ...prev,
-      {
-        id: jobId,
-        url,
-        status: 'running',
-        msg: 'Starting…',
-        chapter: null,
-        total: null,
-        startedAt: Date.now(),
-      },
-    ])
-  }
-
-  function dismissJob(jobId: string) {
-    setCaptureJobs((prev) => prev.filter((j) => j.id !== jobId))
-  }
-
+  // The job lifecycle (sidebar list + progress/complete/error) is owned globally by
+  // CaptureJobsContext (so a job started from any route, e.g. Discover, is tracked).
+  // Here we only listen for completion to live-refresh THIS view's items list; a cold
+  // navigation back to Library reloads items on mount, so this just handles the case
+  // where a capture finishes while Library is already open.
   useEffect(() => {
-    const offProgress = window.api.onCaptureProgress(({ jobId, msg }) => {
-      setCaptureJobs((prev) =>
-        prev.map((j) => {
-          if (j.id !== jobId) return j
-          const { chapter, total } = parseChapterProgress(msg)
-          return {
-            ...j,
-            msg,
-            chapter: chapter ?? j.chapter,
-            total: total ?? j.total,
-          }
-        }),
-      )
-    })
-
-    const offComplete = window.api.onCaptureComplete(async ({ jobId, result }) => {
+    const offComplete = window.api.onCaptureComplete(async ({ result }) => {
       try {
         const item = await libraryService.getById(result.id)
         if (item) {
@@ -150,27 +112,10 @@ export default function LibraryView() {
           })
         }
       } catch {
-        /* item fetch failing shouldn't break the job indicator */
+        /* item fetch failing shouldn't break anything else */
       }
-
-      // Mark done, auto-dismiss after 4 s
-      setCaptureJobs((prev) =>
-        prev.map((j) => (j.id === jobId ? { ...j, status: 'done', title: result.title } : j)),
-      )
-      setTimeout(() => dismissJob(jobId), 4000)
     })
-
-    const offError = window.api.onCaptureError(({ jobId, error }) => {
-      setCaptureJobs((prev) =>
-        prev.map((j) => (j.id === jobId ? { ...j, status: 'error', error } : j)),
-      )
-    })
-
-    return () => {
-      offProgress()
-      offComplete()
-      offError()
-    }
+    return () => offComplete()
   }, [])
 
   // ── Map builders ──────────────────────────────────────────────
@@ -1235,7 +1180,7 @@ export default function LibraryView() {
             handleCloseModal()
           }}
           onJobStarted={(jobId, url) => {
-            handleJobStarted(jobId, url)
+            startJob(jobId, url)
             handleCloseModal()
           }}
         />
@@ -1285,7 +1230,7 @@ export default function LibraryView() {
           item={appendModalItem}
           onClose={() => setAppendModalItem(null)}
           onJobStarted={(jobId, url) => {
-            handleJobStarted(jobId, url)
+            startJob(jobId, url)
             setAppendModalItem(null)
           }}
         />

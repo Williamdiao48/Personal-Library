@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import LibraryView from './LibraryView'
 import { SettingsProvider } from '../../contexts/SettingsContext'
 import { ToastProvider } from '../../contexts/ToastContext'
+import { CaptureJobsProvider } from '../../contexts/CaptureJobsContext'
 import type { Item } from '../../types'
 
 // Virtualizer → render every row directly.
@@ -87,7 +88,9 @@ function renderLibrary(initialEntries: string[] = ['/'], settings?: Record<strin
     <MemoryRouter initialEntries={initialEntries}>
       <SettingsProvider>
         <ToastProvider>
-          <LibraryView />
+          <CaptureJobsProvider>
+            <LibraryView />
+          </CaptureJobsProvider>
         </ToastProvider>
       </SettingsProvider>
     </MemoryRouter>,
