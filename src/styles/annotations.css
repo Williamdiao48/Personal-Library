@@ -217,3 +217,27 @@
   border-color: var(--accent);
   border-style: solid;
 }
+
+/* Dropdown panel for the theme combobox — reuses the .custom-select-options look
+   (portaled via Headless UI anchor="bottom start", so it escapes modal/menu
+   overflow). It portals to <body>, so it must out-rank the note-editor overlay
+   (z-index 500); the base .custom-select-options z-index of 200 would render it
+   *behind* the compose modal. */
+.theme-combobox-options {
+  min-width: 180px;
+  z-index: 600;
+}
+.theme-combobox-options .custom-select-option {
+  font-size: 12px;
+  padding: 5px 8px;
+}
+/* The "Create …" row reads as an action, tinted with the accent. */
+.theme-create-label {
+  color: var(--accent);
+}
+/* Empty-state row is informational, not selectable. */
+.theme-options-empty {
+  color: var(--text-muted);
+  cursor: default;
+  font-style: italic;
+}

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { AnnotationTheme } from '../../types'
 
 const createTheme = vi.fn()
@@ -35,10 +36,31 @@ describe('ThemePicker (controlled)', () => {
     expect(setThemes).not.toHaveBeenCalled()
   })
 
-  it('creates-or-reuses a theme on Enter and emits it via onChange + onVocabChange', async () => {
+  it('lists the existing vocabulary in the dropdown and adds one on click', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    render(<ThemePicker value={[]} allThemes={themes} onChange={onChange} />)
+    await user.click(screen.getByPlaceholderText('Add theme…'))
+    // Both existing themes are offered without any typing.
+    expect(await screen.findByRole('option', { name: 'symbolism' })).toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: 'time' }))
+    expect(onChange).toHaveBeenCalledWith([themes[1]])
+  })
+
+  it('toggles an already-selected theme off when picked again', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    render(<ThemePicker value={themes} allThemes={themes} onChange={onChange} />)
+    await user.click(screen.getByPlaceholderText('Add theme…'))
+    await user.click(screen.getByRole('option', { name: 'symbolism' }))
+    expect(onChange).toHaveBeenCalledWith([themes[1]]) // symbolism removed
+  })
+
+  it('offers a Create row for a novel name and creates-or-reuses it on pick', async () => {
     createTheme.mockResolvedValue({ id: 't3', name: 'imagery', created_at: 0 })
     const onChange = vi.fn()
     const onVocabChange = vi.fn()
+    const user = userEvent.setup()
     render(
       <ThemePicker
         value={themes}
@@ -47,8 +69,9 @@ describe('ThemePicker (controlled)', () => {
         onVocabChange={onVocabChange}
       />,
     )
-    fireEvent.change(screen.getByPlaceholderText('Add theme…'), { target: { value: 'imagery' } })
-    fireEvent.keyDown(screen.getByPlaceholderText('Add theme…'), { key: 'Enter' })
+    await user.click(screen.getByPlaceholderText('Add theme…'))
+    await user.type(screen.getByPlaceholderText('Add theme…'), 'imagery')
+    await user.click(await screen.findByRole('option', { name: /Create/ }))
 
     await waitFor(() => expect(createTheme).toHaveBeenCalledWith('imagery'))
     await waitFor(() =>
@@ -60,23 +83,14 @@ describe('ThemePicker (controlled)', () => {
     expect(onVocabChange).toHaveBeenCalled()
   })
 
-  it('ignores a duplicate theme name (case-insensitive)', () => {
-    const onChange = vi.fn()
-    render(<ThemePicker value={themes} allThemes={themes} onChange={onChange} />)
-    fireEvent.change(screen.getByPlaceholderText('Add theme…'), { target: { value: 'Symbolism' } })
-    fireEvent.keyDown(screen.getByPlaceholderText('Add theme…'), { key: 'Enter' })
+  it('shows no Create row for a name that already exists (reuse, no duplicate)', async () => {
+    const user = userEvent.setup()
+    render(<ThemePicker value={[]} allThemes={themes} onChange={vi.fn()} />)
+    await user.click(screen.getByPlaceholderText('Add theme…'))
+    await user.type(screen.getByPlaceholderText('Add theme…'), 'Symbolism')
+    // The existing option is offered; no "Create" row, so no duplicate can be made.
+    expect(await screen.findByRole('option', { name: 'symbolism' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /Create/ })).toBeNull()
     expect(createTheme).not.toHaveBeenCalled()
-    expect(onChange).not.toHaveBeenCalled()
-  })
-
-  it('suggests only vocabulary not already selected', () => {
-    const extra: AnnotationTheme = { id: 't9', name: 'motif', created_at: 0 }
-    const { container } = render(
-      <ThemePicker value={[themes[0]]} allThemes={[...themes, extra]} onChange={vi.fn()} />,
-    )
-    const options = Array.from(container.querySelectorAll('datalist option')).map(
-      (o) => (o as HTMLOptionElement).value,
-    )
-    expect(options).toEqual(['time', 'motif']) // 'symbolism' already selected, excluded
   })
 })

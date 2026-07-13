@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import ItemCard from './ItemCard'
 import type { Item, Tag } from '../../types'
 
@@ -116,6 +117,59 @@ describe('ItemCard — tags & author interactions', () => {
     const { props } = renderCard()
     fireEvent.click(screen.getByRole('button', { name: 'Jane Doe' }))
     expect(props.onAuthorClick).toHaveBeenCalledWith('Jane Doe')
+  })
+})
+
+// jsdom reports 0 for scroll/clientHeight, so force the overflow measurement.
+function fakeTagOverflow() {
+  const sh = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+  const ch = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight')
+  Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get: () => 200,
+  })
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+    configurable: true,
+    get: () => 50,
+  })
+  return () => {
+    if (sh) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', sh)
+    if (ch) Object.defineProperty(HTMLElement.prototype, 'clientHeight', ch)
+  }
+}
+
+describe('ItemCard — tag overflow "See all" popover', () => {
+  const manyTags: Tag[] = Array.from({ length: 8 }, (_, i) => ({
+    id: `t${i}`,
+    name: `tag-${i}`,
+    color: '#f00',
+  }))
+
+  it('shows no "See all" control when the tags fit within the cap', () => {
+    renderCard({ tags: [{ id: 't1', name: 'scifi', color: '#f00' }] })
+    expect(screen.queryByRole('button', { name: /See all/ })).toBeNull()
+  })
+
+  it('offers "See all N", opens a popover of every tag full-length, and filters on click', async () => {
+    const restore = fakeTagOverflow()
+    try {
+      const { props } = renderCard({ tags: manyTags })
+      const user = userEvent.setup()
+
+      const seeAll = await screen.findByRole('button', { name: 'See all 8' })
+      await user.click(seeAll)
+
+      // Popover header + one full-length pill per tag (separate from the collapsed list).
+      expect(screen.getByText('Tags (8)')).toBeInTheDocument()
+      const fullPills = Array.from(document.querySelectorAll('.item-card-tag-pill.is-full'))
+      expect(fullPills).toHaveLength(8)
+
+      const target = fullPills.find((p) => p.textContent === 'tag-3') as HTMLElement
+      await user.click(target)
+      expect(props.onTagClick).toHaveBeenCalledWith('t3')
+    } finally {
+      restore()
+    }
   })
 })
 

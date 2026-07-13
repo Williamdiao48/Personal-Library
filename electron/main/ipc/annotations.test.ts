@@ -161,7 +161,10 @@ describe('annotation themes + getAll', () => {
     const t2 = (await invoke('annotationThemes:create', 'symbolism')) as any
     expect(t2.id).toBe(t1.id) // reused, not duplicated
     const list = (await invoke('annotationThemes:list')) as any[]
-    expect(list.map((t) => t.name)).toEqual(['Symbolism'])
+    // The DB also carries the migration-28 preset vocabulary; assert our theme
+    // appears exactly once (case-insensitive create reuses, never duplicates).
+    expect(list.filter((t) => t.name === 'Symbolism')).toHaveLength(1)
+    expect(list.some((t) => t.name === 'symbolism')).toBe(false)
   })
 
   it('setThemes attaches themes that surface on getForItem, and is a replace', async () => {

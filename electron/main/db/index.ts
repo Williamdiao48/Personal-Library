@@ -9,7 +9,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 27
+export const CURRENT_VERSION = 28
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -246,6 +246,25 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   // never in schema.ts SCHEMA baseline (fresh-install duplicate-column gotcha);
   // numbered 27 to sit above the shared library.db's max version (26).
   27: `ALTER TABLE annotations ADD COLUMN rects TEXT DEFAULT NULL;`,
+  // Seed a small starter vocabulary of common literary themes so the theme picker
+  // is useful on first run instead of empty. INSERT OR IGNORE on the UNIQUE name
+  // makes this idempotent + non-destructive: a user who already coined "Love"
+  // keeps their row, and presets they later delete stay gone (migrations run
+  // once). Presets are ordinary rows (renamable / deletable) — no is_preset flag.
+  // annotation_themes exists by now (created in migration 26).
+  28: `
+    INSERT OR IGNORE INTO annotation_themes (id, name, created_at) VALUES
+      ('preset-identity',      'Identity',       0),
+      ('preset-love',          'Love',           0),
+      ('preset-power',         'Power',          0),
+      ('preset-coming-of-age', 'Coming of age',  0),
+      ('preset-mortality',     'Mortality',      0),
+      ('preset-freedom',       'Freedom',        0),
+      ('preset-justice',       'Justice',        0),
+      ('preset-family',        'Family',         0),
+      ('preset-loss-grief',    'Loss & grief',   0),
+      ('preset-good-vs-evil',  'Good vs evil',   0);
+  `,
 }
 
 export function initDatabase(): void {

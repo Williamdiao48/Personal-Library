@@ -1,8 +1,17 @@
-import { useState, useRef, useEffect, memo } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, memo } from 'react'
+import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react'
 import type { Item, Tag, RefreshResult, ReadingStatus } from '../../types'
 import { getEffectiveStatus } from '../../types'
 import { libraryService } from '../../services/library'
 import StarRating from '../ui/StarRating'
+
+// Collapsed hover overlay shows this many rows of tag pills before "See all …".
+// The overlay's max-height is derived from these so the cap lives in one place
+// (pill height + gap mirror the .item-card-tag-pill / .item-card-tag-list CSS).
+const TAG_ROWS_SHOWN = 3
+const TAG_PILL_HEIGHT = 18
+const TAG_ROW_GAP = 4
+const TAG_LIST_MAX_HEIGHT = TAG_ROWS_SHOWN * TAG_PILL_HEIGHT + (TAG_ROWS_SHOWN - 1) * TAG_ROW_GAP
 
 const STATUS_LABELS: Record<ReadingStatus, string> = {
   unread: 'Unread',
@@ -95,6 +104,7 @@ function ItemCard({
   const [titleEditing, setTitleEditing] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [tagsOverflow, setTagsOverflow] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const statusMenuRef = useRef<HTMLDivElement>(null)
   const tagsRef = useRef<HTMLDivElement>(null)
@@ -145,6 +155,19 @@ function ItemCard({
   function cancelAuthorEdit() {
     setAuthorEditing(false)
   }
+
+  // The collapsed overlay is capped to TAG_ROWS_SHOWN rows (CSS). Detect when the
+  // full tag list exceeds that so we can offer "See all …". Re-measures on tag
+  // changes and on resize (card width drives how many pills fit per row).
+  useLayoutEffect(() => {
+    const el = tagsRef.current
+    if (!el) return
+    const measure = () => setTagsOverflow(el.scrollHeight > el.clientHeight + 1)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [tags])
 
   // Close dropdowns when clicking outside them
   useEffect(() => {
@@ -236,22 +259,71 @@ function ItemCard({
           <div className="item-card-cover-placeholder">{item.title[0]?.toUpperCase() ?? '?'}</div>
         )}
         {tags.length > 0 && (
-          <div className="item-card-tag-overlay" ref={tagsRef}>
-            {tags.map((t) => (
-              <button
-                key={t.id}
-                className="item-card-tag-pill"
-                title={`Filter by ${t.name}`}
-                style={{ '--pill-color': t.color } as React.CSSProperties}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (!e.shiftKey) onTagClick(t.id)
-                }}
-              >
-                {t.name}
-              </button>
-            ))}
-          </div>
+          <Popover>
+            {({ open }) => (
+              // `open` pins the overlay up while the popover is showing, so moving
+              // the mouse off the card (onto the portaled panel) doesn't slide the
+              // overlay — and its anchor button — back down.
+              <div className={`item-card-tag-overlay${open ? ' pinned' : ''}`}>
+                <div
+                  className="item-card-tag-list"
+                  ref={tagsRef}
+                  style={{ maxHeight: TAG_LIST_MAX_HEIGHT }}
+                >
+                  {tags.map((t) => (
+                    <button
+                      key={t.id}
+                      className="item-card-tag-pill"
+                      title={`Filter by ${t.name}`}
+                      style={{ '--pill-color': t.color } as React.CSSProperties}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (!e.shiftKey) onTagClick(t.id)
+                      }}
+                    >
+                      <span className="item-card-tag-label">{t.name}</span>
+                    </button>
+                  ))}
+                </div>
+                {tagsOverflow && (
+                  <>
+                    <PopoverButton
+                      className="item-card-tag-more"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      See all {tags.length}
+                    </PopoverButton>
+                    <PopoverPanel anchor="bottom start" className="item-card-tag-popover">
+                      {({ close }) => (
+                        <>
+                          <div className="item-card-tag-popover-head">Tags ({tags.length})</div>
+                          <div className="item-card-tag-popover-list">
+                            {tags.map((t) => (
+                              <button
+                                key={t.id}
+                                className="item-card-tag-pill is-full"
+                                title={`Filter by ${t.name}`}
+                                style={{ '--pill-color': t.color } as React.CSSProperties}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (!e.shiftKey) {
+                                    onTagClick(t.id)
+                                    close()
+                                  }
+                                }}
+                              >
+                                {t.name}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </PopoverPanel>
+                  </>
+                )}
+              </div>
+            )}
+          </Popover>
         )}
       </div>
 

@@ -269,6 +269,24 @@ describe('database bring-up', () => {
     expect(colsOf(db, 'annotations')).toContain('rects')
   })
 
+  it('seeds starter preset themes (migration 28) and is idempotent', () => {
+    const db = openTestDb()
+    const names = (
+      db.prepare('SELECT name FROM annotation_themes ORDER BY name').all() as {
+        name: string
+      }[]
+    ).map((r) => r.name)
+    expect(names).toEqual(
+      expect.arrayContaining(['Identity', 'Love', 'Power', 'Coming of age', 'Good vs evil']),
+    )
+    const count = (db.prepare('SELECT COUNT(*) n FROM annotation_themes').get() as { n: number }).n
+    // Re-running bring-up must not duplicate the presets (INSERT OR IGNORE on UNIQUE name).
+    bringUpSchema(db)
+    expect((db.prepare('SELECT COUNT(*) n FROM annotation_themes').get() as { n: number }).n).toBe(
+      count,
+    )
+  })
+
   // Migration 26 — annotation themes.
   it('annotation_themes / annotation_theme_links have the expected columns', () => {
     const db = openTestDb()
