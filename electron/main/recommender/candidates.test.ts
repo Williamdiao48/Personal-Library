@@ -215,6 +215,27 @@ describe('fetchCandidates', () => {
     expect(searchCalls()).toHaveLength(2)
   })
 
+  it('a Refresh (soft-floor cfg) re-fetches search the default TTL would still serve', async () => {
+    // Aged past the 2 h soft floor but inside the 7 d hard TTL: normal read serves
+    // cache; a fresh Refresh (soft-floor cfg) re-queries. Description TTL is untouched.
+    stubFetch(
+      [okJson({ docs: [doc({ key: '/works/A' })] }), okJson({ docs: [doc({ key: '/works/A' })] })],
+      noDescriptions,
+    )
+    const now = 1_000_000
+    await fetchCandidates([query('subject:"X"')], { now })
+    const aged = now + CANDIDATES.SOFT_FLOOR_MS + 1
+
+    await fetchCandidates([query('subject:"X"')], { now: aged }) // default TTL → cache hit
+    expect(searchCalls()).toHaveLength(1)
+
+    await fetchCandidates([query('subject:"X"')], {
+      now: aged,
+      cfg: { ...CANDIDATES, CACHE_TTL_MS: CANDIDATES.SOFT_FLOOR_MS },
+    })
+    expect(searchCalls()).toHaveLength(2) // re-queried
+  })
+
   // ── book descriptions (the OpenLibrary N+1) ───────────────────────────────────
 
   it('enriches each book candidate with its work description and caches it per-work', async () => {

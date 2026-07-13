@@ -9,10 +9,17 @@ import type { LikedItem } from './taste'
 // Candidate[]). Sources are injected into recommend(), so the orchestrator tests
 // stub them and never touch the network.
 
+/** Per-call fetch options. `fresh` = a user-initiated Refresh: the source uses its
+ *  shorter SOFT_FLOOR_MS as the effective cache-staleness threshold instead of its
+ *  hard TTL, so an aged pool re-scrapes. Omitted/false = serve cache up to the TTL. */
+export interface FetchOpts {
+  fresh?: boolean
+}
+
 export interface CandidateSource {
   name: SourceName
   /** Turn the liked items into this catalog's candidates. Must resolve to [] on failure. */
-  fetch(liked: LikedItem[]): Promise<Candidate[]>
+  fetch(liked: LikedItem[], opts?: FetchOpts): Promise<Candidate[]>
 }
 
 /**

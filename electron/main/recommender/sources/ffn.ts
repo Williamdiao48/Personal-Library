@@ -2,7 +2,7 @@ import { JSDOM } from 'jsdom'
 import { fetchPagesSequential } from '../../capture/fetch'
 import { classifyFfnMetaLine } from '../../capture/sites/ffnet'
 import type { LikedItem } from '../taste'
-import type { CandidateSource } from '../candidateSource'
+import type { CandidateSource, FetchOpts } from '../candidateSource'
 import { CANDIDATE_TEXT_VERSION, type Candidate } from '../candidates'
 import { buildTasteSeeds, type TasteSeeds } from '../tasteSeeds'
 import { readCandidateCache, writeCandidateCache } from '../candidateCache'
@@ -20,7 +20,8 @@ export const FFN_SOURCE = {
   EXTRA_TERMS: 2, // top freeform/genre terms folded into every query
   MAX_SUBJECTS_PER_BLURB: 10,
   MAX_CANDIDATES: 40,
-  CACHE_TTL_MS: 14 * 24 * 60 * 60 * 1000, // 14 days — FFN is costly, cache hard
+  CACHE_TTL_MS: 14 * 24 * 60 * 60 * 1000, // 14 days — FFN is costly, cache hard (ceiling)
+  SOFT_FLOOR_MS: 24 * 60 * 60 * 1000, // 24 h — a Refresh only re-scrapes the CF window once a day
   REQUEST_DELAY_MS: 1200, // polite delay between pages in the shared CF window
 }
 
@@ -174,9 +175,11 @@ export async function fetchFfnCandidates(
 
 export const ffnSource: CandidateSource = {
   name: 'ffn',
-  async fetch(liked: LikedItem[]): Promise<Candidate[]> {
+  async fetch(liked: LikedItem[], opts: FetchOpts = {}): Promise<Candidate[]> {
     const queries = buildFfnQueries(buildTasteSeeds(liked))
     if (queries.length === 0) return []
-    return fetchFfnCandidates(queries)
+    // A Refresh tightens the effective TTL to the soft floor so an aged pool re-scrapes.
+    const cfg = opts.fresh ? { ...FFN_SOURCE, CACHE_TTL_MS: FFN_SOURCE.SOFT_FLOOR_MS } : FFN_SOURCE
+    return fetchFfnCandidates(queries, { cfg })
   },
 }

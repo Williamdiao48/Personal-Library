@@ -1,7 +1,7 @@
 import { JSDOM } from 'jsdom'
 import { fetchPage } from '../../capture/fetch'
 import type { LikedItem } from '../taste'
-import type { CandidateSource } from '../candidateSource'
+import type { CandidateSource, FetchOpts } from '../candidateSource'
 import { CANDIDATE_TEXT_VERSION, type Candidate } from '../candidates'
 import {
   buildAo3RawSeeds,
@@ -33,7 +33,8 @@ export const AO3_SOURCE = {
   REQUEST_DELAY_MS: 500, // polite delay between real fetches (AO3 is volunteer-run)
   MAX_SUBJECTS_PER_BLURB: 12, // cap the tags folded into a candidate's embed text
   MAX_CANDIDATES: 80, // cap the merged/deduped set
-  CACHE_TTL_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
+  CACHE_TTL_MS: 7 * 24 * 60 * 60 * 1000, // 7 days — hard ceiling (serve cache up to here)
+  SOFT_FLOOR_MS: 2 * 60 * 60 * 1000, // 2 h — a Refresh re-scrapes once the pool is older than this
 }
 
 /** A single AO3 search: the fully-keyed `work_search[...]` fields (minus `page`). */
@@ -220,11 +221,13 @@ export async function fetchAo3Candidates(
 
 export const ao3Source: CandidateSource = {
   name: 'ao3',
-  async fetch(liked: LikedItem[]): Promise<Candidate[]> {
+  async fetch(liked: LikedItem[], opts: FetchOpts = {}): Promise<Candidate[]> {
     // Resolve FFN-abbreviated tags → canonical AO3 vocab (cached) before querying.
     const seeds = await resolveAo3Seeds(buildAo3RawSeeds(liked))
     const queries = buildAo3Queries(seeds, buildLengthProfile(liked))
     if (queries.length === 0) return []
-    return fetchAo3Candidates(queries)
+    // A Refresh tightens the effective TTL to the soft floor so an aged pool re-scrapes.
+    const cfg = opts.fresh ? { ...AO3_SOURCE, CACHE_TTL_MS: AO3_SOURCE.SOFT_FLOOR_MS } : AO3_SOURCE
+    return fetchAo3Candidates(queries, { cfg })
   },
 }

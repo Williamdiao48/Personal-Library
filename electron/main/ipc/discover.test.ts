@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { invoke, resetIpc, shell } from '../../../test/stubs/electron'
-import { openTestDb, closeTestDb } from '../../../test/db/harness'
+import { openTestDb, closeTestDb, seedItem, type TestDb } from '../../../test/db/harness'
 import { get } from '../db'
 import type { Recommendation } from '../../../src/types'
 
@@ -45,12 +45,13 @@ const rec = (over: Partial<Recommendation> = {}): Recommendation => ({
   ...over,
 })
 
+let db: TestDb
 beforeEach(() => {
   resetIpc()
   vi.clearAllMocks()
   recommendMock.mockResolvedValue([])
   buildTasteMock.mockReturnValue({ centroids: [new Float32Array([1])], liked: [] })
-  openTestDb()
+  db = openTestDb()
   registerDiscoverHandlers()
 })
 afterEach(() => closeTestDb())
@@ -88,6 +89,23 @@ describe('discover:get', () => {
     expect(typeof cached.generatedAt).toBe('number')
     expect(recommendMock).not.toHaveBeenCalled() // get never runs the engine
   })
+
+  it('drops a cached card the user has since added to the library (no reappearance)', async () => {
+    const keep = rec({ title: 'Keep', sourceId: 'https://archiveofourown.org/works/keep' })
+    const added = rec({ title: 'Added Fic', sourceId: 'https://archiveofourown.org/works/added' })
+    recommendMock.mockResolvedValue([keep, added])
+    await invoke('discover:refresh')
+
+    // The user adds that fic to the library — captured with its source page as source_url.
+    seedItem(db, {
+      title: 'Added Fic',
+      author: 'Ficcer',
+      source_url: 'https://archiveofourown.org/works/added',
+    })
+
+    const out = (await invoke('discover:get')) as { cards: Recommendation[] }
+    expect(out.cards.map((c) => c.title)).toEqual(['Keep']) // 'Added Fic' reconciled out
+  })
 })
 
 describe('discover:refresh', () => {
@@ -113,8 +131,39 @@ describe('discover:refresh', () => {
     const row = get<{ cards_json: string }>(`SELECT cards_json FROM discover_cache WHERE id = 1`)
     expect(JSON.parse(row!.cards_json)[0].title).toBe('Fresh')
     // Requests a whole page (not the bare TOP_K=12) — widening is near-free.
-    const optsArg = recommendMock.mock.calls[0][3] as { limit?: number }
+    const optsArg = recommendMock.mock.calls[0][3] as {
+      limit?: number
+      excludeIds?: string[]
+      fresh?: boolean
+    }
     expect(optsArg.limit).toBeGreaterThan(12)
+    expect(optsArg.fresh).toBe(true) // a Refresh is a "fresh" fetch (soft-floor gradient)
+    expect(optsArg.excludeIds).toEqual([]) // nothing on screen → no rotation exclusions
+  })
+
+  it('forwards the on-screen ids as excludeIds so a still-warm refresh rotates', async () => {
+    recommendMock.mockResolvedValue([rec({ title: 'Next', sourceId: 'id-next' })])
+    await invoke('discover:refresh', ['id-1', 'id-2'])
+    const opts = recommendMock.mock.calls[0][3] as { excludeIds?: string[]; fresh?: boolean }
+    expect(opts.excludeIds).toEqual(['id-1', 'id-2'])
+    expect(opts.fresh).toBe(true)
+  })
+
+  it('wraps to the top (retries without excludeIds) when the rotated pool is exhausted', async () => {
+    recommendMock.mockResolvedValueOnce([]) // excluded pass: nothing left — end of pool
+    recommendMock.mockResolvedValueOnce([rec({ title: 'Top', sourceId: 'id-top' })]) // wrap
+    const out = (await invoke('discover:refresh', ['id-1'])) as { cards: Recommendation[] }
+    expect(out.cards.map((c) => c.title)).toEqual(['Top'])
+    expect(recommendMock).toHaveBeenCalledTimes(2)
+    const wrapOpts = recommendMock.mock.calls[1][3] as { excludeIds?: string[] }
+    expect(wrapOpts.excludeIds).toEqual([]) // wrapped: exclusions cleared
+  })
+
+  it('does not wrap when the refresh had no exclusions to begin with', async () => {
+    recommendMock.mockResolvedValue([]) // genuinely empty (e.g. no candidates found)
+    const out = (await invoke('discover:refresh', [])) as { cards: Recommendation[] }
+    expect(out.cards).toEqual([])
+    expect(recommendMock).toHaveBeenCalledTimes(1) // no wrap retry
   })
 
   it('short-circuits on a cold-start library — no engine call, coldStart true', async () => {

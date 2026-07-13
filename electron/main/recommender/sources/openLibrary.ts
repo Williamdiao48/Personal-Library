@@ -1,9 +1,9 @@
 import { all } from '../../db'
 import type { LikedItem } from '../taste'
-import type { CandidateSource } from '../candidateSource'
+import type { CandidateSource, FetchOpts } from '../candidateSource'
 import type { Candidate } from '../candidates'
 import { buildSeedQueries, type SeedSource } from '../seedQueries'
-import { fetchCandidates } from '../candidates'
+import { fetchCandidates, CANDIDATES } from '../candidates'
 
 // F4 — the OpenLibrary (published-books) candidate source. Wraps the Chunk-4 path
 // unchanged: join the liked items to their author + manual library tags, build the
@@ -54,9 +54,13 @@ function loadSeedSources(liked: LikedItem[]): SeedSource[] {
 
 export const openLibrarySource: CandidateSource = {
   name: 'book',
-  async fetch(liked: LikedItem[]): Promise<Candidate[]> {
+  async fetch(liked: LikedItem[], opts: FetchOpts = {}): Promise<Candidate[]> {
     const queries = buildSeedQueries(loadSeedSources(liked))
     if (queries.length === 0) return []
-    return fetchCandidates(queries)
+    // A Refresh tightens the search-cache TTL to the soft floor so aged results
+    // re-query; the description cache (DESCRIPTION_CACHE_TTL_MS) is left untouched —
+    // a book's blurb is recipe-independent and shouldn't churn on a refresh.
+    const cfg = opts.fresh ? { ...CANDIDATES, CACHE_TTL_MS: CANDIDATES.SOFT_FLOOR_MS } : CANDIDATES
+    return fetchCandidates(queries, { cfg })
   },
 }

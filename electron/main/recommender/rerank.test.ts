@@ -406,6 +406,24 @@ describe('recommend', () => {
     expect(out.map((c) => c.sourceId)).toEqual(['/works/C2'])
   })
 
+  it('forwards opts.fresh to every source (the Refresh soft-floor signal)', async () => {
+    seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
+    const seen: Array<{ fresh?: boolean } | undefined> = []
+    const src: CandidateSource = {
+      name: 'book',
+      fetch: async (_liked, opts) => {
+        seen.push(opts)
+        return [cand({ title: 'One', author: 'A', sourceId: '/works/C1', source: 'book' })]
+      },
+    }
+    await recommend(stubEmbedder, [src], undefined, { fresh: true })
+    expect(seen).toEqual([{ fresh: true }])
+
+    seen.length = 0
+    await recommend(stubEmbedder, [src]) // default read → not a fresh refresh
+    expect(seen).toEqual([{ fresh: undefined }])
+  })
+
   it("folds a fic's description (summary) into the text it embeds", async () => {
     seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
     const seen: string[] = []

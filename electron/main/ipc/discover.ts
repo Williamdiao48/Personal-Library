@@ -1,6 +1,7 @@
 import { ipcMain, shell } from 'electron'
-import { get, run } from '../db'
+import { all, get, run } from '../db'
 import { recommend } from '../recommender/rerank'
+import { candidateKey } from '../recommender/candidates'
 import { workerEmbedder } from '../workers/embed-host'
 import { buildTaste } from '../recommender/taste'
 import { isHttpUrl } from './capture'
@@ -42,6 +43,36 @@ function readCache(): CachedDiscover | null {
   }
 }
 
+/**
+ * Title|author keys + source URLs of every owned (non-deleted) library item. A
+ * cached card matching one has since been added to the library (from Discover or a
+ * normal capture), so it's dropped on read — otherwise the stale rec reappears every
+ * time Discover is reopened even though a refresh would already exclude it. Uses the
+ * same `candidateKey` normalization the recommender's own exclusion does.
+ */
+function ownedExclusions(): { keys: Set<string>; ids: Set<string> } {
+  const keys = new Set<string>()
+  const ids = new Set<string>()
+  for (const r of all<{ title: string; author: string | null; source_url: string | null }>(
+    `SELECT title, author, source_url FROM items WHERE deleted_at IS NULL`,
+  )) {
+    keys.add(candidateKey(r.title, r.author))
+    if (r.source_url) ids.add(r.source_url)
+  }
+  return { keys, ids }
+}
+
+/** The cached cards with any now-owned item filtered out (null cache → null). */
+function readReconciledCache(): CachedDiscover | null {
+  const cached = readCache()
+  if (!cached) return null
+  const { keys, ids } = ownedExclusions()
+  const visible = cached.cards.filter(
+    (c) => !keys.has(candidateKey(c.title, c.author)) && !ids.has(c.sourceId),
+  )
+  return visible.length === cached.cards.length ? cached : { ...cached, cards: visible }
+}
+
 /** Upsert the single cache row. */
 function writeCache(cards: Recommendation[], generatedAt: number): void {
   run(
@@ -61,8 +92,9 @@ export function registerDiscoverHandlers(): void {
     else disarmBackfill()
   })
 
-  // Instant: the last cached picks (no network, no model). null = never run yet.
-  ipcMain.handle('discover:get', (): CachedDiscover | null => readCache())
+  // Instant: the last cached picks (no network, no model), reconciled against the
+  // library so a card the user has since added doesn't reappear. null = never run yet.
+  ipcMain.handle('discover:get', (): CachedDiscover | null => readReconciledCache())
 
   // The only path that runs the engine. `coldStart` (empty taste centroids) is
   // computed up front so the UI can show "learn your taste" rather than a bare
@@ -72,12 +104,21 @@ export function registerDiscoverHandlers(): void {
   // the UI.
   ipcMain.handle(
     'discover:refresh',
-    async (): Promise<{ cards: Recommendation[]; generatedAt: number; coldStart: boolean }> => {
+    async (
+      _e,
+      excludeSourceIds: string[] = [],
+    ): Promise<{ cards: Recommendation[]; generatedAt: number; coldStart: boolean }> => {
       const taste = buildTaste()
       const coldStart = taste.centroids.length === 0
-      const cards = coldStart
-        ? []
-        : await recommend(workerEmbedder, undefined, taste, { limit: DISCOVER_POOL })
+      // `fresh: true` lets each source re-scrape once its pool is past the soft floor
+      // (the "walking gradient"); `excludeIds` = the feed currently on screen, so a
+      // still-warm refresh ROTATES to the next-best slice instead of repeating.
+      const opts = { limit: DISCOVER_POOL, excludeIds: excludeSourceIds, fresh: true }
+      let cards = coldStart ? [] : await recommend(workerEmbedder, undefined, taste, opts)
+      // Exhausted the whole ranked pool (rotated past the end) → wrap to the top.
+      if (!coldStart && cards.length === 0 && excludeSourceIds.length > 0) {
+        cards = await recommend(workerEmbedder, undefined, taste, { ...opts, excludeIds: [] })
+      }
       const generatedAt = Date.now()
       writeCache(cards, generatedAt)
       return { cards, generatedAt, coldStart }

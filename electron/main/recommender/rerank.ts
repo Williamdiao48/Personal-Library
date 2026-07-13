@@ -296,12 +296,16 @@ function loadLibrarySnapshot(): LibrarySnapshot {
  * ~24); `opts.excludeIds` adds sourceIds to drop **before** scoring — Discover's
  * "load more" passes the cards already shown so a paged fetch returns the *next*
  * best candidates rather than repeating. Both default to the single-page behavior.
+ *
+ * `opts.fresh` marks a user-initiated Refresh: each source uses its shorter
+ * SOFT_FLOOR_MS (instead of its hard cache TTL) as the staleness threshold, so an
+ * aged candidate pool re-scrapes cheap→expensive as it ages. Omitted ⇒ serve cache.
  */
 export async function recommend(
   embedder: Embedder,
   sources: CandidateSource[] = defaultSources(),
   taste: TasteResult = buildTaste(),
-  opts: { limit?: number; excludeIds?: readonly string[] } = {},
+  opts: { limit?: number; excludeIds?: readonly string[]; fresh?: boolean } = {},
 ): Promise<Recommendation[]> {
   const limit = opts.limit ?? RERANK.TOP_K
   if (taste.centroids.length === 0) return [] // cold start — no taste, no recs (§8)
@@ -326,7 +330,9 @@ export async function recommend(
   // FFN's browser fetch). `allSettled` keeps the "one source down doesn't sink the
   // batch" guarantee, and results stay in `sources` order so the union's fanfic-first
   // tie-break is unchanged.
-  const settled = await Promise.allSettled(sources.map((s) => s.fetch(taste.liked)))
+  const settled = await Promise.allSettled(
+    sources.map((s) => s.fetch(taste.liked, { fresh: opts.fresh })),
+  )
   const pools: Candidate[][] = settled.map((r) => (r.status === 'fulfilled' ? r.value : []))
   const fetched = unionCandidates(pools)
   if (fetched.length === 0) return [] // no tags/authors to search on, or all sources empty
