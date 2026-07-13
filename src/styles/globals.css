@@ -3233,8 +3233,11 @@ html[data-theme='sepia'] .item-card-refresh-status--error {
   flex: 1;
   line-height: 1.3;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Wrap longer messages (e.g. the first-run "…this can take a moment…") to a
+     couple of lines instead of clamping to one and cutting off mid-word. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 .toast-dismiss {
   background: none;

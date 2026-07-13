@@ -1,6 +1,7 @@
 import { app, utilityProcess, type UtilityProcess } from 'electron'
 import { join } from 'path'
 import { PendingRegistry } from './pending-registry'
+import { createIdleTimer } from './idle-timer'
 import type { EmbedRequest, EmbedResponse } from './embed-protocol'
 import {
   MODEL_VERSION,
@@ -26,6 +27,10 @@ const WORKER_SCRIPT = join(__dirname, 'embed-worker.js')
 // Cold model load (~2 s) + a large item's sampled-chunk batch, sub-batched
 // serially; generous so a slow first embed doesn't spuriously time out.
 const REQUEST_TIMEOUT_MS = 180_000
+// Release the worker (and its ~800 MB model) after this long with no requests.
+// Reload is ~2 s, so 5 idle minutes cleanly implies the user has stopped; the
+// next embed lazily re-forks the child (backfill tolerates respawn).
+const IDLE_TIMEOUT_MS = 5 * 60_000
 
 let child: UtilityProcess | null = null
 let ready = false
@@ -34,6 +39,20 @@ let ready = false
 // we hold them here and flush on 'spawn' (otherwise the first embed is lost).
 const outbox: EmbedRequest[] = []
 const registry = new PendingRegistry()
+
+// Idle countdown: armed after a request settles with nothing else in flight,
+// cancelled the moment a request starts (or the worker is already gone). On
+// expiry with the host still idle it kills the child so the model's memory is
+// freed; `registry.size === 0` means there's nothing pending to reject.
+const idle = createIdleTimer(
+  IDLE_TIMEOUT_MS,
+  () => registry.size === 0,
+  () => {
+    child?.kill()
+    child = null
+    ready = false
+  },
+)
 
 function flush(): void {
   if (!child || !ready) return
@@ -73,6 +92,7 @@ function ensureWorker(): UtilityProcess {
   c.on('exit', (code) => {
     child = null
     ready = false
+    idle.cancel() // no worker left to time out
     registry.rejectAll(new Error(`Embed worker exited (code ${code})`))
   })
 
@@ -83,6 +103,7 @@ function ensureWorker(): UtilityProcess {
 /** Send a batch of texts to the worker and reconstitute Float32Array vectors. */
 function embedTexts(texts: string[]): Promise<Float32Array[]> {
   if (texts.length === 0) return Promise.resolve([])
+  idle.cancel() // a request is starting — hold off the idle shutdown
   ensureWorker()
   const { id, promise } = registry.create<number[][]>(REQUEST_TIMEOUT_MS, () => {
     // Wedged worker — kill it so the next call respawns.
@@ -92,6 +113,10 @@ function embedTexts(texts: string[]): Promise<Float32Array[]> {
   })
   outbox.push({ id, texts })
   flush()
+  // Re-arm the idle countdown once this settles and nothing else is in flight.
+  void promise.finally(() => {
+    if (registry.size === 0) idle.schedule()
+  })
   return promise.then((rows) => rows.map((r) => Float32Array.from(r)))
 }
 
@@ -117,6 +142,7 @@ export const workerEmbedHost: EmbedHost = {
 
 /** Tear down the worker on app quit so it doesn't linger. */
 export function shutdownEmbedWorker(): void {
+  idle.cancel()
   registry.rejectAll(new Error('App is quitting'))
   child?.kill()
   child = null

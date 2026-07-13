@@ -56,6 +56,14 @@
   gap: 18px;
 }
 
+/* Cold-start / "no recommendations" states center in the content column like the
+   loading state (the .empty-state box is 320px wide; without this it pins left). */
+.discover-layout .empty-state {
+  min-height: calc(100vh - 220px);
+  margin-inline: auto;
+  justify-content: center;
+}
+
 /* ── card ─────────────────────────────────────────────────────────────── */
 .rec-card {
   display: flex;

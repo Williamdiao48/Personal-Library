@@ -3,6 +3,7 @@ import { useNavigate, Navigate } from 'react-router-dom'
 import { discoverService } from '../../services/discover'
 import { useToast } from '../../contexts/ToastContext'
 import { useSettings } from '../../contexts/SettingsContext'
+import { useCaptureJobs } from '../../contexts/CaptureJobsContext'
 import AddItemModal from '../Capture/AddItemModal'
 import RecommendationCard from './RecommendationCard'
 import type { Recommendation } from '../../types'
@@ -42,6 +43,7 @@ export default function DiscoverView() {
   const navigate = useNavigate()
   const { addToast, updateToast } = useToast()
   const { settings } = useSettings()
+  const { startJob } = useCaptureJobs()
 
   const [cards, setCards] = useState<Recommendation[]>([])
   const [generatedAt, setGeneratedAt] = useState<number | null>(null)
@@ -91,9 +93,19 @@ export default function DiscoverView() {
   const handleRefresh = useCallback(async () => {
     if (refreshing) return
     setRefreshing(true)
-    const toastId = addToast('Finding recommendations…', 'info')
+    // The first run (no cards yet) hits the cold path — sources + model are
+    // uncached, so it can take a while. Set expectations in the persistent toast.
+    const firstRun = cards.length === 0
+    const toastId = addToast(
+      firstRun
+        ? 'Finding your first recommendations — this can take a moment…'
+        : 'Finding recommendations…',
+      'info',
+    )
     try {
-      const res = await discoverService.refresh()
+      // Pass the feed currently on screen so a still-warm refresh rotates to the
+      // next-best slice (the engine excludes these) instead of returning a repeat.
+      const res = await discoverService.refresh(cards.map((c) => c.sourceId))
       setCards(res.cards)
       setGeneratedAt(res.generatedAt)
       setColdStart(res.coldStart)
@@ -110,7 +122,7 @@ export default function DiscoverView() {
     } finally {
       setRefreshing(false)
     }
-  }, [refreshing, addToast, updateToast])
+  }, [refreshing, cards, addToast, updateToast])
 
   // Fetch the next page: exclude everything already shown so the engine returns the
   // NEXT best picks (never repeats). No new cards = the pool is exhausted.
@@ -190,13 +202,18 @@ export default function DiscoverView() {
           ← Library
         </button>
         <h1 className="discover-title">Discover</h1>
-        <button
-          className="btn-primary discover-refresh-btn"
-          onClick={handleRefresh}
-          disabled={refreshing}
-        >
-          {refreshing ? 'Refreshing…' : '⟳ Refresh'}
-        </button>
+        {/* Only offer the header Refresh once there are cards to refresh — while the
+            feed is empty (cold start / "no recommendations yet") the empty state
+            carries its own "Find recommendations" call to action. */}
+        {cards.length > 0 && (
+          <button
+            className="btn-primary discover-refresh-btn"
+            onClick={handleRefresh}
+            disabled={refreshing}
+          >
+            {refreshing ? 'Refreshing…' : '⟳ Refresh'}
+          </button>
+        )}
       </header>
 
       <p className="discover-subtitle">{subtitle}</p>
@@ -204,6 +221,14 @@ export default function DiscoverView() {
       {loading ? (
         <div className="library-state-center">
           <p className="state-text">Loading…</p>
+        </div>
+      ) : refreshing && cards.length === 0 ? (
+        // Cold first refresh: fill the grid with shimmer placeholders so the long
+        // uncached wait reads as "working" instead of a bare empty state.
+        <div className="discover-grid">
+          {Array.from({ length: PAGE_SIZE }, (_, i) => (
+            <SkeletonCard key={`refresh-skeleton-${i}`} />
+          ))}
         </div>
       ) : coldStart ? (
         <div className="empty-state">
@@ -217,7 +242,8 @@ export default function DiscoverView() {
         <div className="empty-state">
           <h2 className="empty-state-title">No recommendations yet</h2>
           <p className="empty-state-body">
-            Tap Refresh to find fics and books based on the library you&apos;ve built.
+            Tap Find recommendations to discover fics and books based on the library you&apos;ve
+            built.
           </p>
           <button className="btn-primary" onClick={handleRefresh} disabled={refreshing}>
             {refreshing ? 'Refreshing…' : 'Find recommendations'}
@@ -262,7 +288,10 @@ export default function DiscoverView() {
             addToast(`Added “${item.title}”`, 'success')
             closeModal()
           }}
-          onJobStarted={(_jobId, _url) => {
+          onJobStarted={(jobId, url) => {
+            // Track the job globally so it shows in the Library sidebar and its
+            // completion/error is handled regardless of the current route.
+            startJob(jobId, url)
             if (pendingRec) removeCard(pendingRec.sourceId)
             addToast('Adding to library…', 'success')
             closeModal()

@@ -5,7 +5,7 @@ import type { Recommendation } from '../types'
 export const discoverService = {
   setEnabled: (enabled: boolean) => window.api.discover.setEnabled(enabled),
   get: () => window.api.discover.get(),
-  refresh: () => window.api.discover.refresh(),
+  refresh: (excludeSourceIds: string[] = []) => window.api.discover.refresh(excludeSourceIds),
   more: (excludeSourceIds: string[]) => window.api.discover.more(excludeSourceIds),
   dismiss: (card: Recommendation) => window.api.discover.dismiss(card),
   openExternal: (url: string) => window.api.discover.openExternal(url),

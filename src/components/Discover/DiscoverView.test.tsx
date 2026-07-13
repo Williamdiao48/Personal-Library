@@ -31,6 +31,11 @@ vi.mock('../../contexts/SettingsContext', () => ({
   useSettings: () => ({ settings: { enableDiscover: true } }),
 }))
 
+const startJob = vi.fn()
+vi.mock('../../contexts/CaptureJobsContext', () => ({
+  useCaptureJobs: () => ({ startJob, dismissJob: vi.fn(), captureJobs: [] }),
+}))
+
 // AddItemModal is heavy (capture/library services) — stub it to surface initialUrl
 // and expose a save trigger so the "card disappears once added" flow is testable.
 vi.mock('../Capture/AddItemModal', () => ({
@@ -38,15 +43,18 @@ vi.mock('../Capture/AddItemModal', () => ({
     initialUrl,
     onClose,
     onSaved,
+    onJobStarted,
   }: {
     initialUrl?: string
     onClose: () => void
     onSaved: (item: { title: string }) => void
+    onJobStarted: (jobId: string, url: string) => void
   }) => (
     <div data-testid="add-modal">
       <span data-testid="modal-url">{initialUrl}</span>
       <button onClick={onClose}>close-modal</button>
       <button onClick={() => onSaved({ title: 'Saved Item' })}>save-modal</button>
+      <button onClick={() => onJobStarted('job-1', initialUrl ?? '')}>job-modal</button>
     </div>
   ),
 }))
@@ -110,8 +118,59 @@ describe('DiscoverView', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: /Find recommendations/ }))
 
     expect(await screen.findByText('Fresh Fic')).toBeInTheDocument()
-    expect(addToast).toHaveBeenCalledWith('Finding recommendations…', 'info')
+    // First run (no cards yet) gets the cold-path expectation-setting copy.
+    expect(addToast).toHaveBeenCalledWith(
+      'Finding your first recommendations — this can take a moment…',
+      'info',
+    )
     expect(updateToast).toHaveBeenCalledWith('toast-1', 'Found 1 recommendations', 'success')
+  })
+
+  it('refresh passes the currently-shown card ids so the engine can rotate past them', async () => {
+    svc.get.mockResolvedValue({
+      cards: [
+        rec({ title: 'Shown A', sourceId: 'id-a' }),
+        rec({ title: 'Shown B', sourceId: 'id-b' }),
+      ],
+      generatedAt: Date.now(),
+    })
+    svc.refresh.mockResolvedValue({
+      cards: [rec({ title: 'Rotated', sourceId: 'id-c' })],
+      generatedAt: Date.now(),
+      coldStart: false,
+    })
+    renderView()
+    await screen.findByText('Shown A')
+
+    // Header Refresh is present because there are cards; it forwards their ids.
+    await userEvent.setup().click(screen.getByRole('button', { name: /Refresh/ }))
+
+    expect(svc.refresh).toHaveBeenCalledWith(['id-a', 'id-b'])
+    expect(await screen.findByText('Rotated')).toBeInTheDocument()
+  })
+
+  it('shows skeleton cards while a cold first refresh is in flight', async () => {
+    // A refresh that never resolves during the test — the grid should fill with
+    // shimmer placeholders instead of sitting on the empty state.
+    let release!: (v: { cards: Recommendation[]; generatedAt: number; coldStart: boolean }) => void
+    svc.refresh.mockReturnValue(
+      new Promise((r) => {
+        release = r
+      }),
+    )
+    renderView()
+    await waitFor(() => expect(screen.getByText('No recommendations yet')).toBeInTheDocument())
+
+    await userEvent.setup().click(screen.getByRole('button', { name: /Find recommendations/ }))
+
+    await waitFor(() =>
+      expect(document.querySelectorAll('.rec-card--skeleton').length).toBeGreaterThan(0),
+    )
+    expect(screen.queryByText('No recommendations yet')).not.toBeInTheDocument()
+
+    // Let the refresh settle so the test doesn't leak a pending promise.
+    release({ cards: [rec({ title: 'Fresh Fic' })], generatedAt: Date.now(), coldStart: false })
+    expect(await screen.findByText('Fresh Fic')).toBeInTheDocument()
   })
 
   it('shows the cold-start message when the engine reports coldStart', async () => {
@@ -164,6 +223,27 @@ describe('DiscoverView', () => {
     await user.click(screen.getAllByText('+ Add to Library')[0]) // "Add Me" is first
     await user.click(screen.getByText('save-modal'))
 
+    await waitFor(() => expect(screen.queryByText('Add Me')).not.toBeInTheDocument())
+    expect(screen.getByText('Keep Me')).toBeInTheDocument()
+  })
+
+  it('tracks the capture job globally and drops the card when a capture job starts', async () => {
+    svc.get.mockResolvedValue({
+      cards: [
+        rec({ title: 'Add Me', sourceId: 'id-add', url: 'https://ao3/works/add' }),
+        rec({ title: 'Keep Me', sourceId: 'id-keep' }),
+      ],
+      generatedAt: Date.now(),
+    })
+    renderView()
+    await screen.findByText('Add Me')
+
+    const user = userEvent.setup()
+    await user.click(screen.getAllByText('+ Add to Library')[0])
+    await user.click(screen.getByText('job-modal'))
+
+    // The job is handed to the global tracker (sidebar), not owned by Discover.
+    expect(startJob).toHaveBeenCalledWith('job-1', 'https://ao3/works/add')
     await waitFor(() => expect(screen.queryByText('Add Me')).not.toBeInTheDocument())
     expect(screen.getByText('Keep Me')).toBeInTheDocument()
   })

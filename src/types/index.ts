@@ -405,8 +405,13 @@ export interface Api {
     setEnabled: (enabled: boolean) => Promise<void>
     /** The last cached picks + when they were generated; null when never run. */
     get: () => Promise<{ cards: Recommendation[]; generatedAt: number } | null>
-    /** Run the engine, cache + return the result (with a cold-start flag). */
-    refresh: () => Promise<DiscoverResult>
+    /**
+     * Run the engine (a "fresh" fetch — sources re-scrape once past their soft floor),
+     * cache + return the result. `excludeSourceIds` = the feed currently on screen, so
+     * a still-warm refresh rotates to the next-best slice; wraps to the top when the
+     * ranked pool is exhausted.
+     */
+    refresh: (excludeSourceIds: string[]) => Promise<DiscoverResult>
     /**
      * "Load more": re-run the engine excluding the cards already shown this session,
      * appending the next best picks to the cached feed. Empty `cards` = pool exhausted.

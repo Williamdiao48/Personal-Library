@@ -212,6 +212,27 @@ describe('fetchAo3Candidates', () => {
     expect(mockFetchPage).toHaveBeenCalledTimes(4)
   })
 
+  it('a Refresh (soft-floor cfg) re-scrapes a pool the default TTL would still serve', async () => {
+    // The "walking gradient": a pool aged past the 2 h soft floor but well inside the
+    // 7 d hard TTL is served from cache on a normal read, but a fresh Refresh (which
+    // tightens the effective TTL to the soft floor) re-scrapes it.
+    mockFetchPage.mockResolvedValue(RESULTS_HTML)
+    const t0 = 1000
+    await fetchAo3Candidates([relQ], { now: t0, delayMs: 0 })
+    const base = mockFetchPage.mock.calls.length // 2 pages
+    const aged = t0 + AO3_SOURCE.SOFT_FLOOR_MS + 1
+
+    await fetchAo3Candidates([relQ], { now: aged, delayMs: 0 }) // default TTL → cache hit
+    expect(mockFetchPage.mock.calls.length).toBe(base)
+
+    await fetchAo3Candidates([relQ], {
+      now: aged,
+      delayMs: 0,
+      cfg: { ...AO3_SOURCE, CACHE_TTL_MS: AO3_SOURCE.SOFT_FLOOR_MS },
+    })
+    expect(mockFetchPage.mock.calls.length).toBe(base * 2) // re-scraped
+  })
+
   it('soft-fails a query whose fetch throws, without sinking the batch', async () => {
     mockFetchPage.mockRejectedValue(new Error('network down'))
     expect(await fetchAo3Candidates([relQ], { delayMs: 0 })).toEqual([])

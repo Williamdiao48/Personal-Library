@@ -226,7 +226,8 @@ contextBridge.exposeInMainWorld('api', {
   discover: {
     setEnabled: (enabled: boolean) => ipcRenderer.invoke('discover:setEnabled', enabled),
     get: () => ipcRenderer.invoke('discover:get'),
-    refresh: () => ipcRenderer.invoke('discover:refresh'),
+    refresh: (excludeSourceIds: string[]) =>
+      ipcRenderer.invoke('discover:refresh', excludeSourceIds),
     more: (excludeSourceIds: string[]) => ipcRenderer.invoke('discover:more', excludeSourceIds),
     dismiss: (card: import('../../src/types').Recommendation) =>
       ipcRenderer.invoke('discover:dismiss', card),

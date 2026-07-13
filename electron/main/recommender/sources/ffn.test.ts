@@ -18,6 +18,7 @@ import {
   parseFfnResultsPage,
   fetchFfnCandidates,
   ffnSource,
+  FFN_SOURCE,
   type FfnQuery,
 } from './ffn'
 import type { TasteSeeds } from '../tasteSeeds'
@@ -128,6 +129,25 @@ describe('fetchFfnCandidates', () => {
   it('soft-fails when the batch fetch throws, without sinking the source', async () => {
     mockFetch.mockRejectedValue(new Error('cloudflare'))
     expect(await fetchFfnCandidates([query('https://www.fanfiction.net/search/?q=z')])).toEqual([])
+  })
+
+  it('a Refresh (soft-floor cfg) re-scrapes a pool the default TTL would still serve', async () => {
+    // Aged past the 24 h soft floor but well inside the 14 d hard TTL: a normal read
+    // serves cache; a fresh Refresh (soft-floor cfg) re-scrapes the CF window.
+    mockFetch.mockResolvedValue([RESULTS_HTML])
+    const q = query('https://www.fanfiction.net/search/?keywords=x&type=story&ready=1')
+    const t0 = 1000
+    await fetchFfnCandidates([q], { now: t0 })
+    const aged = t0 + FFN_SOURCE.SOFT_FLOOR_MS + 1
+
+    await fetchFfnCandidates([q], { now: aged }) // default TTL → cache hit
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+
+    await fetchFfnCandidates([q], {
+      now: aged,
+      cfg: { ...FFN_SOURCE, CACHE_TTL_MS: FFN_SOURCE.SOFT_FLOOR_MS },
+    })
+    expect(mockFetch).toHaveBeenCalledTimes(2) // re-scraped
   })
 
   it('fetches all cache-miss queries through a single shared window', async () => {
