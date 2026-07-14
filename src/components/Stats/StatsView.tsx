@@ -570,6 +570,7 @@ function GoalsSection() {
   const [goals, setGoals] = useState<Goal[]>([])
   const [allItems, setAllItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [creatingList, setCreatingList] = useState(false)
   const [newListName, setNewListName] = useState('')
 
@@ -579,6 +580,7 @@ function GoalsSection() {
         setGoals(g)
         setAllItems(items)
       })
+      .catch((err) => setLoadError(err instanceof Error ? err.message : 'Failed to load goals.'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -630,6 +632,8 @@ function GoalsSection() {
 
       {loading ? (
         <p className="stats-goals-empty">Loading…</p>
+      ) : loadError ? (
+        <p className="stats-goals-empty">Failed to load goals: {loadError}</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {/* Time goals — always visible */}
@@ -793,20 +797,19 @@ export default function StatsView() {
   const [items, setItems] = useState<ItemStats[]>([])
   const [streaks, setStreaks] = useState<StreakInfo>({ currentStreak: 0, longestStreak: 0 })
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
-    Promise.all([
-      statsService.getSummary(),
-      statsService.getTimeline(366),
-      statsService.getByItem(),
-      statsService.getStreaks(),
-    ])
-      .then(([s, t, it, sk]) => {
-        setSummary(s)
-        setTimeline(t)
-        setItems(it)
-        setStreaks(sk)
+    // PERF-3: one round trip for all four aggregates (see stats:getDashboard).
+    statsService
+      .getDashboard(366)
+      .then(({ summary, timeline, byItem, streaks }) => {
+        setSummary(summary)
+        setTimeline(timeline)
+        setItems(byItem)
+        setStreaks(streaks)
       })
+      .catch((err) => setLoadError(err instanceof Error ? err.message : 'Failed to load stats.'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -823,6 +826,8 @@ export default function StatsView() {
 
       {loading ? (
         <div className="stats-loading">Loading…</div>
+      ) : loadError ? (
+        <div className="stats-loading">Failed to load stats: {loadError}</div>
       ) : (
         <div className="stats-body">
           {/* Overview + streak cards */}

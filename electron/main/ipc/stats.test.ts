@@ -114,3 +114,26 @@ describe('stats:getStreaks', () => {
     expect(s.currentStreak).toBe(3)
   })
 })
+
+describe('stats:getDashboard', () => {
+  it('bundles summary, timeline, byItem and streaks in one call', async () => {
+    const a = seedItem(db, { id: 'a', word_count: 1000 })
+    seedSession(db, a, { duration: 10 * 60_000, started_at: daysAgoNoon(0) })
+    setProgress('a', { scroll: 1, maxScroll: 1 })
+
+    const d = (await invoke('stats:getDashboard', 366)) as any
+    // Same shapes the individual handlers return, composed together.
+    expect(d.summary.totalMs).toBe(10 * 60_000)
+    expect(d.summary.itemsFinished).toBe(1)
+    expect(d.byItem.map((r: any) => r.id)).toEqual(['a'])
+    expect(d.streaks.currentStreak).toBe(1)
+    expect(d.timeline.reduce((sum: number, r: any) => sum + r.totalMs, 0)).toBe(10 * 60_000)
+  })
+
+  it('honors the timeline day-span window', async () => {
+    const a = seedItem(db, {})
+    seedSession(db, a, { duration: 60_000, started_at: daysAgoNoon(400) }) // older than the window
+    const d = (await invoke('stats:getDashboard', 366)) as any
+    expect(d.timeline).toEqual([]) // 400 days ago is outside a 366-day window
+  })
+})

@@ -80,6 +80,15 @@ export interface StreakInfo {
   longestStreak: number // all-time longest run of consecutive reading days
 }
 
+// All four stats aggregates in one payload — fetched in a single IPC round trip
+// by StatsView on mount (PERF-3).
+export interface StatsDashboard {
+  summary: StatsSummary
+  timeline: DailyReading[]
+  byItem: ItemStats[]
+  streaks: StreakInfo
+}
+
 export type GoalType = 'time' | 'count' | 'list'
 export type GoalPeriod = 'daily' | 'weekly' | 'monthly' | 'yearly'
 
@@ -336,6 +345,7 @@ export interface Api {
     getTimeline: (days: number) => Promise<DailyReading[]>
     getByItem: () => Promise<ItemStats[]>
     getStreaks: () => Promise<StreakInfo>
+    getDashboard: (days: number) => Promise<StatsDashboard>
   }
   goals: {
     getAll: () => Promise<Goal[]>

@@ -100,6 +100,7 @@ contextBridge.exposeInMainWorld('api', {
     getTimeline: (days: number) => ipcRenderer.invoke('stats:getTimeline', days),
     getByItem: () => ipcRenderer.invoke('stats:getByItem'),
     getStreaks: () => ipcRenderer.invoke('stats:getStreaks'),
+    getDashboard: (days: number) => ipcRenderer.invoke('stats:getDashboard', days),
   },
 
   // Goals

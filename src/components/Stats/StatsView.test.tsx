@@ -92,6 +92,7 @@ vi.mock('../../services/stats', () => ({
     getTimeline: vi.fn(),
     getByItem: vi.fn(),
     getStreaks: vi.fn(),
+    getDashboard: vi.fn(),
   },
 }))
 vi.mock('../../services/goals', () => ({
@@ -166,6 +167,14 @@ beforeEach(() => {
   stats.getTimeline.mockResolvedValue([])
   stats.getByItem.mockResolvedValue([])
   stats.getStreaks.mockResolvedValue({ currentStreak: 0, longestStreak: 0 })
+  // StatsView now fetches all four aggregates via getDashboard (PERF-3); compose
+  // it from the individual mocks at call time so per-test overrides still apply.
+  stats.getDashboard.mockImplementation(async (days: number) => ({
+    summary: await stats.getSummary(),
+    timeline: await stats.getTimeline(days),
+    byItem: await stats.getByItem(),
+    streaks: await stats.getStreaks(),
+  }))
   goals.getAll.mockResolvedValue([])
   goals.upsertPeriodGoal.mockResolvedValue(undefined)
   goals.create.mockResolvedValue(undefined)
@@ -208,6 +217,13 @@ describe('StatsView — overview & item table', () => {
     await screen.findByText('By item')
     fireEvent.click(screen.getByRole('button', { name: '← Library' }))
     expect(screen.getByText('LIBRARY HOME')).toBeInTheDocument()
+  })
+
+  it('shows an error message when the dashboard fails to load (RED-2)', async () => {
+    stats.getDashboard.mockRejectedValue(new Error('db is locked'))
+    renderStats()
+    expect(await screen.findByText(/Failed to load stats: db is locked/)).toBeInTheDocument()
+    expect(screen.queryByText('By item')).toBeNull()
   })
 })
 
