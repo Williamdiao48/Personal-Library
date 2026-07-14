@@ -31,26 +31,50 @@ const AO3_META = `
     <dd class="words">50,123</dd><dd class="chapters">5/5</dd><dd class="kudos">1,234</dd>
   </dl>`
 
+// Mirrors AO3's real full-work markup: each chapter is a `<div class="chapter">`
+// containing a `<div class="chapter preface group">` (which ALSO carries the
+// `chapter` class) that holds the title and — when present — a summary rendered
+// as its own `.userstuff`, followed by the actual chapter text in a
+// `.userstuff.module[role="article"]`. A summary-less chapter has a preface with
+// no `.userstuff` at all (the "blank chapter" trigger). Single-chapter works have
+// no `.chapter` wrapper — the content sits directly under `#chapters`.
+function chapterBlock(body: string, i: number, summary: boolean): string {
+  return `
+    <div class="chapter" id="chapter-${i + 1}">
+      <div class="chapter preface group">
+        <h3 class="title"><a href="/works/1/chapters/${i + 1}">Chapter ${i + 1}</a>: Title ${i + 1}</h3>
+        ${
+          summary
+            ? `<div id="summary" class="summary module"><h3 class="heading">Summary:</h3>
+               <blockquote class="userstuff">Summary of chapter ${i + 1}.</blockquote></div>`
+            : ''
+        }
+      </div>
+      <div class="userstuff module" role="article">
+        <h3 class="landmark heading" id="work">Chapter Text</h3>
+        ${body}
+      </div>
+    </div>`
+}
+
 function ao3Page(
   chapters: string[],
-  opts: { next?: boolean; ogImage?: string; meta?: boolean } = {},
+  opts: { next?: boolean; ogImage?: string; meta?: boolean; summaries?: boolean } = {},
 ): string {
-  const chapterEls = chapters
-    .map(
-      (body, i) => `
-      <div class="chapter" id="chapter-${i + 1}">
-        <h3 class="title">Chapter ${i + 1}</h3>
-        <div class="userstuff" role="article">${body}</div>
-      </div>`,
-    )
-    .join('')
+  const inner =
+    chapters.length > 1
+      ? // Multi-chapter: alternate summary/no-summary so both the summary-capture
+        // and the blank-preface paths are exercised.
+        chapters.map((body, i) => chapterBlock(body, i, opts.summaries ?? i % 2 === 0)).join('')
+      : `<h3 class="landmark heading" id="work">Work Text:</h3>
+         <div class="userstuff" role="article">${chapters[0]}</div>`
   return `<!DOCTYPE html><html><head>
     ${opts.ogImage ? `<meta property="og:image" content="${opts.ogImage}">` : ''}
   </head><body>
     <h2 class="title heading">My Great Work</h2>
     <h3 class="byline heading"><a rel="author" href="/users/x">Author X</a></h3>
     ${opts.meta ? AO3_META : `<dd class="chapters">${chapters.length}/${chapters.length}</dd>`}
-    <div id="workskin"><div id="chapters">${chapterEls}</div></div>
+    <div id="workskin"><div id="chapters" role="article">${inner}</div></div>
     ${opts.next ? '<a rel="next" href="?page=2">Next</a>' : ''}
   </body></html>`
 }
@@ -93,6 +117,31 @@ describe('captureAo3', () => {
     expect(blocks.length).toBe(3)
     expect(result.html).toContain('One.')
     expect(result.html).toContain('Three.')
+  })
+
+  // Regression: AO3's per-chapter preface/notes blocks also carry the `chapter`
+  // class, so a descendant `#chapters .chapter` selector scooped them up as extra
+  // "chapters" — producing a blank chapter after every real one (flip to ch2 →
+  // blank → flip again → real ch2). And because a chapter summary renders as a
+  // `.userstuff` *before* the content, a bare `.userstuff` grabbed the summary as
+  // the chapter body. Both are fixed by `#chapters > .chapter` + `.userstuff[role]`.
+  it('emits exactly one block per real chapter and captures content, not prefaces/summaries', async () => {
+    mockFetchPage.mockResolvedValue(
+      ao3Page(['<p>Real one.</p>', '<p>Real two.</p>', '<p>Real three.</p>']),
+    )
+    const result = await captureAo3('https://archiveofourown.org/works/42')
+
+    // Exactly three chapter blocks — no blank prefaces/notes inflating the count.
+    const blocks = result.html.match(/class="chapter"/g) ?? []
+    expect(blocks.length).toBe(3)
+    // No empty chapter bodies.
+    expect(result.html).not.toMatch(/<div class="chapter-content">\s*<\/div>/)
+    // Real content is captured…
+    expect(result.html).toContain('Real one.')
+    expect(result.html).toContain('Real two.')
+    expect(result.html).toContain('Real three.')
+    // …and the summary (which precedes the content in the DOM) is not.
+    expect(result.html).not.toContain('Summary of chapter')
   })
 
   it('honors a chapter range, slicing to the requested window', async () => {

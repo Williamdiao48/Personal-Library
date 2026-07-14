@@ -106,7 +106,12 @@ export async function captureAo3(
   const coverUrl =
     ogImg && !ogImg.includes('/ao3_logos') && !ogImg.includes('/images/') ? ogImg : null
 
-  const allChapterEls: Element[] = Array.from(page1Doc.querySelectorAll('#chapters .chapter'))
+  // NB: `#chapters > .chapter` (direct children only). AO3's per-chapter preface
+  // and end-note blocks also carry the `chapter` class (`div.chapter.preface.group`),
+  // so a descendant `#chapters .chapter` scoops them up too — inserting a blank
+  // "chapter" (no `.userstuff` content) after every real one. The child combinator
+  // matches only the real chapter containers.
+  const allChapterEls: Element[] = Array.from(page1Doc.querySelectorAll('#chapters > .chapter'))
   const textParts: string[] = [page1Doc.querySelector('#workskin')?.textContent ?? '']
 
   // ── Remaining pages: batch fetch in parallel ──────────────────────────────
@@ -140,7 +145,7 @@ export async function captureAo3(
       for (const html of pages) {
         if (!html) continue
         const doc = new JSDOM(html).window.document
-        allChapterEls.push(...Array.from(doc.querySelectorAll('#chapters .chapter')))
+        allChapterEls.push(...Array.from(doc.querySelectorAll('#chapters > .chapter')))
         textParts.push(doc.querySelector('#workskin')?.textContent ?? '')
         if (range && allChapterEls.length >= range.end) break
       }
@@ -151,7 +156,7 @@ export async function captureAo3(
         onProgress?.(`Fetching AO3 chapters (page ${page})…`)
         const html = await fetchPage(pageUrl)
         const doc = new JSDOM(html, { url: pageUrl }).window.document
-        allChapterEls.push(...Array.from(doc.querySelectorAll('#chapters .chapter')))
+        allChapterEls.push(...Array.from(doc.querySelectorAll('#chapters > .chapter')))
         textParts.push(doc.querySelector('#workskin')?.textContent ?? '')
         if (range && allChapterEls.length >= range.end) break
         if (!doc.querySelector('a[rel="next"]')) break
@@ -173,7 +178,14 @@ export async function captureAo3(
       .map((el, i) => {
         const chapterTitle =
           el.querySelector('h3.title')?.textContent?.trim() ?? `Chapter ${(range?.start ?? 1) + i}`
-        const content = sanitize(el.querySelector('.userstuff')?.innerHTML ?? '')
+        // The chapter *text* is the `role="article"` userstuff. A chapter with a
+        // summary/notes renders those as their own `.userstuff` earlier in the DOM,
+        // so a bare `.userstuff` would capture the summary instead of the content.
+        const contentEl =
+          el.querySelector('.userstuff[role="article"]') ??
+          el.querySelector('.userstuff.module') ??
+          el.querySelector('.userstuff')
+        const content = sanitize(contentEl?.innerHTML ?? '')
         return `<div class="chapter">
 <h2 class="chapter-title">${escHtml(chapterTitle)}</h2>
 <div class="chapter-content">${content}</div>
