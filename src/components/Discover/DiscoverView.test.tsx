@@ -106,6 +106,14 @@ describe('DiscoverView', () => {
     expect(screen.getByText(/picks/)).toBeInTheDocument() // freshness subtitle
   })
 
+  it('shows an error message when the cached snapshot fails to load (RED-2)', async () => {
+    svc.get.mockRejectedValue(new Error('db is locked'))
+    renderView()
+    expect(
+      await screen.findByText(/Failed to load recommendations: db is locked/),
+    ).toBeInTheDocument()
+  })
+
   it('refresh renders the returned grid and swaps the spinner toast to success', async () => {
     svc.refresh.mockResolvedValue({
       cards: [rec({ title: 'Fresh Fic' })],

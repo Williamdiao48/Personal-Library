@@ -112,6 +112,7 @@ export default function TagsView() {
   const [allLibraryItems, setAllLibraryItems] = useState<import('../../types').Item[]>([])
   const [trashedCount, setTrashedCount] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // New tag form
   const [newName, setNewName] = useState('')
@@ -142,6 +143,7 @@ export default function TagsView() {
           colCounts[collection_id] = (colCounts[collection_id] ?? 0) + 1
         setCollectionItemCounts(colCounts)
       })
+      .catch((err) => setLoadError(err instanceof Error ? err.message : 'Failed to load tags.'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -256,6 +258,10 @@ export default function TagsView() {
           {loading ? (
             <div className="library-state-center">
               <p className="state-text">Loading…</p>
+            </div>
+          ) : loadError ? (
+            <div className="library-state-center">
+              <p className="state-text">Failed to load tags: {loadError}</p>
             </div>
           ) : tags.length === 0 ? (
             <div className="tags-empty">No tags yet. Create one below.</div>
