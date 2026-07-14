@@ -6,6 +6,15 @@
   overflow-x: hidden;
   padding: 48px 24px 96px;
   overflow-wrap: break-word;
+  /* Base reading typography lives on the container so ALL prose inherits it —
+     not just <p>/<li>/<blockquote>. Some sources (notably FF.net) leave chapter
+     text in bare <div>/<span> or naked text nodes; without an inherited font
+     those rendered in the app's system font and ignored the font picker. Headings
+     (sans) and pre/code (mono) set their own font-family and still override. */
+  font-size: var(--reader-font-size, 18px);
+  line-height: var(--reader-line-height, 1.75);
+  font-family: var(--reader-font-family, Georgia, 'Times New Roman', serif);
+  color: #d4d4d4;
 }
 
 .html-reader table {
@@ -610,6 +619,7 @@
 
 .html-theme-light .html-reader {
   background: #ffffff;
+  color: #1c1c1e; /* container-level so bare-div/span prose inherits the theme color */
 }
 .html-theme-light .html-reader p,
 .html-theme-light .html-reader li,
@@ -738,6 +748,7 @@
 
 .html-theme-sepia .html-reader {
   background: #f2e8d5;
+  color: #3b2a1a; /* container-level so bare-div/span prose inherits the theme color */
 }
 .html-theme-sepia .html-reader p,
 .html-theme-sepia .html-reader li,
