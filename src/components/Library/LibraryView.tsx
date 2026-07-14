@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { libraryService, tagService, collectionService } from '../../services/library'
@@ -17,6 +17,9 @@ import CollectionsModal from './CollectionsModal'
 import ReviewModal from './ReviewModal'
 import CustomSelect from '../ui/CustomSelect'
 import MultiSelect from '../ui/MultiSelect'
+import { useGridColumns } from '../../hooks/useGridColumns'
+import { GRID_GAP } from '../../constants/layout'
+import { buildTagsMap, buildCollectionsMap } from './itemGrid'
 
 export default function LibraryView() {
   const { settings, updateSettings } = useSettings()
@@ -119,30 +122,6 @@ export default function LibraryView() {
   }, [])
 
   // ── Map builders ──────────────────────────────────────────────
-
-  function buildTagsMap(rows: { item_id: string; tag_id: string; name: string; color: string }[]) {
-    const map: Record<string, Tag[]> = {}
-    for (const { item_id, tag_id, name, color } of rows) {
-      if (!map[item_id]) map[item_id] = []
-      map[item_id].push({ id: tag_id, name, color })
-    }
-    return map
-  }
-
-  function buildCollectionsMap(
-    cols: Collection[],
-    rows: { item_id: string; collection_id: string; name: string }[],
-  ) {
-    const colById: Record<string, Collection> = {}
-    for (const c of cols) colById[c.id] = c
-
-    const map: Record<string, Collection[]> = {}
-    for (const { item_id, collection_id } of rows) {
-      if (!map[item_id]) map[item_id] = []
-      if (colById[collection_id]) map[item_id].push(colById[collection_id])
-    }
-    return map
-  }
 
   // ── Tag data refresh (after TagsModal closes) ─────────────────
 
@@ -306,25 +285,7 @@ export default function LibraryView() {
   const lastAnchorRef = useRef<string | null>(null)
 
   // ── Virtual grid ─────────────────────────────────────────────────
-  const mainRef = useRef<HTMLElement>(null)
-  const GRID_GAP = 20
-  const MIN_COL_WIDTH = 160
-  const [columnsPerRow, setColumnsPerRow] = useState(4)
-  const [colWidth, setColWidth] = useState(MIN_COL_WIDTH)
-
-  useLayoutEffect(() => {
-    const el = mainRef.current
-    if (!el) return
-    const obs = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? el.clientWidth
-      // Mirror CSS: repeat(auto-fill, minmax(MIN_COL_WIDTH, 1fr))
-      const cols = Math.max(1, Math.floor((width + GRID_GAP) / (MIN_COL_WIDTH + GRID_GAP)))
-      setColumnsPerRow(cols)
-      setColWidth(Math.floor((width - (cols - 1) * GRID_GAP) / cols))
-    })
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [])
+  const { mainRef, columnsPerRow, colWidth } = useGridColumns()
 
   function clearSelection() {
     setSelectedIds(new Set())
@@ -388,30 +349,63 @@ export default function LibraryView() {
     return () => window.removeEventListener('keydown', handleKey)
   }, [selectAll])
 
+  // PERF-2 / ROB-2 (audit 2026-07-14): bulk ops fire their IPC calls in parallel
+  // via Promise.allSettled (the main-process better-sqlite3 handlers are
+  // synchronous, so pipelining is safe) instead of awaiting each round trip
+  // serially. allSettled also lets us reflect only the calls that actually
+  // succeeded in local state and toast on any rejection, rather than silently
+  // updating the UI as if a mid-loop failure never happened.
+  const reportBulkFailures = useCallback(
+    (results: PromiseSettledResult<unknown>[], action: string) => {
+      const failed = results.filter((r) => r.status === 'rejected').length
+      if (failed > 0) {
+        addToast(
+          `Couldn't ${action} ${failed} of ${results.length} item${results.length === 1 ? '' : 's'}.`,
+          'error',
+        )
+      }
+    },
+    [addToast],
+  )
+
   async function handleBulkDelete() {
     if (bulkDeleting) return
     const ids = [...selectedIds]
     setBulkDeleting(true)
     try {
-      let trashDelta = 0
-      for (const id of ids) {
-        const companion = companionBySourceId.get(id)
-        if (companion) {
-          await libraryService.softDelete(companion.id)
-          trashDelta++
-        }
-        await libraryService.softDelete(id)
-        trashDelta++
-      }
-      setItems((prev) =>
-        prev.filter((i) => {
-          if (ids.includes(i.id)) return false
-          // also remove companions
-          const src = i.derived_from
-          return !src || !ids.includes(src)
+      const results = await Promise.allSettled(
+        ids.map(async (id) => {
+          let delta = 0
+          const companion = companionBySourceId.get(id)
+          if (companion) {
+            await libraryService.softDelete(companion.id)
+            delta++
+          }
+          await libraryService.softDelete(id)
+          delta++
+          return delta
         }),
       )
-      setTrashedCount((n) => n + trashDelta)
+      const succeeded = new Set<string>()
+      let trashDelta = 0
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') {
+          succeeded.add(ids[i])
+          trashDelta += r.value
+        }
+      })
+      if (succeeded.size > 0) {
+        setItems((prev) =>
+          prev.filter((i) => {
+            if (succeeded.has(i.id)) return false
+            // also remove companions of successfully-deleted items
+            const src = i.derived_from
+            return !src || !succeeded.has(src)
+          }),
+        )
+        setTrashedCount((n) => n + trashDelta)
+      }
+      reportBulkFailures(results, 'delete')
       clearSelection()
     } finally {
       setBulkDeleting(false)
@@ -423,47 +417,52 @@ export default function LibraryView() {
     const tag = allTags.find((t) => t.id === tagId)
     if (!tag) return
     const ids = [...selectedIds]
-    for (const id of ids) {
-      const companion = companionBySourceId.get(id)
-      const editableId = companion?.id ?? id
-      const currentTags = (itemTagsMap[editableId] ?? []).map((t) => t.id)
-      if (!currentTags.includes(tagId)) {
-        await tagService.setForItem(editableId, [...currentTags, tagId])
-      }
-    }
-    // Update only affected entries rather than re-fetching the entire map
+    const results = await Promise.allSettled(
+      ids.map((id) => {
+        const editableId = companionBySourceId.get(id)?.id ?? id
+        const currentTags = (itemTagsMap[editableId] ?? []).map((t) => t.id)
+        if (currentTags.includes(tagId)) return Promise.resolve()
+        return tagService.setForItem(editableId, [...currentTags, tagId])
+      }),
+    )
+    // Update only affected entries that actually succeeded rather than re-fetching the whole map
     setItemTagsMap((prev) => {
       const next = { ...prev }
-      for (const id of ids) {
+      ids.forEach((id, i) => {
+        if (results[i].status !== 'fulfilled') return
         const editableId = companionBySourceId.get(id)?.id ?? id
         const current = next[editableId] ?? []
         if (!current.some((t) => t.id === tagId)) next[editableId] = [...current, tag]
-      }
+      })
       return next
     })
+    reportBulkFailures(results, 'tag')
     setShowBulkTag(false)
   }
 
   async function handleBulkRemoveTag(tagId: string) {
     const ids = [...selectedIds]
-    for (const id of ids) {
-      const companion = companionBySourceId.get(id)
-      const editableId = companion?.id ?? id
-      const currentTags = (itemTagsMap[editableId] ?? []).map((t) => t.id)
-      await tagService.setForItem(
-        editableId,
-        currentTags.filter((t) => t !== tagId),
-      )
-    }
-    // Update only affected entries rather than re-fetching the entire map
+    const results = await Promise.allSettled(
+      ids.map((id) => {
+        const editableId = companionBySourceId.get(id)?.id ?? id
+        const currentTags = (itemTagsMap[editableId] ?? []).map((t) => t.id)
+        return tagService.setForItem(
+          editableId,
+          currentTags.filter((t) => t !== tagId),
+        )
+      }),
+    )
+    // Update only affected entries that actually succeeded rather than re-fetching the whole map
     setItemTagsMap((prev) => {
       const next = { ...prev }
-      for (const id of ids) {
+      ids.forEach((id, i) => {
+        if (results[i].status !== 'fulfilled') return
         const editableId = companionBySourceId.get(id)?.id ?? id
         next[editableId] = (next[editableId] ?? []).filter((t) => t.id !== tagId)
-      }
+      })
       return next
     })
+    reportBulkFailures(results, 'untag')
     setShowBulkTag(false)
   }
 
@@ -471,47 +470,52 @@ export default function LibraryView() {
     const col = allCollections.find((c) => c.id === colId)
     if (!col) return
     const ids = [...selectedIds]
-    for (const id of ids) {
-      const companion = companionBySourceId.get(id)
-      const editableId = companion?.id ?? id
-      const currentCols = (itemCollectionsMap[editableId] ?? []).map((c) => c.id)
-      if (!currentCols.includes(colId)) {
-        await collectionService.setForItem(editableId, [...currentCols, colId])
-      }
-    }
-    // Update only affected entries rather than re-fetching the entire map
+    const results = await Promise.allSettled(
+      ids.map((id) => {
+        const editableId = companionBySourceId.get(id)?.id ?? id
+        const currentCols = (itemCollectionsMap[editableId] ?? []).map((c) => c.id)
+        if (currentCols.includes(colId)) return Promise.resolve()
+        return collectionService.setForItem(editableId, [...currentCols, colId])
+      }),
+    )
+    // Update only affected entries that actually succeeded rather than re-fetching the whole map
     setItemCollectionsMap((prev) => {
       const next = { ...prev }
-      for (const id of ids) {
+      ids.forEach((id, i) => {
+        if (results[i].status !== 'fulfilled') return
         const editableId = companionBySourceId.get(id)?.id ?? id
         const current = next[editableId] ?? []
         if (!current.some((c) => c.id === colId)) next[editableId] = [...current, col]
-      }
+      })
       return next
     })
+    reportBulkFailures(results, 'add')
     setShowBulkCol(false)
   }
 
   async function handleBulkRemoveCollection(colId: string) {
     const ids = [...selectedIds]
-    for (const id of ids) {
-      const companion = companionBySourceId.get(id)
-      const editableId = companion?.id ?? id
-      const currentCols = (itemCollectionsMap[editableId] ?? []).map((c) => c.id)
-      await collectionService.setForItem(
-        editableId,
-        currentCols.filter((c) => c !== colId),
-      )
-    }
-    // Update only affected entries rather than re-fetching the entire map
+    const results = await Promise.allSettled(
+      ids.map((id) => {
+        const editableId = companionBySourceId.get(id)?.id ?? id
+        const currentCols = (itemCollectionsMap[editableId] ?? []).map((c) => c.id)
+        return collectionService.setForItem(
+          editableId,
+          currentCols.filter((c) => c !== colId),
+        )
+      }),
+    )
+    // Update only affected entries that actually succeeded rather than re-fetching the whole map
     setItemCollectionsMap((prev) => {
       const next = { ...prev }
-      for (const id of ids) {
+      ids.forEach((id, i) => {
+        if (results[i].status !== 'fulfilled') return
         const editableId = companionBySourceId.get(id)?.id ?? id
         next[editableId] = (next[editableId] ?? []).filter((c) => c.id !== colId)
-      }
+      })
       return next
     })
+    reportBulkFailures(results, 'remove')
     setShowBulkCol(false)
   }
 
