@@ -577,6 +577,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
 
   const outerRef = useRef<HTMLDivElement>(null)
   const zoomViewportRef = useRef<HTMLDivElement>(null) // scrollable wrapper, spread mode only
+  const settingsWrapperRef = useRef<HTMLDivElement>(null) // for outside-click dismissal of the zoom panel
   // Cursor-anchored zoom: set by the wheel handler, consumed once the resize
   // it anchors against has actually landed in the DOM (see the two consumers).
   const pendingZoomAnchorRef = useRef<{
@@ -604,6 +605,10 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   const scrollRenderTasks = useRef<Map<number, RenderTask>>(new Map()) // 1-based page → task
   const viewModeRef = useRef<ViewMode>(loadSavedViewMode())
   const scrollRestoredRef = useRef(false) // restore position only once per PDF load
+  // Tracks the reading position as {page, frac-into-that-page} so it survives a
+  // uniform re-layout (zoom reset, annotations/bookmarks panel open/close) — the
+  // page slots resize but this anchor pins the same content point in the viewport.
+  const scrollAnchorRef = useRef<{ page: number; frac: number } | null>(null)
 
   // Text-layer refs (selectable, transparent DOM over each canvas) + the live
   // TextLayer instances, so we can cancel/rebuild them on re-render.
@@ -1316,6 +1321,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       scrollPageDivRefs.current
         .get(currentPageRef.current)
         ?.scrollIntoView({ behavior: 'instant', block: 'start' })
+      captureScrollAnchor() // seed the anchor so a panel/zoom change before any scroll still holds
     })
   }, [viewMode, pageDims])
 
@@ -1567,17 +1573,67 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     }
   }, [])
 
-  // Consumes pendingZoomAnchorRef for scroll mode: page-slot dimensions come
-  // straight from React state (zoom), so they're already correct by the time
-  // this layout effect runs — no async canvas render to wait for.
-  useLayoutEffect(() => {
-    const anchor = pendingZoomAnchorRef.current
+  // Dismiss the zoom panel on an outside click. We use a document-level listener
+  // rather than a full-screen overlay div so the panel never blocks scrolling of
+  // the PDF underneath it while it's open.
+  useEffect(() => {
+    if (!showSettings) return
+    function handlePointerDown(e: MouseEvent) {
+      if (!settingsWrapperRef.current?.contains(e.target as Node)) setShowSettings(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [showSettings])
+
+  // Records where the viewport sits as {current page, fraction into that page},
+  // read from live geometry. Cheap (two getBoundingClientRect reads) and writes
+  // only a ref, so it's safe to call on every scroll tick.
+  function captureScrollAnchor() {
     const el = scrollContainerRef.current
-    if (!anchor || anchor.mode !== 'scroll' || !el) return
-    el.scrollLeft = anchor.xFrac * el.scrollWidth - anchor.cx
-    el.scrollTop = anchor.yFrac * el.scrollHeight - anchor.cy
-    pendingZoomAnchorRef.current = null
-  }, [zoom])
+    const div = scrollPageDivRefs.current.get(currentPageRef.current)
+    if (!el || !div) return
+    const containerTop = el.getBoundingClientRect().top
+    const r = div.getBoundingClientRect()
+    scrollAnchorRef.current = {
+      page: currentPageRef.current,
+      frac: r.height ? (containerTop - r.top) / r.height : 0,
+    }
+  }
+
+  // Re-pins the viewport to the stored {page, frac} after a uniform re-layout,
+  // so the same content point stays put even though every page slot resized.
+  function restoreScrollAnchor() {
+    const el = scrollContainerRef.current
+    const anchor = scrollAnchorRef.current
+    if (!el || !anchor) return
+    const div = scrollPageDivRefs.current.get(anchor.page)
+    if (!div) return
+    const containerTop = el.getBoundingClientRect().top
+    const r = div.getBoundingClientRect()
+    const currentAbove = containerTop - r.top // px of this page currently above the fold
+    el.scrollTop += anchor.frac * r.height - currentAbove
+  }
+
+  // Keeps scroll position stable across any layout change that resizes the page
+  // slots in scroll mode — a zoom (button or edit), or the annotations/bookmarks
+  // panel opening/closing (which shrinks the viewport → ResizeObserver → renderKey
+  // bump). A pending cursor anchor (trackpad/ctrl-wheel zoom) takes precedence;
+  // otherwise we re-pin the {page, frac} captured on the last scroll. Page-slot
+  // heights come straight from React state here, so geometry is final by now.
+  useLayoutEffect(() => {
+    if (viewModeRef.current !== 'scroll') return
+    const el = scrollContainerRef.current
+    if (!el) return
+    const cursor = pendingZoomAnchorRef.current
+    if (cursor && cursor.mode === 'scroll') {
+      el.scrollLeft = cursor.xFrac * el.scrollWidth - cursor.cx
+      el.scrollTop = cursor.yFrac * el.scrollHeight - cursor.cy
+      pendingZoomAnchorRef.current = null
+      captureScrollAnchor() // sync the page-anchor to the new cursor-anchored spot
+    } else {
+      restoreScrollAnchor()
+    }
+  }, [zoom, renderKey])
 
   // ── PDF → EPUB conversion ───────────────────────────────────────
 
@@ -2023,7 +2079,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
           )}
 
           {/* Aa zoom settings */}
-          <div className="epub-settings-wrapper">
+          <div className="epub-settings-wrapper" ref={settingsWrapperRef}>
             <button
               className={`epub-top-btn${showSettings ? ' active' : ''}`}
               onClick={() => {
@@ -2036,60 +2092,57 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
             </button>
 
             {showSettings && (
-              <>
-                <div className="epub-settings-overlay" onClick={() => setShowSettings(false)} />
-                <div className="epub-settings-panel">
-                  <div className="epub-settings-row">
-                    <span className="epub-settings-label">Zoom</span>
-                    <div className="epub-settings-group">
-                      <button
-                        className="epub-settings-btn"
-                        onClick={() => setZoomAndSave(zoom - ZOOM_STEP)}
-                        aria-label="Zoom out"
+              <div className="epub-settings-panel">
+                <div className="epub-settings-row">
+                  <span className="epub-settings-label">Zoom</span>
+                  <div className="epub-settings-group">
+                    <button
+                      className="epub-settings-btn"
+                      onClick={() => setZoomAndSave(zoom - ZOOM_STEP)}
+                      aria-label="Zoom out"
+                    >
+                      −
+                    </button>
+                    {editingZoom ? (
+                      <input
+                        className="epub-settings-zoom-input"
+                        type="text"
+                        inputMode="numeric"
+                        value={zoomInput}
+                        autoFocus
+                        onChange={(e) => setZoomInput(e.target.value)}
+                        onKeyDown={handleZoomInputKeyDown}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onBlur={commitZoomEdit}
+                      />
+                    ) : (
+                      <span
+                        className="epub-settings-size-display epub-settings-zoom-display"
+                        onDoubleClick={startEditingZoom}
+                        title="Double-click to enter a custom zoom"
                       >
-                        −
-                      </button>
-                      {editingZoom ? (
-                        <input
-                          className="epub-settings-zoom-input"
-                          type="text"
-                          inputMode="numeric"
-                          value={zoomInput}
-                          autoFocus
-                          onChange={(e) => setZoomInput(e.target.value)}
-                          onKeyDown={handleZoomInputKeyDown}
-                          onFocus={(e) => e.currentTarget.select()}
-                          onBlur={commitZoomEdit}
-                        />
-                      ) : (
-                        <span
-                          className="epub-settings-size-display epub-settings-zoom-display"
-                          onDoubleClick={startEditingZoom}
-                          title="Double-click to enter a custom zoom"
-                        >
-                          {Math.round(zoom * 100)}%
-                        </span>
-                      )}
-                      <button
-                        className="epub-settings-btn"
-                        onClick={() => setZoomAndSave(zoom + ZOOM_STEP)}
-                        aria-label="Zoom in"
-                      >
-                        +
-                      </button>
-                    </div>
-                    <div className="epub-settings-group">
-                      <button
-                        className={`epub-settings-btn${zoom === DEFAULT_ZOOM ? ' active' : ''}`}
-                        onClick={() => setZoomAndSave(DEFAULT_ZOOM)}
-                        title="Reset to default (75%)"
-                      >
-                        Default
-                      </button>
-                    </div>
+                        {Math.round(zoom * 100)}%
+                      </span>
+                    )}
+                    <button
+                      className="epub-settings-btn"
+                      onClick={() => setZoomAndSave(zoom + ZOOM_STEP)}
+                      aria-label="Zoom in"
+                    >
+                      +
+                    </button>
+                  </div>
+                  <div className="epub-settings-group">
+                    <button
+                      className={`epub-settings-btn${zoom === DEFAULT_ZOOM ? ' active' : ''}`}
+                      onClick={() => setZoomAndSave(DEFAULT_ZOOM)}
+                      title="Reset to default (75%)"
+                    >
+                      Default
+                    </button>
                   </div>
                 </div>
-              </>
+              </div>
             )}
           </div>
         </div>
@@ -2133,7 +2186,11 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
 
           {/* Vertical scroll mode — stacked pages, lazy canvas rendering */}
           {ready && viewMode === 'scroll' && pageDims.length > 0 && (
-            <div ref={scrollContainerRef} className="pdf-scroll-container">
+            <div
+              ref={scrollContainerRef}
+              className="pdf-scroll-container"
+              onScroll={captureScrollAnchor}
+            >
               {pageDims.map((dim, idx) => {
                 const pageNum = idx + 1
                 const contW = (outerRef.current?.clientWidth ?? 800) - 48
