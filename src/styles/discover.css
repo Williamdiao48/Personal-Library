@@ -151,6 +151,14 @@
   background: var(--bg-hover);
   color: var(--text-muted);
   white-space: nowrap;
+  /* Ellipsize an over-long tag at the row edge instead of letting it overflow,
+     matching the library card's tag pills. As a flex child, min-width:0 is
+     required so the chip can cap below its content width (default min-width:auto
+     would otherwise override max-width and block the ellipsis). */
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .rec-card-actions {
