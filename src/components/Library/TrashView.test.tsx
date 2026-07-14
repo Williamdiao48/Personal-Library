@@ -69,6 +69,14 @@ describe('TrashView', () => {
     expect(await screen.findByText('Trash is empty')).toBeInTheDocument()
   })
 
+  it('shows an error message when the trash fails to load (RED-2)', async () => {
+    lib.getTrashed.mockRejectedValue(new Error('db is locked'))
+    renderTrash()
+    expect(await screen.findByText(/Failed to load trash: db is locked/)).toBeInTheDocument()
+    // Must not fall through to the empty state on error.
+    expect(screen.queryByText('Trash is empty')).toBeNull()
+  })
+
   it('restores an item and removes its row', async () => {
     lib.getTrashed.mockResolvedValue([trashed()])
     renderTrash()

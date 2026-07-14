@@ -48,6 +48,7 @@ export default function DiscoverView() {
   const [cards, setCards] = useState<Recommendation[]>([])
   const [generatedAt, setGeneratedAt] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [coldStart, setColdStart] = useState(false)
 
@@ -87,6 +88,9 @@ export default function DiscoverView() {
           setGeneratedAt(cached.generatedAt)
         }
       })
+      .catch((err) =>
+        setLoadError(err instanceof Error ? err.message : 'Failed to load recommendations.'),
+      )
       .finally(() => setLoading(false))
   }, [])
 
@@ -221,6 +225,10 @@ export default function DiscoverView() {
       {loading ? (
         <div className="library-state-center">
           <p className="state-text">Loading…</p>
+        </div>
+      ) : loadError && cards.length === 0 ? (
+        <div className="library-state-center">
+          <p className="state-text">Failed to load recommendations: {loadError}</p>
         </div>
       ) : refreshing && cards.length === 0 ? (
         // Cold first refresh: fill the grid with shimmer placeholders so the long

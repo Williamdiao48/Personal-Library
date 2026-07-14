@@ -138,6 +138,12 @@ export function registerLibraryHandlers(): void {
   })
 
   ipcMain.handle('library:saveScrollPos', (_e, id: string, chapter: number, scrollY: number) => {
+    // ROB-1 (audit 2026-07-14): intentionally NOT propagated to derived items,
+    // unlike library:updateProgress above. scroll_chapter/scroll_y are HTML/EPUB
+    // chapter anchors; a PDF companion tracks its position via scroll_position
+    // (synced there) instead, so there's nothing meaningful to mirror across a
+    // derived pair here. If a future format ever shares chapter anchors across a
+    // derived pair, this is the spot that would need the same fan-out.
     run(
       `
       INSERT INTO progress (item_id, scroll_chapter, scroll_y, last_read_at)

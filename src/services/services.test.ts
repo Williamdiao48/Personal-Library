@@ -79,6 +79,10 @@ describe('statsService delegation', () => {
     statsService.getStreaks()
     expect(api.stats.getStreaks).toHaveBeenCalledTimes(1)
   })
+  it('getDashboard forwards the day span', () => {
+    statsService.getDashboard(366)
+    expect(api.stats.getDashboard).toHaveBeenCalledWith(366)
+  })
 })
 
 describe('goalsService delegation', () => {

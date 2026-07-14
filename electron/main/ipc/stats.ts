@@ -1,7 +1,13 @@
 import { ipcMain } from 'electron'
 import { randomUUID } from 'crypto'
 import { run, get, all } from '../db'
-import type { StatsSummary, DailyReading, ItemStats, StreakInfo } from '../../../src/types'
+import type {
+  StatsSummary,
+  DailyReading,
+  ItemStats,
+  StreakInfo,
+  StatsDashboard,
+} from '../../../src/types'
 
 // Generous server-side safety cap. The client already trims idle time using
 // activity-based segmentation; this is only a last-resort guard against
@@ -32,22 +38,58 @@ export function registerStatsHandlers(): void {
 
   // ── Aggregate totals ───────────────────────────────────────────
 
-  ipcMain.handle('stats:getSummary', (): StatsSummary => {
-    const totalMs =
-      get<{ v: number }>(`SELECT COALESCE(SUM(duration), 0) AS v FROM reading_sessions`)?.v ?? 0
+  ipcMain.handle('stats:getSummary', (): StatsSummary => computeSummary())
 
-    const itemsStarted =
-      get<{ v: number }>(`SELECT COUNT(DISTINCT item_id) AS v FROM reading_sessions`)?.v ?? 0
+  // ── Daily timeline ─────────────────────────────────────────────
+  // Returns one row per calendar day that had any reading activity,
+  // within the last `days` days. Caller fills gaps for days with zero.
 
-    const itemsFinished =
-      get<{ v: number }>(`SELECT COUNT(*) AS v FROM progress WHERE scroll_position >= 1`)?.v ?? 0
+  ipcMain.handle('stats:getTimeline', (_e, days: number): DailyReading[] => computeTimeline(days))
 
-    // Estimated words read: word_count × high-water scroll position per item.
-    // max_scroll_position is the furthest point ever reached, so rewinding
-    // to re-read an earlier chapter doesn't deflate the count.
-    // Falls back to scroll_position for rows written before migration 11.
-    const wordsRead =
-      get<{ v: number }>(`
+  // ── Per-item breakdown ─────────────────────────────────────────
+  // Returns all items that have either a reading session or progress,
+  // ordered by total time read descending.
+
+  ipcMain.handle('stats:getByItem', (): ItemStats[] => computeByItem())
+
+  // ── Reading streaks ────────────────────────────────────────────
+  // Computes current streak (consecutive days back from today/yesterday)
+  // and longest all-time streak from the reading_sessions table.
+
+  ipcMain.handle('stats:getStreaks', (): StreakInfo => computeStreaks())
+
+  // ── Combined dashboard (PERF-3, audit 2026-07-14) ──────────────
+  // StatsView needs all four aggregates on mount; bundling them into one handler
+  // collapses four IPC round trips into one (and reads a single consistent DB
+  // snapshot). The individual handlers stay for granular callers/tests.
+  ipcMain.handle('stats:getDashboard', (_e, days: number): StatsDashboard => ({
+    summary: computeSummary(),
+    timeline: computeTimeline(days),
+    byItem: computeByItem(),
+    streaks: computeStreaks(),
+  }))
+}
+
+// ── Query bodies ──────────────────────────────────────────────────────────────
+// Extracted from the handlers so the combined stats:getDashboard can reuse the
+// exact same logic without duplicating SQL.
+
+function computeSummary(): StatsSummary {
+  const totalMs =
+    get<{ v: number }>(`SELECT COALESCE(SUM(duration), 0) AS v FROM reading_sessions`)?.v ?? 0
+
+  const itemsStarted =
+    get<{ v: number }>(`SELECT COUNT(DISTINCT item_id) AS v FROM reading_sessions`)?.v ?? 0
+
+  const itemsFinished =
+    get<{ v: number }>(`SELECT COUNT(*) AS v FROM progress WHERE scroll_position >= 1`)?.v ?? 0
+
+  // Estimated words read: word_count × high-water scroll position per item.
+  // max_scroll_position is the furthest point ever reached, so rewinding
+  // to re-read an earlier chapter doesn't deflate the count.
+  // Falls back to scroll_position for rows written before migration 11.
+  const wordsRead =
+    get<{ v: number }>(`
       SELECT COALESCE(
         SUM(CAST(i.word_count * MIN(COALESCE(p.max_scroll_position, p.scroll_position, 0), 1.0) AS INTEGER)),
         0
@@ -57,17 +99,13 @@ export function registerStatsHandlers(): void {
       WHERE i.word_count IS NOT NULL
     `)?.v ?? 0
 
-    return { totalMs, itemsStarted, itemsFinished, wordsRead }
-  })
+  return { totalMs, itemsStarted, itemsFinished, wordsRead }
+}
 
-  // ── Daily timeline ─────────────────────────────────────────────
-  // Returns one row per calendar day that had any reading activity,
-  // within the last `days` days. Caller fills gaps for days with zero.
-
-  ipcMain.handle('stats:getTimeline', (_e, days: number): DailyReading[] => {
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1_000
-    return all<DailyReading>(
-      `
+function computeTimeline(days: number): DailyReading[] {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1_000
+  return all<DailyReading>(
+    `
       SELECT
         date(started_at / 1000, 'unixepoch', 'localtime') AS date,
         SUM(duration) AS totalMs
@@ -76,16 +114,12 @@ export function registerStatsHandlers(): void {
       GROUP BY date
       ORDER BY date
     `,
-      [cutoff],
-    )
-  })
+    [cutoff],
+  )
+}
 
-  // ── Per-item breakdown ─────────────────────────────────────────
-  // Returns all items that have either a reading session or progress,
-  // ordered by total time read descending.
-
-  ipcMain.handle('stats:getByItem', (): ItemStats[] => {
-    return all<ItemStats>(`
+function computeByItem(): ItemStats[] {
+  return all<ItemStats>(`
       SELECT
         i.id,
         i.title,
@@ -119,55 +153,50 @@ export function registerStatsHandlers(): void {
          OR p.last_read_at IS NOT NULL
       ORDER BY COALESCE(s.total_ms, 0) DESC
     `)
-  })
+}
 
-  // ── Reading streaks ────────────────────────────────────────────
-  // Computes current streak (consecutive days back from today/yesterday)
-  // and longest all-time streak from the reading_sessions table.
-
-  ipcMain.handle('stats:getStreaks', (): StreakInfo => {
-    const rows = all<{ day: string }>(`
+function computeStreaks(): StreakInfo {
+  const rows = all<{ day: string }>(`
       SELECT DISTINCT date(started_at / 1000, 'unixepoch', 'localtime') AS day
       FROM reading_sessions
       ORDER BY day
     `)
 
-    if (rows.length === 0) return { currentStreak: 0, longestStreak: 0 }
+  if (rows.length === 0) return { currentStreak: 0, longestStreak: 0 }
 
-    const days = rows.map((r) => r.day)
+  const days = rows.map((r) => r.day)
 
-    // Longest streak: scan sorted days for the longest consecutive run
-    let longest = 1
-    let run = 1
-    for (let i = 1; i < days.length; i++) {
-      const prev = new Date(days[i - 1] + 'T12:00:00')
-      const curr = new Date(days[i] + 'T12:00:00')
-      const diff = Math.round((curr.getTime() - prev.getTime()) / 86_400_000)
-      run = diff === 1 ? run + 1 : 1
-      longest = Math.max(longest, run)
-    }
+  // Longest streak: scan sorted days for the longest consecutive run
+  let longest = 1
+  let run = 1
+  for (let i = 1; i < days.length; i++) {
+    const prev = new Date(days[i - 1] + 'T12:00:00')
+    const curr = new Date(days[i] + 'T12:00:00')
+    const diff = Math.round((curr.getTime() - prev.getTime()) / 86_400_000)
+    run = diff === 1 ? run + 1 : 1
+    longest = Math.max(longest, run)
+  }
 
-    // Current streak: walk backwards from today; accept yesterday as starting point
-    // if the user hasn't read today yet (so the streak doesn't "break" mid-day).
-    // Use local date parts — toISOString() is UTC and breaks near midnight for
-    // users whose local timezone is behind UTC.
-    const localDateStr = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  // Current streak: walk backwards from today; accept yesterday as starting point
+  // if the user hasn't read today yet (so the streak doesn't "break" mid-day).
+  // Use local date parts — toISOString() is UTC and breaks near midnight for
+  // users whose local timezone is behind UTC.
+  const localDateStr = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
-    const daySet = new Set(days)
-    const today = new Date()
-    const todayStr = localDateStr(today)
-    const check = new Date(today)
-    if (!daySet.has(todayStr)) check.setDate(check.getDate() - 1)
+  const daySet = new Set(days)
+  const today = new Date()
+  const todayStr = localDateStr(today)
+  const check = new Date(today)
+  if (!daySet.has(todayStr)) check.setDate(check.getDate() - 1)
 
-    let current = 0
-    while (true) {
-      const s = localDateStr(check)
-      if (!daySet.has(s)) break
-      current++
-      check.setDate(check.getDate() - 1)
-    }
+  let current = 0
+  while (true) {
+    const s = localDateStr(check)
+    if (!daySet.has(s)) break
+    current++
+    check.setDate(check.getDate() - 1)
+  }
 
-    return { currentStreak: current, longestStreak: longest }
-  })
+  return { currentStreak: current, longestStreak: longest }
 }

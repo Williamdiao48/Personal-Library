@@ -37,6 +37,12 @@ describe('AddToCollectionModal', () => {
     expect(screen.queryByText('Hyperion')).toBeNull()
   })
 
+  it('shows an error message when items fail to load (RED-2)', async () => {
+    lib.getAll.mockRejectedValue(new Error('db is locked'))
+    renderModal()
+    expect(await screen.findByText(/Failed to load items: db is locked/)).toBeInTheDocument()
+  })
+
   it('filters by title/author as you type', async () => {
     lib.getAll.mockResolvedValue([
       mkItem(),

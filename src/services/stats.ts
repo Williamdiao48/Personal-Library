@@ -7,4 +7,5 @@ export const statsService = {
   getTimeline: (days: number) => window.api.stats.getTimeline(days),
   getByItem: () => window.api.stats.getByItem(),
   getStreaks: () => window.api.stats.getStreaks(),
+  getDashboard: (days: number) => window.api.stats.getDashboard(days),
 }

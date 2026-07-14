@@ -8,20 +8,10 @@ import { makeEpubFile, cleanupTempEpubs } from '../../../test/fixtures/epub'
 // (The path-traversal guard has its own tests; here we exercise extraction.)
 vi.mock('../security/paths', () => ({ safeContentPath: (p: string) => p }))
 
-// Mock pdf-parse: real pdf.js needs DOM globals a node test env lacks, and it's
-// heavy. We drive getText() per-test to cover the happy + scanned paths.
-const { mockGetText } = vi.hoisted(() => ({ mockGetText: vi.fn() }))
-vi.mock('pdf-parse', () => ({
-  PDFParse: class {
-    constructor(_opts: unknown) {}
-    getText() {
-      return mockGetText()
-    }
-    destroy() {
-      return Promise.resolve()
-    }
-  },
-}))
+// Mock the pdfjs-dist text extractor: real pdf.js is ESM + heavy. We drive it
+// per-test to cover the happy + scanned paths (it returns the raw string).
+const { mockExtract } = vi.hoisted(() => ({ mockExtract: vi.fn() }))
+vi.mock('../capture/pdfText', () => ({ extractPdfText: mockExtract }))
 
 import { extractPlainText, hasUsableContent, MIN_CONTENT_CHARS } from './contentText'
 
@@ -125,7 +115,7 @@ describe('extractPlainText — pdf', () => {
   it('returns collapsed text on a successful parse', async () => {
     const p = join(TMP, 'doc.pdf')
     writeFileSync(p, Buffer.from('%PDF-1.4 dummy'))
-    mockGetText.mockResolvedValueOnce({ text: `  ${LONG}  ` })
+    mockExtract.mockResolvedValueOnce(`  ${LONG}  `)
     const text = await extractPlainText({ content_type: 'pdf', file_path: p })
     expect(text).toContain('quiet archive')
     expect(text.startsWith(' ')).toBe(false)
@@ -134,7 +124,7 @@ describe('extractPlainText — pdf', () => {
   it('returns "" for a scanned/unparseable PDF (getText throws)', async () => {
     const p = join(TMP, 'scanned.pdf')
     writeFileSync(p, Buffer.from('%PDF-1.4 image only'))
-    mockGetText.mockRejectedValueOnce(new Error('no text layer'))
+    mockExtract.mockRejectedValueOnce(new Error('no text layer'))
     const text = await extractPlainText({ content_type: 'pdf', file_path: p })
     expect(text).toBe('')
     expect(hasUsableContent(text)).toBe(false)

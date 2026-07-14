@@ -68,6 +68,13 @@ describe('TagsView', () => {
     expect(await screen.findByText(/No tags yet/)).toBeInTheDocument()
   })
 
+  it('shows an error message when tags fail to load (RED-2)', async () => {
+    tags.getAll.mockRejectedValue(new Error('db is locked'))
+    renderTags()
+    expect(await screen.findByText(/Failed to load tags: db is locked/)).toBeInTheDocument()
+    expect(screen.queryByText(/No tags yet/)).toBeNull()
+  })
+
   it('creates a tag through the form', async () => {
     tags.create.mockResolvedValue(tag({ id: 't2', name: 'fantasy' }))
     renderTags()

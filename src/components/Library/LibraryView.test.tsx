@@ -21,6 +21,7 @@ vi.mock('@tanstack/react-virtual', () => ({
 // callbacks under test as buttons (the CollectionView.test.tsx pattern).
 type CardProps = {
   item: Item
+  onClick: (e: React.MouseEvent) => void
   onDelete: () => void
   onRatingChange: (r: number | null) => void
   onStatusChange: (s: string | null) => void
@@ -32,6 +33,18 @@ vi.mock('./ItemCard', () => ({
   default: (p: CardProps) => (
     <div data-testid="card">
       <span data-testid="card-title">{p.item.title}</span>
+      {/* Drives bulk selection: a synthetic shift-click into handleCardClick. */}
+      <button
+        onClick={() =>
+          p.onClick({
+            shiftKey: true,
+            stopPropagation() {},
+            preventDefault() {},
+          } as unknown as React.MouseEvent)
+        }
+      >
+        select-{p.item.title}
+      </button>
       <button onClick={() => p.onDelete()}>del-{p.item.title}</button>
       <button onClick={() => p.onRatingChange(5)}>rate-{p.item.title}</button>
       <button onClick={() => p.onStatusChange('finished')}>status-{p.item.title}</button>
@@ -57,14 +70,18 @@ vi.mock('../../services/library', () => ({
     setRating: vi.fn(),
     setStatus: vi.fn(),
   },
-  tagService: { getAll: vi.fn().mockResolvedValue([]) },
+  tagService: {
+    getAll: vi.fn().mockResolvedValue([]),
+    setForItem: vi.fn().mockResolvedValue(undefined),
+  },
   collectionService: {
     getAll: vi.fn().mockResolvedValue([]),
     getAllItemCollections: vi.fn().mockResolvedValue([]),
   },
 }))
-import { libraryService } from '../../services/library'
+import { libraryService, tagService } from '../../services/library'
 const lib = libraryService as unknown as Record<string, ReturnType<typeof vi.fn>>
+const tagSvc = tagService as unknown as Record<string, ReturnType<typeof vi.fn>>
 
 const mkItem = (over: Partial<Item> = {}): Item =>
   ({
@@ -252,5 +269,44 @@ describe('LibraryView — per-card actions', () => {
     expect(screen.getByText('COLLECTIONS MODAL')).toBeInTheDocument()
     fireEvent.click(screen.getByText('review-Alpha'))
     expect(screen.getByText('REVIEW MODAL')).toBeInTheDocument()
+  })
+})
+
+describe('LibraryView — bulk actions (PERF-2 / ROB-2)', () => {
+  beforeEach(() => {
+    lib.getAll.mockResolvedValue([mkItem({ id: 'i1', title: 'Alpha' })])
+    // Reset the item→tag map explicitly: another test permanently overrides
+    // getAllItemTags and clearAllMocks doesn't reset implementations, so without
+    // this the selected item would already have the tag (→ the remove path).
+    lib.getAllItemTags.mockResolvedValue([])
+    tagSvc.getAll.mockResolvedValue([{ id: 't1', name: 'scifi', color: '#f00' }])
+  })
+
+  it('toasts on a partial failure and does not apply the tag locally', async () => {
+    tagSvc.setForItem.mockRejectedValue(new Error('db is locked'))
+    renderLibrary()
+    await screen.findByText('Alpha')
+
+    // Shift-select the card → the bulk action bar appears.
+    fireEvent.click(screen.getByText('select-Alpha'))
+    fireEvent.click(await screen.findByText('Tags')) // open the bulk tag popover
+    fireEvent.click(await screen.findByRole('button', { name: 'scifi' }))
+
+    // Promise.allSettled → 1 rejected → error toast; no throw, no silent success.
+    expect(await screen.findByText(/Couldn't tag 1 of 1 item\./)).toBeInTheDocument()
+    expect(tagSvc.setForItem).toHaveBeenCalledWith('i1', ['t1'])
+  })
+
+  it('applies the tag with no toast when the op succeeds', async () => {
+    tagSvc.setForItem.mockResolvedValue(undefined)
+    renderLibrary()
+    await screen.findByText('Alpha')
+
+    fireEvent.click(screen.getByText('select-Alpha'))
+    fireEvent.click(await screen.findByText('Tags'))
+    fireEvent.click(await screen.findByRole('button', { name: 'scifi' }))
+
+    await waitFor(() => expect(tagSvc.setForItem).toHaveBeenCalledWith('i1', ['t1']))
+    expect(screen.queryByText(/Couldn't tag/)).toBeNull()
   })
 })

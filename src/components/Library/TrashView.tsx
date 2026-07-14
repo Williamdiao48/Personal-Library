@@ -130,6 +130,7 @@ export default function TrashView() {
   const navigate = useNavigate()
   const [items, setItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [emptyConfirming, setEmptyConfirming] = useState(false)
   const [emptyBusy, setEmptyBusy] = useState(false)
 
@@ -137,6 +138,7 @@ export default function TrashView() {
     libraryService
       .getTrashed()
       .then(setItems)
+      .catch((err) => setLoadError(err instanceof Error ? err.message : 'Failed to load trash.'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -202,6 +204,8 @@ export default function TrashView() {
 
       {loading ? (
         <div className="trash-empty">Loading…</div>
+      ) : loadError ? (
+        <div className="trash-empty">Failed to load trash: {loadError}</div>
       ) : items.length === 0 ? (
         <div className="trash-empty">
           <span>Trash is empty</span>

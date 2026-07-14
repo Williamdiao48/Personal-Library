@@ -52,6 +52,25 @@ describe('database bring-up', () => {
     }
   })
 
+  // Index migrations from the 2026-07-14 audit follow-ups.
+  const indexesOf = (db: Database.Database) =>
+    (
+      db.prepare("SELECT name FROM sqlite_master WHERE type='index'").all() as { name: string }[]
+    ).map((r) => r.name)
+
+  it('creates idx_items_derived_from (PERF-1, migration 29)', () => {
+    const db = openTestDb()
+    expect(indexesOf(db)).toContain('idx_items_derived_from')
+  })
+
+  it('drops the redundant idx_item_tags_item_id (LEAN-2, migration 30)', () => {
+    const db = openTestDb()
+    const indexes = indexesOf(db)
+    expect(indexes).not.toContain('idx_item_tags_item_id')
+    // The still-needed reverse index (bare tag_id lookups) must survive.
+    expect(indexes).toContain('idx_item_tags_tag_id')
+  })
+
   const colsOf = (db: Database.Database, table: string) =>
     (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name)
 

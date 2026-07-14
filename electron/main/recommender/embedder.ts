@@ -73,7 +73,6 @@ async function loadPipeline(): Promise<FeatureExtractor> {
     resourcesPath: process.resourcesPath,
   })
   const device = selectDevice(process.platform, process.arch)
-  console.log(`[embedder] loading ${MODEL_ID} from ${localModelPath} (device=${device})`)
   return createExtractor(localModelPath, device)
 }
 

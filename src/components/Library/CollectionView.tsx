@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   DndContext,
@@ -17,6 +17,7 @@ import ReviewModal from './ReviewModal'
 import AddToCollectionModal from './AddToCollectionModal'
 import CustomSelect from '../ui/CustomSelect'
 import MultiSelect from '../ui/MultiSelect'
+import { useGridColumns } from '../../hooks/useGridColumns'
 import type { Item, Tag, Collection, ReadingStatus } from '../../types'
 
 type CollectionSortBy = 'custom' | 'title' | 'date_saved' | 'last_read' | 'word_count' | 'progress'
@@ -108,25 +109,8 @@ export default function CollectionView() {
   // ── Drag ─────────────────────────────────────────────────────────
   const [activeId, setActiveId] = useState<string | null>(null)
 
-  // ── Grid sizing (mirrors LibraryView so card widths are identical) ─
-  const mainRef = useRef<HTMLElement>(null)
-  const GRID_GAP = 20
-  const MIN_COL_WIDTH = 160
-  const [columnsPerRow, setColumnsPerRow] = useState(4)
-  const [colWidth, setColWidth] = useState(MIN_COL_WIDTH)
-
-  useLayoutEffect(() => {
-    const el = mainRef.current
-    if (!el) return
-    const obs = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? el.clientWidth
-      const cols = Math.max(1, Math.floor((width + GRID_GAP) / (MIN_COL_WIDTH + GRID_GAP)))
-      setColumnsPerRow(cols)
-      setColWidth(Math.floor((width - (cols - 1) * GRID_GAP) / cols))
-    })
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [])
+  // ── Grid sizing (shared with LibraryView so card widths are identical) ─
+  const { mainRef, columnsPerRow, colWidth } = useGridColumns()
 
   // ── Modals ───────────────────────────────────────────────────────
   const [showAddModal, setShowAddModal] = useState(false)

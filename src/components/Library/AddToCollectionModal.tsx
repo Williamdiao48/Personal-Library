@@ -26,6 +26,7 @@ export default function AddToCollectionModal({
   const [allItems, setAllItems] = useState<Item[]>([])
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [adding, setAdding] = useState<Set<string>>(new Set())
   const [added, setAdded] = useState<Set<string>>(new Set())
 
@@ -33,6 +34,7 @@ export default function AddToCollectionModal({
     libraryService
       .getAll()
       .then((items) => setAllItems(items.filter((i) => !existingItemIds.has(i.id))))
+      .catch((err) => setLoadError(err instanceof Error ? err.message : 'Failed to load items.'))
       .finally(() => setLoading(false))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -113,6 +115,8 @@ export default function AddToCollectionModal({
         <div className="atc-list">
           {loading ? (
             <p className="atc-empty">Loading…</p>
+          ) : loadError ? (
+            <p className="atc-empty">Failed to load items: {loadError}</p>
           ) : filteredItems.length === 0 ? (
             <p className="atc-empty">
               {query ? 'No matches.' : 'All library items are already in this collection.'}

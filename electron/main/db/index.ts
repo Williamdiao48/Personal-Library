@@ -9,7 +9,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 28
+export const CURRENT_VERSION = 30
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -265,6 +265,22 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
       ('preset-loss-grief',    'Loss & grief',   0),
       ('preset-good-vs-evil',  'Good vs evil',   0);
   `,
+  // Perf (audit 2026-07-14, PERF-1): index items.derived_from. It's the reverse
+  // side of the PDF↔EPUB "derived/companion" link and is queried on the reading
+  // hot path — library:updateProgress runs `WHERE derived_from = ?` on every
+  // (debounced) progress save, and library:setCover on every cover write. Without
+  // this index both are full table scans of `items`, so the cost grew with library
+  // size on the one path that fires while the user is actively reading. IF NOT
+  // EXISTS keeps it self-healing. New index — MIGRATIONS only.
+  29: `CREATE INDEX IF NOT EXISTS idx_items_derived_from ON items(derived_from);`,
+  // Cleanup (audit 2026-07-14, LEAN-2): drop idx_item_tags_item_id (added in
+  // migration 12). item_tags has PRIMARY KEY (item_id, tag_id), and SQLite backs
+  // that PK with an automatic index whose LEADING column is already item_id — so
+  // this standalone index duplicates a prefix of the PK index and serves no query
+  // the PK doesn't, while every item_tags write had to maintain both. IF EXISTS so
+  // it's a no-op on a DB that never had it. (idx_item_tags_tag_id from migration 6
+  // stays — the PK can't serve a bare `WHERE tag_id = ?`.)
+  30: `DROP INDEX IF EXISTS idx_item_tags_item_id;`,
 }
 
 export function initDatabase(): void {

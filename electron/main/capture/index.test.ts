@@ -32,11 +32,10 @@ vi.mock('./fetch', () => ({ fetchPage: vi.fn() }))
 vi.mock('../security/net-guard', () => ({ assertHttpUrl: vi.fn(), safeFetch: vi.fn() }))
 vi.mock('../security/validation', () => ({ assertImportFile: vi.fn(() => Promise.resolve()) }))
 vi.mock('../workers/parse-host', () => ({ parseEpub: vi.fn() }))
-vi.mock('pdf-parse', () => ({
-  PDFParse: vi.fn(() => ({
-    getText: vi.fn(async () => ({ text: 'pdf words extracted' })),
-    destroy: vi.fn(async () => {}),
-  })),
+// Stub the pdfjs-dist text extractor (real pdf.js is ESM + heavy; word-count
+// behavior is what matters here). "pdf words extracted" → 3 words.
+vi.mock('./pdfText', () => ({
+  extractPdfText: vi.fn(async () => 'pdf words extracted'),
 }))
 
 import { captureUrl, refreshContent, getChapterCount, appendChapters, captureFile } from './index'
