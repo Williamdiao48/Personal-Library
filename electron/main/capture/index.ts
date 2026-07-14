@@ -19,7 +19,7 @@ import { safeContentPath } from '../security/paths'
 import { assertImportFile } from '../security/validation'
 import { assertHttpUrl, safeFetch } from '../security/net-guard'
 import { parseEpub } from '../workers/parse-host'
-import { PDFParse } from 'pdf-parse'
+import { extractPdfText } from './pdfText'
 import { computeContentHash } from '../util/contentHash'
 import { persistSourceTags, siteKeyFromUrl } from '../recommender/sourceTags'
 
@@ -483,28 +483,17 @@ async function capturePdf(filePath: string): Promise<CaptureResult> {
   const now = Date.now()
 
   // Extract text for word count and FTS — non-fatal if PDF is image-only or
-  // encrypted. Runs in main (not the F7 worker): pdf.js needs DOM globals
-  // (DOMMatrix, etc.) that a utilityProcess does not provide.
+  // encrypted. Runs in main (not the F7 worker): the bundled pdfjs-dist needs no
+  // DOM globals for text extraction, but keeping it here mirrors the reader and
+  // avoids paying the engine load in the parse worker. F3-hardened flags live in
+  // extractPdfText (CVE-2024-4367 is already fixed in the bundled pdfjs 5.4.x;
+  // the flags are defense-in-depth against future font/eval/XFA issues).
   let wordCount: number | null = null
   let plainText = ''
   try {
     const buffer = readFileSync(filePath)
-    // pdf-parse v2 is class-based; harden the pdf.js sandbox it drives (F3).
-    // (The audited CVE-2024-4367 is already fixed in the bundled pdfjs 5.4.x;
-    // these flags are defense-in-depth against future font/eval/XFA issues.)
-    const parser = new PDFParse({
-      data: buffer,
-      isEvalSupported: false, // no eval() in the pdf.js worker
-      disableFontFace: true, // no external font fetching
-      enableXfa: false, // no XFA form scripting
-    })
-    try {
-      const { text } = await parser.getText()
-      plainText = text
-      wordCount = plainText.split(/\s+/).filter(Boolean).length
-    } finally {
-      await parser.destroy()
-    }
+    plainText = await extractPdfText(buffer)
+    wordCount = plainText.split(/\s+/).filter(Boolean).length
   } catch {
     // Proceed with null word count for scanned/encrypted PDFs
   }

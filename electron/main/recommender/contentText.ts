@@ -1,13 +1,13 @@
 import { readFile } from 'fs/promises'
 import { readFileSync } from 'fs'
-import { PDFParse } from 'pdf-parse'
 import { safeContentPath } from '../security/paths'
 import { extractEpubContent } from '../capture/parsers/epub-content'
+import { extractPdfText as extractPdfBytes } from '../capture/pdfText'
 
 // C1.3 — content → plaintext. Extracts the readable text of a library item so
 // C1.4 can build the D8 Tier-B content fingerprint. One branch per content_type,
 // reusing the app's existing storage conventions (multi-chapter -ch{N}.html,
-// extractEpubContent, the F3-hardened PDFParse). No embedding here.
+// extractEpubContent, the F3-hardened pdfjs-dist text extractor). No embedding here.
 
 /** Minimal item shape this module needs (structurally satisfied by Item). */
 export interface EmbeddableItem {
@@ -77,24 +77,14 @@ function extractEpubText(filePath: string): string {
 }
 
 /**
- * PDF text via the same F3-hardened PDFParse capture uses. Non-fatal: a scanned/
- * encrypted/image-only PDF yields no text → return '' so the caller uses Tier A.
+ * PDF text via the same F3-hardened pdfjs-dist extractor capture uses. Non-fatal:
+ * a scanned/encrypted/image-only PDF yields no text → return '' so the caller uses
+ * Tier A.
  */
 async function extractPdfText(filePath: string): Promise<string> {
   try {
     const buffer = readFileSync(safeContentPath(filePath))
-    const parser = new PDFParse({
-      data: buffer,
-      isEvalSupported: false, // no eval() in the pdf.js worker
-      disableFontFace: true, // no external font fetching
-      enableXfa: false, // no XFA form scripting
-    })
-    try {
-      const { text } = await parser.getText()
-      return text ?? ''
-    } finally {
-      await parser.destroy()
-    }
+    return await extractPdfBytes(buffer)
   } catch {
     return ''
   }

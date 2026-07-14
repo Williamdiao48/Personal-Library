@@ -11,7 +11,7 @@ re-implementing (or omitting) their own checks.
 |---|---|---|---|
 | **F1** — arbitrary file deletion via unvalidated `file_path`/`cover_path` | HIGH | `paths.ts` | ✅ implemented |
 | **F2** — no decompressed-size cap (EPUB zip bomb) + no import-time gate | MEDIUM | `validation.ts` | ✅ implemented |
-| **F3** — `pdf-parse` pdf.js hardening (CVE-2024-4367 class) | MEDIUM | `validation.ts` + `../capture/index.ts` | ✅ implemented¹ |
+| **F3** — pdf.js text-extraction hardening (CVE-2024-4367 class) | MEDIUM | `validation.ts` + `../capture/pdfText.ts` | ✅ implemented¹ |
 | **F4** — SSRF via cover / subresource fetch | MEDIUM | `net-guard.ts` | ✅ implemented² |
 | **F5** — `zip.extractAllTo` on untrusted backup (Zip Slip) | MEDIUM | `zip.ts` | ✅ implemented |
 | **F6** — capture `BrowserWindow`s lack explicit `webPreferences` | LOW | `../capture/fetch.ts` | ✅ implemented |
@@ -53,10 +53,11 @@ Theme: validate and bound every untrusted import before it reaches a parser.
   aggregate total (`ZIP_TOTAL_MAX_BYTES`). Oversized *images* are stripped;
   oversized *chapters* abort the book.
 - **F3** — the audited CVE is already patched (bundled pdfjs is 5.4.x ≫ 4.2.67).
-  The broken v1-style `require('pdf-parse')` call is replaced with the v2
-  `new PDFParse({ … }).getText()` API (which also restores PDF word-count/FTS)
-  and hardened with `isEvalSupported:false` / `disableFontFace:true` /
-  `enableXfa:false`.
+  Text extraction runs on the app's own bundled `pdfjs-dist` (audit LEAN-1 —
+  `pdf-parse` was dropped so the app no longer ships a second pdf.js copy + the
+  `@napi-rs/canvas` native binary) via `extractPdfText` in `../capture/pdfText.ts`,
+  hardened with `isEvalSupported:false` / `disableFontFace:true` /
+  `enableXfa:false`. Restores PDF word-count/FTS just as before.
 - **`zip.ts` (F5)** — `safeExtractAll(zip, destDir)` replaces
   `zip.extractAllTo` in `ipc/backup.ts`: rejects absolute/backslash names,
   routes every entry through `resolveWithin` (F1 guard) so a `../` entry aborts
@@ -127,9 +128,10 @@ memory-safety surface) behind a process boundary.
   `index.ts` tears the worker down on `app.will-quit`.
 
 **Scope:** only the EPUB import parser moved. Two deliberate exclusions:
-- **PDF text extraction stays in main.** `pdf-parse`/pdf.js needs DOM globals
-  (`DOMMatrix`, etc.) that a `utilityProcess` does not provide (it throws
-  `DOMMatrix is not defined` there). PDF keeps its F3 hardening
+- **PDF text extraction stays in main.** It runs on the bundled `pdfjs-dist`
+  `legacy` build (loaded via dynamic `import()` since it's ESM-only); keeping it
+  in main mirrors the reader and avoids paying the engine load in the parse
+  `utilityProcess`. PDF keeps its F3 hardening
   (`isEvalSupported:false`/`disableFontFace:true`/`enableXfa:false`); the audited
   CVE-2024-4367 is already patched in the bundled pdfjs 5.4.x, so this is the same
   LOW residual as before. Sandboxing PDF would require polyfilling DOM globals
