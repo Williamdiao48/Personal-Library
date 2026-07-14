@@ -1735,6 +1735,10 @@ button:disabled {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  /* Contain children to the window so sub-pixel spill can't body-scroll the
+     shell and reveal the app-theme background beneath it — same containment
+     as .library-layout / .trash-layout. Each reader pane scrolls internally. */
+  overflow: hidden;
   --bg: #1a1a1a;
   --bg-surface: #242424;
   --bg-hover: #2e2e2e;
