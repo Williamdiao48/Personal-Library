@@ -77,6 +77,23 @@ describe('captureFfnet', () => {
     )
   })
 
+  // Regression: the old regex required a `/{chapter}` segment, so the bare story
+  // landing URLs users commonly paste (no chapter, with or without a trailing
+  // slash) failed to parse the id. They must now parse and normalize to chapter 1.
+  it.each([
+    'https://www.fanfiction.net/s/12345',
+    'https://www.fanfiction.net/s/12345/',
+    'https://www.fanfiction.net/s/12345?foo=1',
+  ])('parses a chapterless URL (%s) and normalizes to chapter 1', async (url) => {
+    mockBrowser.mockResolvedValue(ffnCh1({ story: '<p>Only chapter.</p>' }))
+
+    const result = await captureFfnet(url)
+
+    expect(mockBrowser).toHaveBeenCalledWith('https://www.fanfiction.net/s/12345/1/')
+    expect(result.title).toBe('FFN Story')
+    expect(result.html).toContain('Only chapter.')
+  })
+
   it('captures a single-chapter story without any session fetch', async () => {
     mockBrowser.mockResolvedValue(
       ffnCh1({ options: ['1. Prologue'], story: '<p>The only chapter.</p>' }),

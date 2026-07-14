@@ -8,8 +8,11 @@ function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-// FF.net URL: https://www.fanfiction.net/s/{storyId}/{chapter}/{slug}
-const FFN_PATH_RE = /\/s\/(\d+)\/\d+\/?([^/?#]*)/
+// FF.net URL: https://www.fanfiction.net/s/{storyId}[/{chapter}[/{slug}]]
+// Only the story id is required — the chapter number and slug are both optional so
+// a bare `/s/{id}` or `/s/{id}/` (the story landing URL users commonly paste) still
+// parses. Group 2 is the optional slug; capture defaults it to '' when absent.
+const FFN_PATH_RE = /\/s\/(\d+)(?:\/\d+)?(?:\/([^/?#]*))?/
 
 // ── Native metadata extraction (F1) ──────────────────────────────────────────
 // FFN packs a story's metadata into a single `#profile_top span.xgray` line:
@@ -199,7 +202,8 @@ export async function captureFfnet(
 ): Promise<SiteContent> {
   const match = FFN_PATH_RE.exec(url)
   if (!match) throw new Error('Could not parse fanfiction.net story ID from URL.')
-  const [, storyId, slug] = match
+  const storyId = match[1]
+  const slug = match[2] ?? '' // absent when the URL has no /chapter/slug tail
 
   // Always start from chapter 1 so we get the full story metadata
   const ch1Url = `https://www.fanfiction.net/s/${storyId}/1/${slug}`
