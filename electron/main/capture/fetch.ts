@@ -54,15 +54,48 @@ export const BROWSER_HEADERS = {
   'Accept-Language': 'en-US,en;q=0.9',
 }
 
-// Plain fetch with browser-like headers. Falls back to the real browser on 403/429.
-export async function fetchPage(url: string): Promise<string> {
-  const res = await fetch(url, {
-    signal: AbortSignal.timeout(15_000),
-    headers: BROWSER_HEADERS,
-  })
-  if (res.ok) return res.text()
-  if (res.status === 403 || res.status === 429) return fetchPageWithBrowser(url)
-  throw new Error(`Failed to fetch page: ${res.status} ${res.statusText}`)
+// Plain fetch with browser-like headers, resilient to transient failures.
+//
+// AO3's first capture request is `?view_full_work=true`, which makes the server
+// render the ENTIRE work into one document. A cold render of a large fic can take
+// longer than a tight timeout, and this call previously used a single 15 s attempt
+// with no retry and no fallback — so one slow response aborted the whole capture
+// with "The operation was aborted due to timeout". (Retrying by hand then "instantly"
+// worked because the first attempt warmed AO3's server-side render cache.)
+//
+// Now transient failures (timeout, network error, or a 5xx — AO3 intermittently
+// returns 525 under load) retry with a short backoff, and a persistent timeout /
+// network error falls back to the real browser, whose 45 s budget and warm session
+// cover the slow-render case. A 403/429 still falls back to the browser immediately
+// (Cloudflare challenge / rate limit); any other 4xx is a real "no such page" and
+// fails fast without retrying.
+export async function fetchPage(url: string, retries = 2, timeoutMs = 30_000): Promise<string> {
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+  let networkErr: unknown = null // a timeout / network failure — worth a browser retry
+  let httpErr: Error | null = null // a persistent 5xx — surface it rather than mask it
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    let res: Response | undefined
+    try {
+      res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: BROWSER_HEADERS })
+    } catch (err) {
+      networkErr = err // network error / timeout → transient, retry
+    }
+    if (res) {
+      if (res.ok) return res.text()
+      // Cloudflare challenge or rate limit — a real browser can solve it.
+      if (res.status === 403 || res.status === 429) return fetchPageWithBrowser(url)
+      // Any other 4xx is a real error (no such work, deleted, etc.) — fail fast.
+      if (res.status < 500) throw new Error(`Failed to fetch page: ${res.status} ${res.statusText}`)
+      httpErr = new Error(`Failed to fetch page: ${res.status} ${res.statusText}`) // 5xx → retry
+    }
+    if (attempt < retries) await sleep(500 * (attempt + 1))
+  }
+  // Retries exhausted. A timeout / network failure is worth one real-browser attempt
+  // (longer budget + warm session) — the AO3 cold-render case, where the retries that
+  // warmed the cache let the browser load land. A persistent 5xx is surfaced instead,
+  // since the browser would happily "load" the origin's error page as content.
+  if (networkErr) return fetchPageWithBrowser(url)
+  throw httpErr ?? new Error(`Failed to fetch page: ${url}`)
 }
 
 // Plain fetch for JSON/XHR endpoints. Some sites (e.g. AO3's tag autocomplete)

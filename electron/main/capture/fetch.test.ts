@@ -68,11 +68,14 @@ describe('fetchPage', () => {
     await expect(fetchPage('https://x.test')).resolves.toBe('hello')
   })
 
-  it('throws on a non-ok, non-403/429 status', async () => {
+  it('throws on a persistent non-ok, non-403/429 status', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(notOkResponse(500, 'Server Error')))
-    await expect(fetchPage('https://x.test')).rejects.toThrow(
+    // retries=0 → fail fast without the backoff wait; a persistent 5xx is surfaced,
+    // not masked behind a browser fallback that would "load" the origin error page.
+    await expect(fetchPage('https://x.test', 0)).rejects.toThrow(
       'Failed to fetch page: 500 Server Error',
     )
+    expect(FakeBrowserWindow.instances).toHaveLength(0)
   })
 
   it.each([403, 429])('falls back to the browser on a %d response', async (status) => {
@@ -83,6 +86,51 @@ describe('fetchPage', () => {
     win.webContents.executeJavaScript.mockResolvedValue('<html>recovered</html>')
     win.webContents.emit('did-finish-load')
     await expect(p).resolves.toBe('<html>recovered</html>')
+  })
+
+  it('retries a transient timeout and then succeeds (no browser needed)', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('The operation was aborted due to timeout'))
+      .mockResolvedValueOnce(okResponse('recovered'))
+    vi.stubGlobal('fetch', fetchMock)
+    const p = fetchPage('https://x.test')
+    await vi.advanceTimersByTimeAsync(500) // first attempt rejects, backoff elapses, retry runs
+    await expect(p).resolves.toBe('recovered')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(FakeBrowserWindow.instances).toHaveLength(0)
+    vi.useRealTimers()
+  })
+
+  it('retries a transient 5xx and then succeeds', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(notOkResponse(525, 'Origin SSL'))
+      .mockResolvedValueOnce(okResponse('recovered'))
+    vi.stubGlobal('fetch', fetchMock)
+    const p = fetchPage('https://x.test')
+    await vi.advanceTimersByTimeAsync(500)
+    await expect(p).resolves.toBe('recovered')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('falls back to the real browser after exhausting retries on a persistent timeout', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValue(new Error('The operation was aborted due to timeout')),
+    )
+    const p = fetchPage('https://x.test', 1) // 2 attempts, both time out
+    await vi.advanceTimersByTimeAsync(500) // single backoff between the two attempts
+    await flush()
+    const win = latestWindow()
+    win.webContents.executeJavaScript.mockResolvedValue('<html>via browser</html>')
+    win.webContents.emit('did-finish-load')
+    await expect(p).resolves.toBe('<html>via browser</html>')
+    vi.useRealTimers()
   })
 })
 
