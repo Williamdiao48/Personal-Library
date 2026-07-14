@@ -6,6 +6,7 @@ import PdfReader, {
   toSpreadStart,
   escapeHtml,
   median,
+  clampZoom,
   buildPdfLines,
   getFirstLines,
   extractTitleFromRect,
@@ -142,9 +143,9 @@ beforeEach(() => {
   localStorage.clear()
   reader.loadBinaryContent.mockResolvedValue(new Uint8Array([1, 2, 3]))
   convert.pdfToEpub.mockResolvedValue({ id: 'e9' })
-  ;(HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = vi.fn(
-    () => ({}),
-  )
+  ;(HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = vi.fn(() => ({
+    drawImage: vi.fn(),
+  }))
   ;(globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver = class {
     observe() {}
     unobserve() {}
@@ -166,6 +167,16 @@ describe('toSpreadStart', () => {
 describe('escapeHtml', () => {
   it('escapes &, <, >, and " (ampersand first so entities are not double-escaped)', () => {
     expect(escapeHtml('a & <b> "c"')).toBe('a &amp; &lt;b&gt; &quot;c&quot;')
+  })
+})
+
+describe('clampZoom', () => {
+  it('passes values within [0.5, 3] through unchanged', () => {
+    expect(clampZoom(1.5)).toBe(1.5)
+  })
+  it('floors below MIN_ZOOM and ceils above MAX_ZOOM', () => {
+    expect(clampZoom(0.1)).toBe(0.5)
+    expect(clampZoom(50)).toBe(3)
   })
 })
 
@@ -392,12 +403,76 @@ describe('PdfReader — header interactions', () => {
     expect(screen.queryByText('SEARCH BAR')).toBeNull()
   })
 
-  it('opens zoom settings and changes the zoom level', async () => {
+  it('opens zoom settings and resets to 75% via the Default preset', async () => {
     renderPdf()
     await screen.findByText('A PDF')
     fireEvent.click(screen.getByRole('button', { name: 'Zoom settings' }))
-    fireEvent.click(screen.getByText('150%'))
-    expect(localStorage.getItem('pdf-zoom')).toBe('1.5')
+    fireEvent.click(screen.getByRole('button', { name: 'Default' }))
+    expect(localStorage.getItem('pdf-zoom')).toBe('0.75')
+  })
+
+  it('edits the zoom value directly via double-click', async () => {
+    renderPdf()
+    await screen.findByText('A PDF')
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom settings' }))
+    fireEvent.doubleClick(screen.getByTitle('Double-click to enter a custom zoom'))
+    const input = screen.getByDisplayValue('100')
+    fireEvent.change(input, { target: { value: '175' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(localStorage.getItem('pdf-zoom')).toBe('1.75')
+    expect(screen.getByText('175%')).toBeInTheDocument()
+  })
+
+  it('discards a zoom edit on Escape', async () => {
+    renderPdf()
+    await screen.findByText('A PDF')
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom settings' }))
+    fireEvent.doubleClick(screen.getByTitle('Double-click to enter a custom zoom'))
+    const input = screen.getByDisplayValue('100')
+    fireEvent.change(input, { target: { value: '175' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(localStorage.getItem('pdf-zoom')).toBeNull()
+    expect(screen.getByTitle('Double-click to enter a custom zoom')).toHaveTextContent('100%')
+  })
+
+  it('steps zoom in and out with the −/+ buttons (Chrome-style stepper)', async () => {
+    renderPdf()
+    await screen.findByText('A PDF')
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    expect(screen.getByText('105%')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
+    expect(screen.getByText('95%')).toBeInTheDocument()
+  })
+
+  it('clamps the −/+ stepper at MIN_ZOOM', async () => {
+    renderPdf()
+    await screen.findByText('A PDF')
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom settings' }))
+    const zoomOut = screen.getByRole('button', { name: 'Zoom out' })
+    for (let i = 0; i < 10; i++) fireEvent.click(zoomOut)
+    expect(screen.getByText('50%')).toBeInTheDocument()
+  })
+
+  it('zooms via Ctrl+wheel (trackpad pinch) and clamps to MAX_ZOOM', async () => {
+    renderPdf()
+    await screen.findByText('A PDF')
+    const outer = document.querySelector('.pdf-page-outer') as HTMLElement
+    // Large negative deltaY = zoom in; overshoots on purpose to prove clamping.
+    fireEvent.wheel(outer, { ctrlKey: true, deltaY: -1000 })
+    await waitFor(() => {
+      expect(localStorage.getItem('pdf-zoom')).toBe('3')
+    })
+  })
+
+  it('leaves zoom untouched on a plain wheel (no ctrlKey) so native scroll can pan', async () => {
+    renderPdf()
+    await screen.findByText('A PDF')
+    const outer = document.querySelector('.pdf-page-outer') as HTMLElement
+    fireEvent.wheel(outer, { ctrlKey: false, deltaY: -500 })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(localStorage.getItem('pdf-zoom')).toBeNull()
   })
 
   it('jumps to a page via the page-number editor (snaps to the spread start)', async () => {

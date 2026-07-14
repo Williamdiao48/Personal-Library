@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as pdfjsLib from 'pdfjs-dist'
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
@@ -38,8 +38,12 @@ const PAGES_PER_CHAPTER = 10
 const CHAPTER_HEADING_RE =
   /^(chapter|part|section|prologue|epilogue|afterword|interlude|book|volume|arc|coda|preface|introduction|conclusion|appendix)\b/i
 
-const ZOOM_LEVELS = [0.75, 1.0, 1.25, 1.5] as const
-type ZoomLevel = (typeof ZOOM_LEVELS)[number]
+// Zoom is continuous (pinch / Ctrl+scroll / the −/+ stepper can land anywhere in
+// [MIN_ZOOM, MAX_ZOOM]); the panel also offers a one-click "Default" (75%) reset.
+const MIN_ZOOM = 0.5
+const MAX_ZOOM = 3
+const ZOOM_STEP = 0.05 // per click of the −/+ stepper (Chrome-style)
+const DEFAULT_ZOOM = 0.75 // the "Default" preset
 
 const LS_PDF_ZOOM = 'pdf-zoom'
 const LS_PDF_VIEW_MODE = 'pdf-view-mode'
@@ -53,9 +57,13 @@ interface PageDim {
 type PdfPage = Awaited<ReturnType<PDFDocumentProxy['getPage']>>
 type PdfViewport = ReturnType<PdfPage['getViewport']>
 
-function loadSavedZoom(): ZoomLevel {
+export function clampZoom(z: number): number {
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
+}
+
+function loadSavedZoom(): number {
   const n = Number(localStorage.getItem(LS_PDF_ZOOM))
-  return (ZOOM_LEVELS as readonly number[]).includes(n) ? (n as ZoomLevel) : 1.0
+  return Number.isFinite(n) && n > 0 ? clampZoom(n) : 1.0
 }
 
 function loadSavedViewMode(): ViewMode {
@@ -568,12 +576,23 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   const navigate = useNavigate()
 
   const outerRef = useRef<HTMLDivElement>(null)
+  const zoomViewportRef = useRef<HTMLDivElement>(null) // scrollable wrapper, spread mode only
+  const settingsWrapperRef = useRef<HTMLDivElement>(null) // for outside-click dismissal of the zoom panel
+  // Cursor-anchored zoom: set by the wheel handler, consumed once the resize
+  // it anchors against has actually landed in the DOM (see the two consumers).
+  const pendingZoomAnchorRef = useRef<{
+    mode: ViewMode
+    xFrac: number
+    yFrac: number
+    cx: number
+    cy: number
+  } | null>(null)
   const leftCanvasRef = useRef<HTMLCanvasElement>(null)
   const rightCanvasRef = useRef<HTMLCanvasElement>(null)
   const pdfDocRef = useRef<PDFDocumentProxy | null>(null)
   const currentPageRef = useRef(1) // always the left (odd) page of the current spread
   const totalPagesRef = useRef(0)
-  const zoomRef = useRef<ZoomLevel>(loadSavedZoom())
+  const zoomRef = useRef<number>(loadSavedZoom())
   const leftRenderTaskRef = useRef<RenderTask | null>(null)
   const rightRenderTaskRef = useRef<RenderTask | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -586,6 +605,10 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   const scrollRenderTasks = useRef<Map<number, RenderTask>>(new Map()) // 1-based page → task
   const viewModeRef = useRef<ViewMode>(loadSavedViewMode())
   const scrollRestoredRef = useRef(false) // restore position only once per PDF load
+  // Tracks the reading position as {page, frac-into-that-page} so it survives a
+  // uniform re-layout (zoom reset, annotations/bookmarks panel open/close) — the
+  // page slots resize but this anchor pins the same content point in the viewport.
+  const scrollAnchorRef = useRef<{ page: number; frac: number } | null>(null)
 
   // Text-layer refs (selectable, transparent DOM over each canvas) + the live
   // TextLayer instances, so we can cancel/rebuild them on re-render.
@@ -599,12 +622,14 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   const [currentPage, setCurrentPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [zoom, setZoom] = useState<ZoomLevel>(loadSavedZoom)
+  const [zoom, setZoom] = useState<number>(loadSavedZoom)
   const [showSettings, setShowSettings] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [editing, setEditing] = useState(false)
   const [pageInput, setPageInput] = useState('')
+  const [editingZoom, setEditingZoom] = useState(false)
+  const [zoomInput, setZoomInput] = useState('')
   const [renderKey, setRenderKey] = useState(0)
   const [viewMode, setViewMode] = useState<ViewMode>(loadSavedViewMode)
   const [pageDims, setPageDims] = useState<PageDim[]>([])
@@ -777,10 +802,18 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     }
   }
 
-  // Render the highlight/note overlays for one page (scale-1 rects × liveScale).
+  // Render the highlight/note overlays for one page. Positioned in *percentages*
+  // of the page's scale-1 dimensions rather than px×liveScale: the highlight
+  // layer is inset:0 over the canvas, so it already tracks the canvas size via
+  // pure CSS. Percentage boxes therefore scale in lockstep with the canvas as
+  // zoom changes — no dependency on pageScales/React state, so they never lag or
+  // stutter behind a continuous pinch. (pageScales is still used for capture &
+  // hit-testing, which are one-shot and read the live scale directly.)
   function pageOverlays(pageNum: number) {
-    const scale = pageScales[pageNum]
-    if (!scale) return null
+    const dim = pageDims[pageNum - 1]
+    if (!dim) return null
+    const { width: pw, height: ph } = dim
+    if (!pw || !ph) return null
     return annot.annotations
       .filter(
         (a) => a.position === pageNum && a.rects && (a.type === 'highlight' || a.type === 'note'),
@@ -789,7 +822,6 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
         const rects = parseRects(a.rects)
         const isNote = a.type === 'note'
         return rects.map((rect, ri) => {
-          const box = scaleRectToPx(rect, scale)
           // Notes read like the HTML/EPUB marks: transparent + dashed underline,
           // with the ✱ marker on the final rect only (parity with inline marks).
           const cls = isNote
@@ -801,7 +833,12 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
               className={cls}
               data-annotation-id={a.id}
               data-color={isNote ? undefined : (a.color ?? 'yellow')}
-              style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
+              style={{
+                left: `${(rect[0] / pw) * 100}%`,
+                top: `${(rect[1] / ph) * 100}%`,
+                width: `${(rect[2] / pw) * 100}%`,
+                height: `${(rect[3] / ph) * 100}%`,
+              }}
             />
           )
         })
@@ -1006,9 +1043,9 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       } catch {
         /* cancelled — a newer render superseded this one */
       }
-      setPageScales((prev) =>
-        prev[pageNum] === viewport.scale ? prev : { ...prev, [pageNum]: viewport.scale },
-      )
+      // Note: pageScales (read by capture/hit-testing) is set by the render paths
+      // the moment the canvas resizes, not here — waiting on the text-layer render
+      // left it a frame stale right after a zoom.
     },
     [],
   )
@@ -1047,16 +1084,60 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       if (cancelled) return
       const base = page.getViewport({ scale: 1 })
       const fitScale = Math.min(colW / base.width, avH / base.height)
-      const scale = Math.min(fitScale * z, fitScale * 2.5) // cap at 2.5× fit
+      const scale = fitScale * z // z is already clamped to [MIN_ZOOM, MAX_ZOOM]
       const vp = page.getViewport({ scale })
-      canvas.width = Math.round(vp.width)
-      canvas.height = Math.round(vp.height)
-      const task = page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport: vp })
+
+      // Render into an offscreen canvas and only flip the visible one once
+      // the new bitmap is ready. Resizing a canvas clears it immediately, so
+      // resizing the visible canvas up front blanks the page for the whole
+      // (async) render — during a continuous pinch that's every frame, i.e.
+      // a visible flicker/strobe.
+      const offscreen = document.createElement('canvas')
+      offscreen.width = Math.round(vp.width)
+      offscreen.height = Math.round(vp.height)
+
+      const task = page.render({
+        canvas: offscreen,
+        canvasContext: offscreen.getContext('2d')!,
+        viewport: vp,
+      })
       setTask(task)
       try {
         await task.promise
-        if (!cancelled) setTask(null)
-        if (!cancelled) await buildTextLayer(pageNum, page, textContainer, vp)
+        if (cancelled) return
+        setTask(null)
+
+        canvas.width = offscreen.width
+        canvas.height = offscreen.height
+
+        // Consume the pending zoom anchor right as the resize lands — this is
+        // the one moment we know for certain the canvas (and therefore the
+        // .pdf-spread box) reflects the new zoom. Anchored off the left canvas
+        // since it's always present; reading scrollWidth/Height here forces the
+        // layout the width/height assignment above just invalidated.
+        if (canvas === leftC) {
+          const anchor = pendingZoomAnchorRef.current
+          const vpEl = zoomViewportRef.current
+          if (anchor && anchor.mode === 'spread' && vpEl) {
+            vpEl.scrollLeft = anchor.xFrac * vpEl.scrollWidth - anchor.cx
+            vpEl.scrollTop = anchor.yFrac * vpEl.scrollHeight - anchor.cy
+            pendingZoomAnchorRef.current = null
+          }
+        }
+
+        canvas.getContext('2d')!.drawImage(offscreen, 0, 0)
+
+        // Record the live render scale for this page. It's read (one-shot) by
+        // text capture and hit-testing; overlay *display* is percentage-based and
+        // tracks the canvas via CSS, so it doesn't depend on this. Set at the
+        // resize (not at the end of the slower text-layer render) so a capture
+        // right after a zoom uses the current scale.
+        setPageScales((prev) =>
+          prev[pageNum] === vp.scale ? prev : { ...prev, [pageNum]: vp.scale },
+        )
+
+        // Rebuild the text layer at this exact viewport (keeps text selection aligned).
+        await buildTextLayer(pageNum, page, textContainer, vp)
       } catch (err: unknown) {
         const name = err instanceof Error ? err.name : ''
         if (name !== 'RenderingCancelledException') {
@@ -1112,16 +1193,33 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       const page = await doc.getPage(pageNum)
       const contW = outer.clientWidth - 48
       const base = page.getViewport({ scale: 1 })
-      const scale = Math.min((contW / base.width) * zoomRef.current, (contW / base.width) * 2.5)
+      const scale = (contW / base.width) * zoomRef.current
       const vp = page.getViewport({ scale })
-      canvas.width = Math.round(vp.width)
-      canvas.height = Math.round(vp.height)
 
-      const task = page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport: vp })
+      // Same double-buffer as spread mode: render off-canvas first and only
+      // flip the visible canvas once the bitmap is ready, so a page never
+      // shows a blanked/cleared frame mid-render (a continuous pinch retriggers
+      // this every animation frame, so an in-place resize would flicker hard).
+      const offscreen = document.createElement('canvas')
+      offscreen.width = Math.round(vp.width)
+      offscreen.height = Math.round(vp.height)
+
+      const task = page.render({
+        canvas: offscreen,
+        canvasContext: offscreen.getContext('2d')!,
+        viewport: vp,
+      })
       scrollRenderTasks.current.set(pageNum, task)
       try {
         await task.promise
         scrollRenderTasks.current.delete(pageNum)
+        canvas.width = offscreen.width
+        canvas.height = offscreen.height
+        canvas.getContext('2d')!.drawImage(offscreen, 0, 0)
+        // Record the live render scale for capture/hit-testing (see spread path).
+        setPageScales((prev) =>
+          prev[pageNum] === vp.scale ? prev : { ...prev, [pageNum]: vp.scale },
+        )
         await buildTextLayer(pageNum, page, scrollTextLayerRefs.current.get(pageNum) ?? null, vp)
       } catch (err: unknown) {
         if (err instanceof Error && err.name !== 'RenderingCancelledException') {
@@ -1223,6 +1321,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       scrollPageDivRefs.current
         .get(currentPageRef.current)
         ?.scrollIntoView({ behavior: 'instant', block: 'start' })
+      captureScrollAnchor() // seed the anchor so a panel/zoom change before any scroll still holds
     })
   }, [viewMode, pageDims])
 
@@ -1372,10 +1471,11 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
 
   // ── Zoom ────────────────────────────────────────────────────────
 
-  function setZoomAndSave(z: ZoomLevel) {
-    zoomRef.current = z
-    setZoom(z)
-    localStorage.setItem(LS_PDF_ZOOM, String(z))
+  function setZoomAndSave(z: number) {
+    const clamped = clampZoom(z)
+    zoomRef.current = clamped
+    setZoom(clamped)
+    localStorage.setItem(LS_PDF_ZOOM, String(clamped))
     if (viewModeRef.current === 'scroll') {
       // Cancel all in-flight scroll renders; renderKey change re-triggers the IO effect
       scrollRenderTasks.current.forEach((t) => t.cancel())
@@ -1383,6 +1483,157 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       setRenderKey((k) => k + 1)
     }
   }
+
+  function startEditingZoom() {
+    setZoomInput(String(Math.round(zoom * 100)))
+    setEditingZoom(true)
+  }
+
+  function commitZoomEdit() {
+    const n = parseInt(zoomInput, 10)
+    if (!isNaN(n)) setZoomAndSave(n / 100)
+    setEditingZoom(false)
+  }
+
+  function handleZoomInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      commitZoomEdit()
+    }
+    if (e.key === 'Escape') {
+      setEditingZoom(false)
+    }
+  }
+
+  // Trackpad pinch arrives as `wheel` events with ctrlKey=true (the standard
+  // cross-browser convention — Electron has no separate pinch-gesture API
+  // unless setVisualZoomLevelLimits is enabled, which this app doesn't do).
+  // Real Ctrl+scroll hits the same path. rAF-coalesce so a pinch burst commits
+  // one zoom update per frame instead of a pdf.js re-render per wheel tick.
+  //
+  // Zoom naturally resizes the content from a fixed origin, which drags
+  // whatever was under the cursor away from it — without this it looks like
+  // the page "scrolls" as you zoom. We capture the content point under the
+  // cursor as a fraction of the scrollable area *before* the change here, but
+  // deliberately do NOT restore it on a guessed timer/frame delay — spread
+  // mode's canvas resize happens asynchronously (after an awaited
+  // doc.getPage()), so a fixed-delay restore can race a fast second pinch
+  // tick and fight itself. Instead we stash it in pendingZoomAnchorRef and let
+  // whichever code path actually knows the resize just happened consume it:
+  // the scroll-mode layout effect below (sizes are synchronous with React
+  // state there), or renderOnePage's spread-mode effect (right after it sets
+  // canvas.width/height, the one moment we know for certain the resize is real).
+  useEffect(() => {
+    const outer = outerRef.current
+    if (!outer) return
+    let pendingDelta = 0
+    let rafId: number | null = null
+    let cursorX = 0
+    let cursorY = 0
+
+    function scrollEl() {
+      return viewModeRef.current === 'scroll' ? scrollContainerRef.current : zoomViewportRef.current
+    }
+
+    function commit() {
+      rafId = null
+      const factor = Math.exp(-pendingDelta / 100)
+      pendingDelta = 0
+
+      const el = scrollEl()
+      if (el) {
+        const rect = el.getBoundingClientRect()
+        const cx = cursorX - rect.left
+        const cy = cursorY - rect.top
+        pendingZoomAnchorRef.current = {
+          mode: viewModeRef.current,
+          xFrac: el.scrollWidth ? (el.scrollLeft + cx) / el.scrollWidth : 0,
+          yFrac: el.scrollHeight ? (el.scrollTop + cy) / el.scrollHeight : 0,
+          cx,
+          cy,
+        }
+      }
+
+      setZoomAndSave(zoomRef.current * factor)
+    }
+
+    function handleWheel(e: WheelEvent) {
+      if (!e.ctrlKey) return // plain scroll/swipe pans the zoomed content natively
+      e.preventDefault() // suppress Chromium's default ctrl+wheel page zoom
+      pendingDelta += e.deltaY
+      cursorX = e.clientX
+      cursorY = e.clientY
+      if (rafId === null) rafId = requestAnimationFrame(commit)
+    }
+
+    outer.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      outer.removeEventListener('wheel', handleWheel)
+      if (rafId !== null) cancelAnimationFrame(rafId)
+    }
+  }, [])
+
+  // Dismiss the zoom panel on an outside click. We use a document-level listener
+  // rather than a full-screen overlay div so the panel never blocks scrolling of
+  // the PDF underneath it while it's open.
+  useEffect(() => {
+    if (!showSettings) return
+    function handlePointerDown(e: MouseEvent) {
+      if (!settingsWrapperRef.current?.contains(e.target as Node)) setShowSettings(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [showSettings])
+
+  // Records where the viewport sits as {current page, fraction into that page},
+  // read from live geometry. Cheap (two getBoundingClientRect reads) and writes
+  // only a ref, so it's safe to call on every scroll tick.
+  function captureScrollAnchor() {
+    const el = scrollContainerRef.current
+    const div = scrollPageDivRefs.current.get(currentPageRef.current)
+    if (!el || !div) return
+    const containerTop = el.getBoundingClientRect().top
+    const r = div.getBoundingClientRect()
+    scrollAnchorRef.current = {
+      page: currentPageRef.current,
+      frac: r.height ? (containerTop - r.top) / r.height : 0,
+    }
+  }
+
+  // Re-pins the viewport to the stored {page, frac} after a uniform re-layout,
+  // so the same content point stays put even though every page slot resized.
+  function restoreScrollAnchor() {
+    const el = scrollContainerRef.current
+    const anchor = scrollAnchorRef.current
+    if (!el || !anchor) return
+    const div = scrollPageDivRefs.current.get(anchor.page)
+    if (!div) return
+    const containerTop = el.getBoundingClientRect().top
+    const r = div.getBoundingClientRect()
+    const currentAbove = containerTop - r.top // px of this page currently above the fold
+    el.scrollTop += anchor.frac * r.height - currentAbove
+  }
+
+  // Keeps scroll position stable across any layout change that resizes the page
+  // slots in scroll mode — a zoom (button or edit), or the annotations/bookmarks
+  // panel opening/closing (which shrinks the viewport → ResizeObserver → renderKey
+  // bump). A pending cursor anchor (trackpad/ctrl-wheel zoom) takes precedence;
+  // otherwise we re-pin the {page, frac} captured on the last scroll. Page-slot
+  // heights come straight from React state here, so geometry is final by now.
+  useLayoutEffect(() => {
+    if (viewModeRef.current !== 'scroll') return
+    const el = scrollContainerRef.current
+    if (!el) return
+    const cursor = pendingZoomAnchorRef.current
+    if (cursor && cursor.mode === 'scroll') {
+      el.scrollLeft = cursor.xFrac * el.scrollWidth - cursor.cx
+      el.scrollTop = cursor.yFrac * el.scrollHeight - cursor.cy
+      pendingZoomAnchorRef.current = null
+      captureScrollAnchor() // sync the page-anchor to the new cursor-anchored spot
+    } else {
+      restoreScrollAnchor()
+    }
+  }, [zoom, renderKey])
 
   // ── PDF → EPUB conversion ───────────────────────────────────────
 
@@ -1828,7 +2079,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
           )}
 
           {/* Aa zoom settings */}
-          <div className="epub-settings-wrapper">
+          <div className="epub-settings-wrapper" ref={settingsWrapperRef}>
             <button
               className={`epub-top-btn${showSettings ? ' active' : ''}`}
               onClick={() => {
@@ -1841,25 +2092,57 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
             </button>
 
             {showSettings && (
-              <>
-                <div className="epub-settings-overlay" onClick={() => setShowSettings(false)} />
-                <div className="epub-settings-panel">
-                  <div className="epub-settings-row">
-                    <span className="epub-settings-label">Zoom</span>
-                    <div className="epub-settings-group">
-                      {ZOOM_LEVELS.map((z) => (
-                        <button
-                          key={z}
-                          className={`epub-settings-btn${zoom === z ? ' active' : ''}`}
-                          onClick={() => setZoomAndSave(z)}
-                        >
-                          {Math.round(z * 100)}%
-                        </button>
-                      ))}
-                    </div>
+              <div className="epub-settings-panel">
+                <div className="epub-settings-row">
+                  <span className="epub-settings-label">Zoom</span>
+                  <div className="epub-settings-group">
+                    <button
+                      className="epub-settings-btn"
+                      onClick={() => setZoomAndSave(zoom - ZOOM_STEP)}
+                      aria-label="Zoom out"
+                    >
+                      −
+                    </button>
+                    {editingZoom ? (
+                      <input
+                        className="epub-settings-zoom-input"
+                        type="text"
+                        inputMode="numeric"
+                        value={zoomInput}
+                        autoFocus
+                        onChange={(e) => setZoomInput(e.target.value)}
+                        onKeyDown={handleZoomInputKeyDown}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onBlur={commitZoomEdit}
+                      />
+                    ) : (
+                      <span
+                        className="epub-settings-size-display epub-settings-zoom-display"
+                        onDoubleClick={startEditingZoom}
+                        title="Double-click to enter a custom zoom"
+                      >
+                        {Math.round(zoom * 100)}%
+                      </span>
+                    )}
+                    <button
+                      className="epub-settings-btn"
+                      onClick={() => setZoomAndSave(zoom + ZOOM_STEP)}
+                      aria-label="Zoom in"
+                    >
+                      +
+                    </button>
+                  </div>
+                  <div className="epub-settings-group">
+                    <button
+                      className={`epub-settings-btn${zoom === DEFAULT_ZOOM ? ' active' : ''}`}
+                      onClick={() => setZoomAndSave(DEFAULT_ZOOM)}
+                      title="Reset to default (75%)"
+                    >
+                      Default
+                    </button>
                   </div>
                 </div>
-              </>
+              </div>
             )}
           </div>
         </div>
@@ -1873,35 +2156,41 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
 
           {/* Two-page spread — left canvas always present, right only when there's a page */}
           {ready && viewMode === 'spread' && (
-            <div className="pdf-spread">
-              <div
-                className="pdf-page-canvas-wrap"
-                data-page={currentPage}
-                onContextMenu={(e) => handlePageContextMenu(e, currentPage)}
-                onClick={(e) => handlePageClick(e, currentPage)}
-              >
-                <canvas ref={leftCanvasRef} />
-                <div className="textLayer" ref={leftTextLayerRef} />
-                <div className="pdf-highlight-layer">{pageOverlays(currentPage)}</div>
-              </div>
-              {showRight && (
+            <div ref={zoomViewportRef} className="pdf-zoom-viewport">
+              <div className="pdf-spread">
                 <div
                   className="pdf-page-canvas-wrap"
-                  data-page={currentPage + 1}
-                  onContextMenu={(e) => handlePageContextMenu(e, currentPage + 1)}
-                  onClick={(e) => handlePageClick(e, currentPage + 1)}
+                  data-page={currentPage}
+                  onContextMenu={(e) => handlePageContextMenu(e, currentPage)}
+                  onClick={(e) => handlePageClick(e, currentPage)}
                 >
-                  <canvas ref={rightCanvasRef} />
-                  <div className="textLayer" ref={rightTextLayerRef} />
-                  <div className="pdf-highlight-layer">{pageOverlays(currentPage + 1)}</div>
+                  <canvas ref={leftCanvasRef} />
+                  <div className="textLayer" ref={leftTextLayerRef} />
+                  <div className="pdf-highlight-layer">{pageOverlays(currentPage)}</div>
                 </div>
-              )}
+                {showRight && (
+                  <div
+                    className="pdf-page-canvas-wrap"
+                    data-page={currentPage + 1}
+                    onContextMenu={(e) => handlePageContextMenu(e, currentPage + 1)}
+                    onClick={(e) => handlePageClick(e, currentPage + 1)}
+                  >
+                    <canvas ref={rightCanvasRef} />
+                    <div className="textLayer" ref={rightTextLayerRef} />
+                    <div className="pdf-highlight-layer">{pageOverlays(currentPage + 1)}</div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
           {/* Vertical scroll mode — stacked pages, lazy canvas rendering */}
           {ready && viewMode === 'scroll' && pageDims.length > 0 && (
-            <div ref={scrollContainerRef} className="pdf-scroll-container">
+            <div
+              ref={scrollContainerRef}
+              className="pdf-scroll-container"
+              onScroll={captureScrollAnchor}
+            >
               {pageDims.map((dim, idx) => {
                 const pageNum = idx + 1
                 const contW = (outerRef.current?.clientWidth ?? 800) - 48

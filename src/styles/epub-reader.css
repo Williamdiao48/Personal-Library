@@ -505,6 +505,35 @@
   flex-shrink: 0;
 }
 
+/* Double-click affordance for the editable zoom readout */
+.epub-settings-zoom-display {
+  width: 34px;
+  cursor: text;
+  border-bottom: 1px dashed #555;
+}
+
+.epub-settings-zoom-display:hover {
+  border-bottom-color: #999;
+  color: #fff;
+}
+
+.epub-settings-zoom-input {
+  width: 40px;
+  background: #1e1e1e;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #d4d4d4;
+  font-size: 13px;
+  text-align: center;
+  padding: 2px 4px;
+  outline: none;
+  flex-shrink: 0;
+}
+
+.epub-settings-zoom-input:focus {
+  border-color: #888;
+}
+
 /* ── Light theme ─────────────────────────────────────────────────────────── */
 
 .epub-theme-light .epub-page-outer {
