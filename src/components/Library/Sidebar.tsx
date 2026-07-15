@@ -14,8 +14,6 @@ interface CollectionMgmt {
 
 interface Props {
   collectionMgmt: CollectionMgmt
-  authors: string[]
-  authorItemCounts: Record<string, number>
   captureJobs: CaptureJob[]
   onDismissJob: (id: string) => void
   trashedCount: number
@@ -66,8 +64,6 @@ function LiveEta({ job }: { job: CaptureJob }) {
 
 const Sidebar = memo(function Sidebar({
   collectionMgmt,
-  authors,
-  authorItemCounts,
   captureJobs,
   onDismissJob,
   trashedCount,
@@ -81,7 +77,6 @@ const Sidebar = memo(function Sidebar({
   const currentFilter = searchParams.get('filter')
   const currentTag = searchParams.get('tag')
   const currentAuthor = searchParams.get('author')
-  const [authorsExpanded, setAuthorsExpanded] = useState(true)
 
   const isAllActive = !currentFilter && !currentTag && !currentAuthor && location.pathname === '/'
 
@@ -351,35 +346,6 @@ const Sidebar = memo(function Sidebar({
             </p>
           )}
         </section>
-
-        {/* ── Authors ─────────────────────────────────── */}
-        {authors.length > 0 && (
-          <section className="sidebar-authors">
-            <div className="sidebar-authors-header">
-              <h2 className="sidebar-authors-title">Authors</h2>
-              <button
-                className="sidebar-authors-toggle"
-                onClick={() => setAuthorsExpanded((s) => !s)}
-                aria-label={authorsExpanded ? 'Collapse authors' : 'Expand authors'}
-              >
-                {authorsExpanded ? '▾' : '▸'}
-              </button>
-            </div>
-            {authorsExpanded &&
-              authors.map((author) => {
-                const encoded = encodeURIComponent(author)
-                const isActive = currentAuthor === author
-                return (
-                  <div key={author} className={`sidebar-author-row${isActive ? ' active' : ''}`}>
-                    <Link className="sidebar-author-link" to={`/?author=${encoded}`} title={author}>
-                      {author}
-                    </Link>
-                    <span className="sidebar-author-count">{authorItemCounts[author] ?? 0}</span>
-                  </div>
-                )
-              })}
-          </section>
-        )}
 
         {/* ── Capture jobs ─────────────────────────────── */}
         {captureJobs.length > 0 && (

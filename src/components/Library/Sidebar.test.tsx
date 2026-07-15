@@ -31,8 +31,6 @@ function renderSidebar(
 ) {
   const props = {
     collectionMgmt: mgmt(),
-    authors: [] as string[],
-    authorItemCounts: {} as Record<string, number>,
     captureJobs: [] as CaptureJob[],
     onDismissJob: vi.fn(),
     trashedCount: 0,
@@ -242,17 +240,6 @@ describe('Sidebar — collections CRUD', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
     })
     expect(screen.getByText('Failed to delete collection.')).toBeInTheDocument()
-  })
-})
-
-describe('Sidebar — authors', () => {
-  it('lists authors with counts and collapses the section', () => {
-    renderSidebar({ authors: ['Ann', 'Bob'], authorItemCounts: { Ann: 4, Bob: 1 } })
-    expect(screen.getByRole('link', { name: 'Ann' })).toBeInTheDocument()
-    expect(screen.getByText('4')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse authors' }))
-    expect(screen.queryByRole('link', { name: 'Ann' })).toBeNull()
   })
 })
 
