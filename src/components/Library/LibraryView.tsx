@@ -164,22 +164,12 @@ export default function LibraryView() {
     )
   }, [items])
 
-  // ── Authors list + counts ─────────────────────────────────────
+  // ── Authors list (for the filter-bar Author dropdown) ─────────
 
   const allAuthors = useMemo(
     () => [...new Set(items.map((i) => i.author).filter((a): a is string => !!a))].sort(),
     [items],
   )
-
-  const authorItemCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const item of items) {
-      if (!groupedEpubIds.has(item.id) && item.author) {
-        counts[item.author] = (counts[item.author] ?? 0) + 1
-      }
-    }
-    return counts
-  }, [items, groupedEpubIds])
 
   // ── Collection item-count map ─────────────────────────────────
   // Computed client-side so it stays accurate without extra DB calls.
@@ -710,8 +700,6 @@ export default function LibraryView() {
     >
       <Sidebar
         collectionMgmt={collectionMgmt}
-        authors={allAuthors}
-        authorItemCounts={authorItemCounts}
         captureJobs={captureJobs}
         onDismissJob={dismissJob}
         trashedCount={trashedCount}
