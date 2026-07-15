@@ -162,8 +162,11 @@
   font-size: 0.82rem;
 }
 
+.rec-card-desc-wrap {
+  margin-top: 2px;
+}
 .rec-card-desc {
-  margin: 2px 0 0;
+  margin: 0;
   font-size: 0.8rem;
   line-height: 1.4;
   color: var(--text-muted);
@@ -171,6 +174,46 @@
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
+}
+/* Expanded: drop the clamp so the full blurb shows in place. */
+.rec-card-desc--expanded {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+}
+/* "Show more"/"Show less" affordance — a text button with a chevron that rotates
+   to point up when expanded. */
+.rec-card-desc-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rec-card-desc-toggle:hover span {
+  text-decoration: underline;
+}
+.rec-card-desc-chevron {
+  flex-shrink: 0;
+  /* Nudge down 1px so the glyph sits optically centered against the label's
+     x-height (position offset, so it's independent of the rotate transform). */
+  position: relative;
+  top: 1px;
+  transition: transform 0.15s ease;
+}
+.rec-card-desc-toggle[aria-expanded='true'] .rec-card-desc-chevron {
+  transform: rotate(180deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-card-desc-chevron {
+    transition: none;
+  }
 }
 
 .rec-card-why {
