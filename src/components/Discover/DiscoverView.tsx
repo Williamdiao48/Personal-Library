@@ -220,72 +220,76 @@ export default function DiscoverView() {
         )}
       </header>
 
-      <p className="discover-subtitle">{subtitle}</p>
+      <div className="discover-body">
+        <div className="discover-content">
+          <p className="discover-subtitle">{subtitle}</p>
 
-      {loading ? (
-        <div className="library-state-center">
-          <p className="state-text">Loading…</p>
-        </div>
-      ) : loadError && cards.length === 0 ? (
-        <div className="library-state-center">
-          <p className="state-text">Failed to load recommendations: {loadError}</p>
-        </div>
-      ) : refreshing && cards.length === 0 ? (
-        // Cold first refresh: fill the grid with shimmer placeholders so the long
-        // uncached wait reads as "working" instead of a bare empty state.
-        <div className="discover-grid">
-          {Array.from({ length: PAGE_SIZE }, (_, i) => (
-            <SkeletonCard key={`refresh-skeleton-${i}`} />
-          ))}
-        </div>
-      ) : coldStart ? (
-        <div className="empty-state">
-          <h2 className="empty-state-title">Discover is learning your taste</h2>
-          <p className="empty-state-body">
-            Read and rate a few items in your library, then refresh — recommendations are built from
-            what you like.
-          </p>
-        </div>
-      ) : cards.length === 0 ? (
-        <div className="empty-state">
-          <h2 className="empty-state-title">No recommendations yet</h2>
-          <p className="empty-state-body">
-            Tap Find recommendations to discover fics and books based on the library you&apos;ve
-            built.
-          </p>
-          <button className="btn-primary" onClick={handleRefresh} disabled={refreshing}>
-            {refreshing ? 'Refreshing…' : 'Find recommendations'}
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="discover-grid">
-            {cards.slice(0, visibleCount).map((rec) => (
-              <RecommendationCard
-                key={rec.sourceId}
-                rec={rec}
-                onAdd={handleAdd}
-                onDismiss={handleDismiss}
-                onOpen={handleOpen}
-              />
-            ))}
-            {/* Shimmering placeholders so a fetch that takes a beat reads as "loading". */}
-            {loadingMore &&
-              Array.from({ length: 3 }, (_, i) => <SkeletonCard key={`skeleton-${i}`} />)}
-          </div>
-          {/* Sentinel: reveals more of the pool, then auto-loads the next page. */}
-          <div ref={sentinelRef} className="discover-sentinel" aria-hidden="true" />
-          {loadingMore && (
-            <p className="discover-more-status">
-              <span className="discover-spinner" aria-hidden="true" />
-              Finding more…
-            </p>
+          {loading ? (
+            <div className="library-state-center">
+              <p className="state-text">Loading…</p>
+            </div>
+          ) : loadError && cards.length === 0 ? (
+            <div className="library-state-center">
+              <p className="state-text">Failed to load recommendations: {loadError}</p>
+            </div>
+          ) : refreshing && cards.length === 0 ? (
+            // Cold first refresh: fill the grid with shimmer placeholders so the long
+            // uncached wait reads as "working" instead of a bare empty state.
+            <div className="discover-grid">
+              {Array.from({ length: PAGE_SIZE }, (_, i) => (
+                <SkeletonCard key={`refresh-skeleton-${i}`} />
+              ))}
+            </div>
+          ) : coldStart ? (
+            <div className="empty-state">
+              <h2 className="empty-state-title">Discover is learning your taste</h2>
+              <p className="empty-state-body">
+                Read and rate a few items in your library, then refresh — recommendations are built
+                from what you like.
+              </p>
+            </div>
+          ) : cards.length === 0 ? (
+            <div className="empty-state">
+              <h2 className="empty-state-title">No recommendations yet</h2>
+              <p className="empty-state-body">
+                Tap Find recommendations to discover fics and books based on the library you&apos;ve
+                built.
+              </p>
+              <button className="btn-primary" onClick={handleRefresh} disabled={refreshing}>
+                {refreshing ? 'Refreshing…' : 'Find recommendations'}
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="discover-grid">
+                {cards.slice(0, visibleCount).map((rec) => (
+                  <RecommendationCard
+                    key={rec.sourceId}
+                    rec={rec}
+                    onAdd={handleAdd}
+                    onDismiss={handleDismiss}
+                    onOpen={handleOpen}
+                  />
+                ))}
+                {/* Shimmering placeholders so a fetch that takes a beat reads as "loading". */}
+                {loadingMore &&
+                  Array.from({ length: 3 }, (_, i) => <SkeletonCard key={`skeleton-${i}`} />)}
+              </div>
+              {/* Sentinel: reveals more of the pool, then auto-loads the next page. */}
+              <div ref={sentinelRef} className="discover-sentinel" aria-hidden="true" />
+              {loadingMore && (
+                <p className="discover-more-status">
+                  <span className="discover-spinner" aria-hidden="true" />
+                  Finding more…
+                </p>
+              )}
+              {exhausted && (
+                <p className="discover-more-status discover-more-end">You&apos;re all caught up</p>
+              )}
+            </>
           )}
-          {exhausted && (
-            <p className="discover-more-status discover-more-end">You&apos;re all caught up</p>
-          )}
-        </>
-      )}
+        </div>
+      </div>
 
       {showAddModal && (
         <AddItemModal
