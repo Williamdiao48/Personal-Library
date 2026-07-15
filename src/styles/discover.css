@@ -162,6 +162,17 @@
   font-size: 0.82rem;
 }
 
+.rec-card-desc {
+  margin: 2px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
 .rec-card-why {
   font-size: 0.7rem;
   color: var(--text-muted);

@@ -70,6 +70,12 @@ export default function RecommendationCard({ rec, onAdd, onDismiss, onOpen }: Pr
         </div>
         {rec.author && <div className="rec-card-author">by {rec.author}</div>}
 
+        {rec.description && (
+          <p className="rec-card-desc" title={rec.description}>
+            {rec.description}
+          </p>
+        )}
+
         {chips.length > 0 && (
           <>
             {heading && <div className="rec-card-why">{heading}</div>}
