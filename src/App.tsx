@@ -12,6 +12,7 @@ import SettingsView from './components/Settings/SettingsView'
 import TrashView from './components/Library/TrashView'
 import CollectionView from './components/Library/CollectionView'
 import TagsView from './components/Library/TagsView'
+import AuthorsView from './components/Library/AuthorsView'
 import DiscoverView from './components/Discover/DiscoverView'
 import AnnotationsView from './components/Annotations/AnnotationsView'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -101,6 +102,7 @@ export default function App() {
                 <Route path="/trash" element={<TrashView />} />
                 <Route path="/collection/:id" element={<CollectionView />} />
                 <Route path="/tags" element={<TagsView />} />
+                <Route path="/authors" element={<AuthorsView />} />
                 <Route path="/discover" element={<DiscoverView />} />
                 <Route path="/annotations" element={<AnnotationsView />} />
               </Routes>

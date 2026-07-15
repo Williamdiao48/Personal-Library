@@ -218,6 +218,12 @@ const Sidebar = memo(function Sidebar({
         >
           Manage Tags
         </Link>
+        <Link
+          className={`sidebar-link${location.pathname === '/authors' ? ' active' : ''}`}
+          to="/authors"
+        >
+          Authors
+        </Link>
       </nav>
 
       <div className="sidebar-scroll">

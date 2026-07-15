@@ -94,7 +94,6 @@ export default function CollectionView() {
   const [allCollections, setAllCollections] = useState<Collection[]>([])
   const [collectionItemCounts, setCollectionItemCounts] = useState<Record<string, number>>({})
   const [trashedCount, setTrashedCount] = useState(0)
-  const [allLibraryItems, setAllLibraryItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -133,14 +132,12 @@ export default function CollectionView() {
       libraryService.getAllItemTags(),
       collectionService.getAllItemCollections(),
       libraryService.getTrashed(),
-      libraryService.getAll(),
     ])
-      .then(([cols, its, tags, itemTags, itemCols, trashed, allItems]) => {
+      .then(([cols, its, tags, itemTags, itemCols, trashed]) => {
         setCollection(cols.find((c) => c.id === id) ?? null)
         setAllCollections(cols)
         setAllTags(tags)
         setItems(its)
-        setAllLibraryItems(allItems)
         setTrashedCount(trashed.length)
 
         const tagById = Object.fromEntries(tags.map((t) => [t.id, t]))
@@ -237,19 +234,6 @@ export default function CollectionView() {
     ],
   )
 
-  // ── Sidebar author data (full library, not just this collection) ──
-  const sidebarAuthors = useMemo(
-    () => [...new Set(allLibraryItems.map((i) => i.author).filter((a): a is string => !!a))].sort(),
-    [allLibraryItems],
-  )
-
-  const sidebarAuthorCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const item of allLibraryItems)
-      if (item.author) counts[item.author] = (counts[item.author] ?? 0) + 1
-    return counts
-  }, [allLibraryItems])
-
   // ── Filter + sort pipeline ───────────────────────────────────────
   const allAuthors = useMemo(() => {
     const set = new Set<string>()
@@ -341,8 +325,6 @@ export default function CollectionView() {
     <div className="library-layout">
       <Sidebar
         collectionMgmt={collectionMgmt}
-        authors={sidebarAuthors}
-        authorItemCounts={sidebarAuthorCounts}
         captureJobs={[]}
         onDismissJob={() => {}}
         trashedCount={trashedCount}
@@ -354,7 +336,6 @@ export default function CollectionView() {
             {collection?.name ?? '…'}
             {!loading && (
               <span className="collection-count">
-                {' '}
                 · {items.length} {items.length === 1 ? 'item' : 'items'}
               </span>
             )}

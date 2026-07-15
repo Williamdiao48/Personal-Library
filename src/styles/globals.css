@@ -559,9 +559,22 @@ body,
 }
 
 .library-header h1 {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   font-size: 20px;
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+
+/* The muted "· N items" count reads as a subtitle beside the title. Sit it
+   just below optical center — baseline alignment looks too low, dead center
+   looks too high — so it lines up with the heading. (Spacing comes from the
+   h1's flex gap, so the count span carries no leading whitespace of its own.) */
+.collection-count {
+  align-self: center;
+  position: relative;
+  top: 1px;
 }
 
 .library-grid {
@@ -3833,6 +3846,113 @@ html[data-theme='sepia'] .item-card-refresh-status--error {
 }
 .tag-row:hover {
   background: var(--bg-hover);
+}
+
+/* ── Authors view ─────────────────────────────────────────────────────────── */
+
+.authors-view-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 680px;
+}
+
+.authors-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.authors-search {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 14px;
+}
+.authors-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.authors-sort {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.authors-sort-btn {
+  padding: 5px 12px;
+  background: none;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    color var(--t-fast),
+    background var(--t-fast);
+}
+.authors-sort-btn:hover {
+  color: var(--text);
+}
+.authors-sort-btn.active {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.authors-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.author-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-fast);
+}
+.author-row:hover {
+  background: var(--bg-hover);
+}
+
+.author-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.author-row-count {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.authors-empty {
+  color: var(--text-muted);
+  font-size: 14px;
+  padding: 16px 0;
 }
 
 /* ── ColorInput shared component ─────────────────────────────────────────── */

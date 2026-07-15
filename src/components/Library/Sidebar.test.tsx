@@ -81,6 +81,13 @@ describe('Sidebar — navigation', () => {
     expect(screen.getByRole('link', { name: 'Manage Tags' }).className).toContain('active')
   })
 
+  it('marks Authors active on the authors route', () => {
+    renderSidebar({}, ['/authors'])
+    const authors = screen.getByRole('link', { name: 'Authors' })
+    expect(authors).toHaveAttribute('href', '/authors')
+    expect(authors.className).toContain('active')
+  })
+
   it('shows the Discover nav entry when the setting is enabled', () => {
     renderSidebar()
     expect(screen.getByRole('link', { name: 'Discover' })).toHaveAttribute('href', '/discover')

@@ -109,7 +109,6 @@ export default function TagsView() {
   const [itemCounts, setItemCounts] = useState<Record<string, number>>({})
   const [allCollections, setAllCollections] = useState<Collection[]>([])
   const [collectionItemCounts, setCollectionItemCounts] = useState<Record<string, number>>({})
-  const [allLibraryItems, setAllLibraryItems] = useState<import('../../types').Item[]>([])
   const [trashedCount, setTrashedCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -125,12 +124,10 @@ export default function TagsView() {
       tagService.getItemCounts(),
       collectionService.getAll(),
       collectionService.getAllItemCollections(),
-      libraryService.getAll(),
       libraryService.getTrashed(),
     ])
-      .then(([allTags, counts, cols, itemCols, allItems, trashed]) => {
+      .then(([allTags, counts, cols, itemCols, trashed]) => {
         setTags(allTags)
-        setAllLibraryItems(allItems)
         setTrashedCount(trashed.length)
 
         const countsMap: Record<string, number> = {}
@@ -146,18 +143,6 @@ export default function TagsView() {
       .catch((err) => setLoadError(err instanceof Error ? err.message : 'Failed to load tags.'))
       .finally(() => setLoading(false))
   }, [])
-
-  const sidebarAuthors = useMemo(
-    () => [...new Set(allLibraryItems.map((i) => i.author).filter((a): a is string => !!a))].sort(),
-    [allLibraryItems],
-  )
-
-  const sidebarAuthorCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const item of allLibraryItems)
-      if (item.author) counts[item.author] = (counts[item.author] ?? 0) + 1
-    return counts
-  }, [allLibraryItems])
 
   const handleCollectionCreate = useCallback(async (name: string) => {
     const col = await collectionService.create(name)
@@ -233,8 +218,6 @@ export default function TagsView() {
     <div className="library-layout">
       <Sidebar
         collectionMgmt={collectionMgmt}
-        authors={sidebarAuthors}
-        authorItemCounts={sidebarAuthorCounts}
         captureJobs={[]}
         onDismissJob={() => {}}
         trashedCount={trashedCount}
@@ -246,7 +229,6 @@ export default function TagsView() {
             Tags
             {!loading && (
               <span className="collection-count">
-                {' '}
                 · {tags.length} {tags.length === 1 ? 'tag' : 'tags'}
               </span>
             )}
