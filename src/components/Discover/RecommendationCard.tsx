@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useLayoutEffect } from 'react'
 import type { Recommendation, RecommendationSource } from '../../types'
 
 // Deterministic per-card cover color (mirrors ItemCard) for the no-cover / broken
@@ -50,6 +50,31 @@ export default function RecommendationCard({ rec, onAdd, onDismiss, onOpen }: Pr
   const showImg = rec.coverUrl && imgOk
   const { heading, chips } = cardChips(rec)
 
+  // Long blurbs clamp to 3 lines with an inline "…more"/"less" toggle. Only offer
+  // the toggle when the text actually overflows the clamp — measured after layout
+  // and re-checked on resize (the card reflows with the grid column width).
+  const [descExpanded, setDescExpanded] = useState(false)
+  const [descOverflowing, setDescOverflowing] = useState(false)
+  const descRef = useRef<HTMLParagraphElement>(null)
+
+  useLayoutEffect(() => {
+    const el = descRef.current
+    if (!el) return
+    // Only meaningful while clamped; when expanded the clamp is off so
+    // scrollHeight === clientHeight — keep the last-known overflow verdict so the
+    // "less" toggle stays put.
+    const measure = () => {
+      if (descExpanded) return
+      setDescOverflowing(el.scrollHeight > el.clientHeight + 1)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [rec.description, descExpanded])
+
+  const showDescToggle = descOverflowing || descExpanded
+
   return (
     <div className="rec-card">
       <div
@@ -71,9 +96,40 @@ export default function RecommendationCard({ rec, onAdd, onDismiss, onOpen }: Pr
         {rec.author && <div className="rec-card-author">by {rec.author}</div>}
 
         {rec.description && (
-          <p className="rec-card-desc" title={rec.description}>
-            {rec.description}
-          </p>
+          <div className="rec-card-desc-wrap">
+            <p
+              ref={descRef}
+              className={`rec-card-desc${descExpanded ? ' rec-card-desc--expanded' : ''}`}
+            >
+              {rec.description}
+            </p>
+            {showDescToggle && (
+              <button
+                type="button"
+                className="rec-card-desc-toggle"
+                aria-expanded={descExpanded}
+                onClick={() => setDescExpanded((v) => !v)}
+              >
+                <span>{descExpanded ? 'Show less' : 'Show more'}</span>
+                <svg
+                  className="rec-card-desc-chevron"
+                  width="10"
+                  height="10"
+                  viewBox="0 0 10 10"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M2 3.5 L5 6.5 L8 3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            )}
+          </div>
         )}
 
         {chips.length > 0 && (

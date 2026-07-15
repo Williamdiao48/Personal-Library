@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import RecommendationCard, { sourceLabel, cardChips } from './RecommendationCard'
+import { fireResize } from '../../../test/renderer/setup'
 import type { Recommendation } from '../../types'
 
 const rec = (over: Partial<Recommendation> = {}): Recommendation => ({
@@ -70,5 +71,57 @@ describe('RecommendationCard', () => {
 
     await user.click(screen.getByText('Already read'))
     expect(h.onDismiss).toHaveBeenCalledWith(r, 'already-read')
+  })
+})
+
+describe('RecommendationCard description', () => {
+  const handlers = () => ({ onAdd: vi.fn(), onDismiss: vi.fn(), onOpen: vi.fn() })
+  const longDesc = 'A very long summary that would wrap well past the three-line clamp.'
+
+  // jsdom does no layout, so scrollHeight/clientHeight are both 0 and nothing
+  // reads as overflowing. Stub them on the clamped paragraph, then drive a resize
+  // so the card re-measures and reveals the toggle.
+  function forceOverflow(el: HTMLElement) {
+    Object.defineProperty(el, 'scrollHeight', { configurable: true, value: 100 })
+    Object.defineProperty(el, 'clientHeight', { configurable: true, value: 42 })
+    act(() => fireResize(el))
+  }
+
+  it('renders nothing for a null description', () => {
+    const { container } = render(
+      <RecommendationCard rec={rec({ description: null })} {...handlers()} />,
+    )
+    expect(container.querySelector('.rec-card-desc')).toBeNull()
+  })
+
+  it('shows the blurb but no toggle when it fits within the clamp', () => {
+    render(<RecommendationCard rec={rec({ description: longDesc })} {...handlers()} />)
+    expect(screen.getByText(longDesc)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument()
+  })
+
+  it('reveals a "Show more" toggle when the blurb overflows the clamp', () => {
+    const { container } = render(
+      <RecommendationCard rec={rec({ description: longDesc })} {...handlers()} />,
+    )
+    forceOverflow(container.querySelector('.rec-card-desc') as HTMLElement)
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeInTheDocument()
+  })
+
+  it('expands in place and collapses back on toggle click', async () => {
+    const user = userEvent.setup()
+    const { container } = render(
+      <RecommendationCard rec={rec({ description: longDesc })} {...handlers()} />,
+    )
+    const p = container.querySelector('.rec-card-desc') as HTMLElement
+    forceOverflow(p)
+
+    await user.click(screen.getByRole('button', { name: 'Show more' }))
+    expect(screen.getByRole('button', { name: 'Show less' })).toBeInTheDocument()
+    expect(p).toHaveClass('rec-card-desc--expanded')
+
+    await user.click(screen.getByRole('button', { name: 'Show less' }))
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeInTheDocument()
+    expect(p).not.toHaveClass('rec-card-desc--expanded')
   })
 })

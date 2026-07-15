@@ -5,15 +5,37 @@ import { afterEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
 
 // jsdom has no ResizeObserver, but components that size themselves to their
-// container (e.g. CollectionView's grid) construct one in a layout effect. A
-// no-op stub is enough for tests that don't assert on observed dimensions.
-if (!('ResizeObserver' in globalThis)) {
-  class ResizeObserverStub {
-    observe(): void {}
-    unobserve(): void {}
-    disconnect(): void {}
+// container (e.g. CollectionView's grid, RecommendationCard's clamp measurement)
+// construct one in a layout effect. This stub is a no-op by default — it only
+// fires when a test explicitly calls `fireResize(el)`. Because ResizeObserver is
+// used all over the app, `fireResize` targets a specific observed element and
+// fires only the observers watching it — so concurrently-running suites (which
+// share this global stub) can't cross-fire each other's observers.
+class ResizeObserverStub {
+  static instances: ResizeObserverStub[] = []
+  callback: ResizeObserverCallback
+  elements = new Set<Element>()
+  constructor(cb: ResizeObserverCallback) {
+    this.callback = cb
+    ResizeObserverStub.instances.push(this)
   }
-  ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub
+  observe(el: Element): void {
+    this.elements.add(el)
+  }
+  unobserve(el: Element): void {
+    this.elements.delete(el)
+  }
+  disconnect(): void {
+    this.elements.clear()
+  }
+}
+;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub
+
+/** Fire every ResizeObserver currently observing `el` (usually exactly one). */
+export function fireResize(el: Element): void {
+  for (const inst of ResizeObserverStub.instances) {
+    if (inst.elements.has(el)) inst.callback([], inst as unknown as ResizeObserver)
+  }
 }
 
 // jsdom has no IntersectionObserver, but DiscoverView's infinite-scroll sentinel
@@ -49,4 +71,5 @@ export function fireIntersection(isIntersecting = true): void {
 afterEach(() => {
   cleanup()
   IntersectionObserverStub.instances = []
+  ResizeObserverStub.instances = []
 })
