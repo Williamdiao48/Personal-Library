@@ -71,6 +71,7 @@ const rec = (over: Partial<Recommendation> = {}): Recommendation => ({
   subjects: ['Harry Potter'],
   matchedTags: ['Harry Potter'],
   score: 0.9,
+  description: null,
   ...over,
 })
 

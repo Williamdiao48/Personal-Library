@@ -259,8 +259,12 @@ export interface Recommendation {
   matchedTags: string[]
   /** Max cosine to a taste centroid. */
   score: number
-  /** Optional LLM "why we picked this" blurb — deferred past Chunk 5. */
-  why?: string
+  /**
+   * The work's own blurb shown on the card — a fic's summary (AO3/FFN, scraped
+   * from the results page) or a book's OpenLibrary description. Null when the
+   * source carries none (common for OpenLibrary books).
+   */
+  description: string | null
 }
 
 /** The Discover refresh result: cards + when they were generated + a cold-start flag. */

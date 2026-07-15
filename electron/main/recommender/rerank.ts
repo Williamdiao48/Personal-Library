@@ -399,5 +399,6 @@ export async function recommend(
     subjects: c.subjects,
     matchedTags: matchedTags(c.subjects, seedTerms),
     score: scoreById.get(c.sourceId) ?? 0,
+    description: c.description,
   }))
 }

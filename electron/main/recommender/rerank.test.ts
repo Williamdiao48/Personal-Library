@@ -333,7 +333,7 @@ describe('recommend', () => {
     const out = await recommend(stubEmbedder, [openLibrarySource])
     expect(out.map((c) => c.title)).toEqual(['Fresh One', 'Fresh Two'])
     expect(out[0].sourceId).toBe('/works/F1')
-    expect(out[0].why).toBeUndefined() // no LLM blurb in Chunk 4
+    expect(out[0].description).toBeNull() // OpenLibrary stub carries no blurb
     expect(out[0].score).toBeCloseTo(1, 5) // candidate east vs. east centroid
     // Widened output (C5.1): source badge, an openable URL, own subjects, "why" chips.
     expect(out[0].source).toBe('book')
