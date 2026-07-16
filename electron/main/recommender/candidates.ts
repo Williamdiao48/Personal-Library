@@ -287,7 +287,11 @@ export async function fetchWorkDescription(
 }
 
 /** Map `items` with at most `limit` calls in flight, preserving input order in the result. */
-async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+export async function mapPool<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
   const results = new Array<R>(items.length)
   let next = 0
   const worker = async (): Promise<void> => {

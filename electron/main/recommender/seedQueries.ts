@@ -30,8 +30,12 @@ export interface SeedQuery {
 }
 
 export const SEED = {
-  MAX_SUBJECTS: 6, // top-N tag→subject queries
-  MAX_AUTHORS: 4, // top-N author queries
+  // Subjects lead, authors are a deliberate minority: with owned books now resolved
+  // to real OpenLibrary subjects (ownedBookSubjects.ts), subject: queries carry the
+  // cross-author discovery, while a couple of author: queries still surface the
+  // occasional new title from a favorite author (not "more of the same" flooding).
+  MAX_SUBJECTS: 10, // top-N tag/subject→subject queries
+  MAX_AUTHORS: 2, // top-N author queries
 } as const
 
 /** Strip embedded quotes and collapse whitespace so the term is safe to wrap in `"…"`. */

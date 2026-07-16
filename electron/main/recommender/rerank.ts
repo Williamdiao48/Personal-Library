@@ -177,6 +177,66 @@ export function bucketOf(source: SourceName): SourceBucket {
   return source === 'book' ? 'book' : 'fic'
 }
 
+/** Normalized author identity (lowercase, punctuation-stripped) for diversity dedup
+ *  and owned-author matching; '' for a null/blank author. Pure. */
+export function authorKey(author: string | null): string {
+  return (author ?? '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export const BOOK_DIVERSITY = {
+  // ≤ this share of book slots may go to authors the reader already owns, so the feed
+  // skews to discovery (the "favor new authors" choice). The rest are authors new to
+  // the reader. A per-author cap of 1 keeps any single author to one card.
+  OWNED_AUTHOR_FRACTION: 0.2,
+} as const
+
+/**
+ * Author-diverse book selection (§ "favor new authors"): at most ONE book per author,
+ * and books by authors the reader already owns are capped to
+ * `round(quota × OWNED_AUTHOR_FRACTION)` so discovery leads. New-author books fill
+ * first (MMR within), then the small owned-author allowance; if either side
+ * underfills, the remainder tops up from whatever's left so the feed never shrinks.
+ * Pure — the caller sorts the merged picks.
+ */
+export function diversifyBookPicks(
+  bookScored: ScoredCandidate[],
+  ownedAuthors: Set<string>,
+  quota: number,
+  lambda: number,
+  cfg = BOOK_DIVERSITY,
+): ScoredCandidate[] {
+  if (quota <= 0) return []
+
+  // 1. ≤1 per author: keep the highest-scoring candidate for each normalized author.
+  const byAuthor = new Map<string, ScoredCandidate>()
+  for (const s of [...bookScored].sort((a, b) => b.score - a.score)) {
+    const key = authorKey(s.cand.author)
+    if (!byAuthor.has(key)) byAuthor.set(key, s)
+  }
+  const deduped = [...byAuthor.values()]
+
+  // 2. Prefer authors new to the reader; cap owned-author books to the fraction.
+  const owned = deduped.filter((s) => ownedAuthors.has(authorKey(s.cand.author)))
+  const fresh = deduped.filter((s) => !ownedAuthors.has(authorKey(s.cand.author)))
+  const ownedTarget = Math.min(owned.length, Math.round(quota * cfg.OWNED_AUTHOR_FRACTION))
+  const freshTarget = quota - ownedTarget
+
+  const picks = [...mmrSelect(fresh, freshTarget, lambda), ...mmrSelect(owned, ownedTarget, lambda)]
+
+  // 3. Never shrink: top up from the leftovers (new-author side short, or owned past
+  //    its cap) until we hit the quota or run out.
+  if (picks.length < quota) {
+    const taken = new Set(picks.map((s) => s.cand.sourceId))
+    const rest = deduped.filter((s) => !taken.has(s.cand.sourceId))
+    picks.push(...mmrSelect(rest, quota - picks.length, lambda))
+  }
+  return picks
+}
+
 /**
  * Split `k` slots between book and fic in proportion to the library mix, rounding
  * the book share and giving fic the remainder. All-of-one-kind → all slots there.
@@ -203,10 +263,15 @@ export function selectByQuota(
   k: number,
   alloc: { book: number; fic: number },
   lambda: number,
+  ownedAuthors: Set<string> = new Set(),
 ): ScoredCandidate[] {
   const book = scored.filter((s) => bucketOf(s.cand.source) === 'book')
   const fic = scored.filter((s) => bucketOf(s.cand.source) === 'fic')
-  const picked = [...mmrSelect(book, alloc.book, lambda), ...mmrSelect(fic, alloc.fic, lambda)]
+  // Books get author-diversity (≤1/author, favor new authors); fics keep plain MMR.
+  const picked = [
+    ...diversifyBookPicks(book, ownedAuthors, alloc.book, lambda),
+    ...mmrSelect(fic, alloc.fic, lambda),
+  ]
 
   if (picked.length < k) {
     const takenIds = new Set(picked.map((s) => s.cand.sourceId))
@@ -231,12 +296,14 @@ export function verifyCandidates(picked: Candidate[], fetched: Candidate[]): Can
 
 const FANFIC_URL_RE = /archiveofourown\.org|fanfiction\.net/i
 
-/** The library-derived rerank inputs, both from a SINGLE scan of `items`. */
+/** The library-derived rerank inputs, all from a SINGLE scan of `items`. */
 interface LibrarySnapshot {
   /** Owned + dismissed exclusion sets (§9 step 2). */
   exclude: ExcludeSets
   /** Library composition — book vs fic — for proportional allocation. */
   mix: { book: number; fic: number }
+  /** Normalized authors already in the library — book selection favors NEW authors. */
+  ownedAuthors: Set<string>
 }
 
 /**
@@ -248,6 +315,7 @@ interface LibrarySnapshot {
 function loadLibrarySnapshot(): LibrarySnapshot {
   const keys = new Set<string>()
   const ids = new Set<string>()
+  const ownedAuthors = new Set<string>()
   let book = 0
   let fic = 0
 
@@ -255,6 +323,8 @@ function loadLibrarySnapshot(): LibrarySnapshot {
     `SELECT title, author, source_url FROM items WHERE deleted_at IS NULL`,
   )) {
     keys.add(candidateKey(r.title, r.author))
+    const ak = authorKey(r.author)
+    if (ak) ownedAuthors.add(ak)
     if (r.source_url) {
       ids.add(r.source_url)
       if (FANFIC_URL_RE.test(r.source_url)) fic++
@@ -272,7 +342,7 @@ function loadLibrarySnapshot(): LibrarySnapshot {
     if (r.source) ids.add(r.source)
   }
 
-  return { exclude: { keys, ids }, mix: { book, fic } }
+  return { exclude: { keys, ids }, mix: { book, fic }, ownedAuthors }
 }
 
 // ── orchestrator ──────────────────────────────────────────────────────────────
@@ -382,7 +452,7 @@ export async function recommend(
   // mix so the feed mirrors what the reader actually reads (not just whichever
   // source has the strongest embedding match).
   const alloc = allocateSlots(limit, snapshot.mix)
-  const selected = selectByQuota(scored, limit, alloc, RERANK.LAMBDA)
+  const selected = selectByQuota(scored, limit, alloc, RERANK.LAMBDA, snapshot.ownedAuthors)
   const scoreById = new Map(selected.map((s) => [s.cand.sourceId, s.score]))
   const verified = verifyCandidates(
     selected.map((s) => s.cand),
