@@ -20,8 +20,10 @@ import {
   scoreCandidate,
   mmrSelect,
   bucketOf,
+  authorKey,
   allocateSlots,
   selectByQuota,
+  diversifyBookPicks,
   verifyCandidates,
   recommend,
   RERANK,
@@ -167,8 +169,13 @@ describe('allocateSlots', () => {
 })
 
 describe('selectByQuota', () => {
+  // Distinct authors so the book author-diversity (≤1/author) keeps each book.
   const b = (id: string, s: number) =>
-    scored({ cand: cand({ sourceId: id, source: 'book' }), vec: v(1, 0), score: s })
+    scored({
+      cand: cand({ sourceId: id, source: 'book', author: `Author ${id}` }),
+      vec: v(1, 0),
+      score: s,
+    })
   const f = (id: string, s: number) =>
     scored({ cand: cand({ sourceId: id, source: 'ao3' }), vec: v(1, 0), score: s })
 
@@ -201,6 +208,61 @@ describe('selectByQuota', () => {
     const pool = [b('b1', 0.5), f('f1', 0.9), b('b2', 0.7)]
     const out = selectByQuota(pool, 3, { book: 2, fic: 1 }, 0.7)
     expect(out.map((s) => s.score)).toEqual([0.9, 0.7, 0.5])
+  })
+})
+
+// ── diversifyBookPicks (pure — author diversity, favor new authors) ──────────
+describe('authorKey', () => {
+  it('normalizes case + punctuation and maps null/blank to empty', () => {
+    expect(authorKey('Ursula K. Le Guin')).toBe('ursula k le guin')
+    expect(authorKey(null)).toBe('')
+    expect(authorKey('   ')).toBe('')
+  })
+})
+
+describe('diversifyBookPicks', () => {
+  const bk = (id: string, author: string, s: number) =>
+    scored({ cand: cand({ sourceId: id, source: 'book', author }), vec: v(1, 0), score: s })
+
+  it('keeps at most one book per author (highest score wins)', () => {
+    const pool = [bk('a1', 'Author A', 0.9), bk('a2', 'Author A', 0.8), bk('b1', 'Author B', 0.7)]
+    const out = diversifyBookPicks(pool, new Set(), 5, 0.7)
+    expect(out.map((s) => s.cand.sourceId).sort()).toEqual(['a1', 'b1'])
+  })
+
+  it('favors new authors, capping owned-author books to ~the fraction of the quota', () => {
+    // 8 new-author books + 4 owned-author books, quota 10 → ~2 owned (round(10*0.2)).
+    const owned = new Set(['owned one', 'owned two', 'owned three', 'owned four'])
+    const pool = [
+      ...Array.from({ length: 8 }, (_, i) => bk(`new${i}`, `New ${i}`, 0.9 - i * 0.01)),
+      bk('o0', 'Owned One', 0.95),
+      bk('o1', 'Owned Two', 0.94),
+      bk('o2', 'Owned Three', 0.93),
+      bk('o3', 'Owned Four', 0.92),
+    ]
+    const out = diversifyBookPicks(pool, owned, 10, 0.7)
+    const ownedPicked = out.filter((s) => owned.has(authorKey(s.cand.author)))
+    expect(ownedPicked).toHaveLength(2)
+    expect(out).toHaveLength(10) // 8 new + 2 owned
+  })
+
+  it('tops up from owned authors when new-author books underfill the quota', () => {
+    // Only 2 new-author books but quota 5 → the rest fill from owned so it never shrinks.
+    const owned = new Set(['owned a', 'owned b', 'owned c'])
+    const pool = [
+      bk('n0', 'New A', 0.9),
+      bk('n1', 'New B', 0.8),
+      bk('o0', 'Owned A', 0.7),
+      bk('o1', 'Owned B', 0.6),
+      bk('o2', 'Owned C', 0.5),
+    ]
+    const out = diversifyBookPicks(pool, owned, 5, 0.7)
+    expect(out).toHaveLength(5)
+    expect(out.filter((s) => !owned.has(authorKey(s.cand.author)))).toHaveLength(2)
+  })
+
+  it('returns [] for a non-positive quota', () => {
+    expect(diversifyBookPicks([bk('a', 'A', 0.9)], new Set(), 0, 0.7)).toEqual([])
   })
 })
 

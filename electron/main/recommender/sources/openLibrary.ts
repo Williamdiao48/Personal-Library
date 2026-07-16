@@ -4,6 +4,8 @@ import type { CandidateSource, FetchOpts } from '../candidateSource'
 import type { Candidate } from '../candidates'
 import { buildSeedQueries, type SeedSource } from '../seedQueries'
 import { fetchCandidates, CANDIDATES } from '../candidates'
+import { siteKeyFromUrl } from '../sourceTags'
+import { resolveOwnedBookSubjects, type OwnedBook } from '../ownedBookSubjects'
 
 // F4 — the OpenLibrary (published-books) candidate source. Wraps the Chunk-4 path
 // unchanged: join the liked items to their author + manual library tags, build the
@@ -16,21 +18,35 @@ function placeholders(n: number): string {
   return Array.from({ length: n }, () => '?').join(',')
 }
 
+interface ItemMeta {
+  title: string
+  author: string | null
+  source_url: string | null
+}
+
 /**
- * Join the taste engine's liked ids (weight-descending) to each item's author +
- * manual tags → the seed sources the OpenLibrary query builder consumes.
+ * Join the taste engine's liked ids (weight-descending) to each item's author,
+ * manual tags, AND — for book-type items — its resolved OpenLibrary subjects, then
+ * fold those subjects into the item's tag list so they seed `subject:` queries just
+ * like fic native tags do. This is what gives books cross-author discovery instead
+ * of author-flooded results. Async: subject resolution is cache-first network.
  */
-function loadSeedSources(liked: LikedItem[]): SeedSource[] {
+async function loadSeedSources(liked: LikedItem[]): Promise<SeedSource[]> {
   const top = liked.slice(0, SEED_SOURCE_LIMIT)
   if (top.length === 0) return []
   const ids = top.map((l) => l.id)
 
-  const authorById = new Map<string, string | null>()
-  for (const r of all<{ id: string; author: string | null }>(
-    `SELECT id, author FROM items WHERE id IN (${placeholders(ids.length)})`,
+  const metaById = new Map<string, ItemMeta>()
+  for (const r of all<{
+    id: string
+    title: string
+    author: string | null
+    source_url: string | null
+  }>(
+    `SELECT id, title, author, source_url FROM items WHERE id IN (${placeholders(ids.length)})`,
     ids,
   )) {
-    authorById.set(r.id, r.author)
+    metaById.set(r.id, { title: r.title, author: r.author, source_url: r.source_url })
   }
 
   const tagsById = new Map<string, string[]>()
@@ -45,9 +61,18 @@ function loadSeedSources(liked: LikedItem[]): SeedSource[] {
     else tagsById.set(r.item_id, [r.name])
   }
 
+  // Book-type = not a fanfic (AO3/FFN have their own richer native-tag path). Resolve
+  // those to OpenLibrary subjects — the book analogue of the fics' native tags.
+  const books: OwnedBook[] = top.flatMap((l) => {
+    const meta = metaById.get(l.id)
+    if (!meta || siteKeyFromUrl(meta.source_url) !== null) return []
+    return [{ id: l.id, title: meta.title, author: meta.author }]
+  })
+  const subjectsById = await resolveOwnedBookSubjects(books)
+
   return top.map((l) => ({
-    author: authorById.get(l.id) ?? null,
-    tags: tagsById.get(l.id) ?? [],
+    author: metaById.get(l.id)?.author ?? null,
+    tags: [...(tagsById.get(l.id) ?? []), ...(subjectsById.get(l.id) ?? [])],
     weight: l.weight,
   }))
 }
@@ -55,7 +80,7 @@ function loadSeedSources(liked: LikedItem[]): SeedSource[] {
 export const openLibrarySource: CandidateSource = {
   name: 'book',
   async fetch(liked: LikedItem[], opts: FetchOpts = {}): Promise<Candidate[]> {
-    const queries = buildSeedQueries(loadSeedSources(liked))
+    const queries = buildSeedQueries(await loadSeedSources(liked))
     if (queries.length === 0) return []
     // A Refresh tightens the search-cache TTL to the soft floor so aged results
     // re-query; the description cache (DESCRIPTION_CACHE_TTL_MS) is left untouched —
