@@ -29,6 +29,16 @@ vi.mock('../recommender/lifecycle', () => ({
   armBackfill: () => armBackfillMock(),
   disarmBackfill: () => disarmBackfillMock(),
 }))
+// The local-LLM config is normally module-state synced from the renderer; mock it so
+// a test can flip `enabled` and assert the reranker client is (only then) passed to
+// recommend(). ollamaConfigFrom stays trivial — the client isn't called here.
+const { llmConfigHolder } = vi.hoisted(() => ({
+  llmConfigHolder: { current: { enabled: false, model: 'm', baseUrl: 'http://x' } },
+}))
+vi.mock('./llm', () => ({
+  getLlmConfig: () => llmConfigHolder.current,
+  ollamaConfigFrom: (c: { model: string; baseUrl: string }) => ({ ...c, timeoutMs: 1 }),
+}))
 
 import { registerDiscoverHandlers } from './discover'
 
@@ -53,6 +63,7 @@ beforeEach(() => {
   recommendMock.mockResolvedValue([])
   buildTasteMock.mockReturnValue({ centroids: [new Float32Array([1])], liked: [] })
   db = openTestDb()
+  llmConfigHolder.current = { enabled: false, model: 'm', baseUrl: 'http://x' }
   registerDiscoverHandlers()
 })
 afterEach(() => closeTestDb())
@@ -106,6 +117,24 @@ describe('discover:get', () => {
 
     const out = (await invoke('discover:get')) as { cards: Recommendation[] }
     expect(out.cards.map((c) => c.title)).toEqual(['Keep']) // 'Added Fic' reconciled out
+  })
+})
+
+describe('discover:refresh — local LLM reranker wiring', () => {
+  it('omits llmRerank when the local-LLM setting is disabled (default)', async () => {
+    await invoke('discover:refresh')
+    const opts = recommendMock.mock.calls[0][3] as { llmRerank?: unknown }
+    expect(opts.llmRerank).toBeUndefined()
+  })
+
+  it('passes an Ollama client to recommend() when the setting is enabled', async () => {
+    llmConfigHolder.current = { enabled: true, model: 'm', baseUrl: 'http://x' }
+    await invoke('discover:refresh')
+    const opts = recommendMock.mock.calls[0][3] as {
+      llmRerank?: { client: { chatJson: unknown } }
+    }
+    expect(opts.llmRerank).toBeDefined()
+    expect(typeof opts.llmRerank!.client.chatJson).toBe('function')
   })
 })
 

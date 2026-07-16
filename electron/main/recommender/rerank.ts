@@ -10,6 +10,9 @@ import { loadCandidateVectors, saveCandidateVectors } from './candidateEmbedding
 import { openLibrarySource } from './sources/openLibrary'
 import { ao3Source } from './sources/ao3'
 import { ffnSource } from './sources/ffn'
+import { buildTasteDigest } from './tasteDigest'
+import { llmRerankBooks, applyLlmBookRerank } from './llm/llmRerank'
+import type { LlmClient } from './llm/ollamaClient'
 import type { Recommendation } from '../../../src/types'
 
 // C4.4 + F4 — the rerank (§9 steps 2–4): union the candidate sources (books + AO3
@@ -424,6 +427,12 @@ export async function recommend(
     // window of results (deeper pages) rather than re-fetching page 1 and finding only
     // works already shown. Default (undefined ⇒ page 1) = today's single-page behavior.
     page?: number
+    /**
+     * When present, an LLM reranker refines the BOOK bucket's ordering (hallucination-
+     * safe: it only reorders already-fetched candidates, blended with cosine). Injected
+     * by the Discover IPC when the local-LLM setting is on; omitted ⇒ today's behavior.
+     */
+    llmRerank?: { client: LlmClient }
   } = {},
 ): Promise<Recommendation[]> {
   const limit = opts.limit ?? RERANK.TOP_K
@@ -505,6 +514,21 @@ export async function recommend(
     return { cand, vec, score: scoreCandidate(vec, taste.centroids) }
   })
 
+  // Optional LLM rerank of the BOOK bucket (books-only; fics untouched). The model
+  // scores fit for the top-cosine book shortlist; applyLlmBookRerank blends that into
+  // the cosine score. Hallucination-safe (reorders real candidates only) and fail-soft
+  // (an empty fit map — model off/unreachable/invalid — leaves the ordering unchanged),
+  // so selectByQuota/verify below are indifferent to whether it ran.
+  let ranked = scored
+  if (opts.llmRerank) {
+    const digest = buildTasteDigest(seeds)
+    const bookShortlist = scored
+      .filter((s) => s.cand.source === 'book')
+      .sort((a, b) => b.score - a.score)
+    const fitById = await llmRerankBooks(bookShortlist, digest, opts.llmRerank.client)
+    ranked = applyLlmBookRerank(scored, fitById)
+  }
+
   // Source-balanced selection: fill book/fic quotas proportional to the library
   // mix so the feed mirrors what the reader actually reads (not just whichever
   // source has the strongest embedding match). Then floor each bucket so the pool
@@ -520,7 +544,9 @@ export async function recommend(
   const alloc = wantBucket
     ? { book: wantBucket === 'book' ? limit : 0, fic: wantBucket === 'fic' ? limit : 0 }
     : floorAlloc(allocateSlots(limit, snapshot.mix), DISCOVER_BUCKET_FLOOR, avail)
-  const selected = selectByQuota(scored, limit, alloc, RERANK.LAMBDA, snapshot.ownedAuthors)
+  // `ranked` = `scored` unless the optional LLM book-rerank ran above (which reorders
+  // the book bucket); selection/quota honor that order.
+  const selected = selectByQuota(ranked, limit, alloc, RERANK.LAMBDA, snapshot.ownedAuthors)
   const scoreById = new Map(selected.map((s) => [s.cand.sourceId, s.score]))
   const verified = verifyCandidates(
     selected.map((s) => s.cand),

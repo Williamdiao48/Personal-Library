@@ -50,6 +50,12 @@ export interface AppSettings {
   customThemes: CustomTheme[]
   enableDiscover: boolean // show the Discover recommendations panel
   discoverContentMode: ContentMode // Discover feed filter: all / books / fanfiction
+  // Opt-in local-LLM (Ollama) reranking of BOOK recommendations. Off by default;
+  // synced to the main process (like enableDiscover). model/baseUrl target the local
+  // Ollama server. Falls back silently to cosine ordering when unreachable.
+  llmRerankEnabled: boolean
+  llmModel: string
+  llmBaseUrl: string
   // User-facing meaning for each highlight color (e.g. yellow = "Key quote").
   // Drives the color-category legend/filters. App-global config, not per-annotation.
   highlightLabels: Record<HighlightColor, string>
@@ -76,6 +82,9 @@ const DEFAULTS: AppSettings = {
   customThemes: [],
   enableDiscover: true,
   discoverContentMode: 'all',
+  llmRerankEnabled: false,
+  llmModel: 'llama3.2:3b',
+  llmBaseUrl: 'http://127.0.0.1:11434',
   highlightLabels: DEFAULT_HIGHLIGHT_LABELS,
 }
 

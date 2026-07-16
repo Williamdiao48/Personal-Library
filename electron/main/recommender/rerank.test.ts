@@ -580,6 +580,48 @@ describe('recommend', () => {
     expect(out.map((c) => c.source)).toEqual(['ao3'])
   })
 
+  // ── opts.llmRerank (book bucket only) ─────────────────────────────────────
+  // The stub embedder gives every candidate the same vector → equal cosine, so any
+  // reordering is attributable to the injected LLM fit (the degenerate-span path).
+  const threeBooks: CandidateSource = {
+    name: 'book',
+    fetch: async () => [
+      cand({ title: 'Zero', author: 'A0', sourceId: '/works/C0', source: 'book' }),
+      cand({ title: 'One', author: 'A1', sourceId: '/works/C1', source: 'book' }),
+      cand({ title: 'Two', author: 'A2', sourceId: '/works/C2', source: 'book' }),
+    ],
+  }
+
+  it('reorders the book bucket by the LLM fit when opts.llmRerank is supplied', async () => {
+    seedLikedItem({ title: 'Seed', author: 'Owner', tag: 'Fantasy' })
+    const client = {
+      chatJson: vi.fn(async () => ({
+        rankings: [
+          { id: 'b0', fit: 0.1 },
+          { id: 'b1', fit: 0.5 },
+          { id: 'b2', fit: 0.9 },
+        ],
+      })),
+    }
+    const out = await recommend(stubEmbedder, [threeBooks], undefined, { llmRerank: { client } })
+    expect(client.chatJson).toHaveBeenCalledTimes(1)
+    // Highest fit first — the reverse of the source's cosine-tied order.
+    expect(out.map((c) => c.sourceId)).toEqual(['/works/C2', '/works/C1', '/works/C0'])
+  })
+
+  it('falls back to the default order when the LLM client fails (null reply)', async () => {
+    seedLikedItem({ title: 'Seed', author: 'Owner', tag: 'Fantasy' })
+    const client = { chatJson: vi.fn(async () => null) }
+    const out = await recommend(stubEmbedder, [threeBooks], undefined, { llmRerank: { client } })
+    expect(out.map((c) => c.sourceId)).toEqual(['/works/C0', '/works/C1', '/works/C2'])
+  })
+
+  it('does not call the model when opts.llmRerank is absent (feature off)', async () => {
+    seedLikedItem({ title: 'Seed', author: 'Owner', tag: 'Fantasy' })
+    const out = await recommend(stubEmbedder, [threeBooks])
+    expect(out.map((c) => c.sourceId)).toEqual(['/works/C0', '/works/C1', '/works/C2'])
+  })
+
   it("folds a fic's description (summary) into the text it embeds", async () => {
     seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
     const seen: string[] = []

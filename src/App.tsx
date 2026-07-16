@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import { SettingsProvider, useSettings } from './contexts/SettingsContext'
 import { discoverService } from './services/discover'
+import { llmService } from './services/llm'
 import { ToastProvider, useToast } from './contexts/ToastContext'
 import { UpdaterProvider, useUpdater } from './contexts/UpdaterContext'
 import { CaptureJobsProvider } from './contexts/CaptureJobsContext'
@@ -82,6 +83,17 @@ function DiscoverBackfillSync() {
     if (!window.api?.discover) return
     void discoverService.setEnabled(settings.enableDiscover)
   }, [settings.enableDiscover])
+
+  // Sync the local-LLM book-reranker config to main (source of truth is localStorage,
+  // re-synced on boot + on change), same pattern as enableDiscover above.
+  useEffect(() => {
+    if (!window.api?.llm) return
+    void llmService.setConfig({
+      enabled: settings.llmRerankEnabled,
+      model: settings.llmModel,
+      baseUrl: settings.llmBaseUrl,
+    })
+  }, [settings.llmRerankEnabled, settings.llmModel, settings.llmBaseUrl])
   return null
 }
 
