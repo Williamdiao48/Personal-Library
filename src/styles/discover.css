@@ -61,6 +61,37 @@
   gap: 6px;
 }
 
+/* Content-type filter — a compact segmented pill group in the header. */
+.discover-segmented {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.discover-segmented-btn {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 12px;
+  border-radius: calc(var(--radius) - 2px);
+  transition:
+    color 0.12s,
+    background 0.12s;
+}
+.discover-segmented-btn:hover {
+  color: var(--text);
+}
+.discover-segmented-btn.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+
 /* Scroll region under the bar; content stays centered at the old max-width. */
 .discover-body {
   flex: 1;

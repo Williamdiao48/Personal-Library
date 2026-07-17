@@ -28,7 +28,9 @@ interface CachedDiscover {
 // embeds + scores the WHOLE candidate pool per refresh, then discards all but this
 // many — so widening the page beyond the old 12 is nearly free (no extra fetch or
 // model work). The renderer reveals them ~12 at a time as the reader scrolls.
-const DISCOVER_POOL = 24
+// Sized so a proportional split still leaves ≥ DISCOVER_BUCKET_FLOOR (12) of BOTH
+// book and fic in the pool, so the content-type filter is never starved.
+const DISCOVER_POOL = 36
 
 /** Read + parse the single cache row; null when empty or unparseable. */
 function readCache(): CachedDiscover | null {

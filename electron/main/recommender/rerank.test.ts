@@ -22,6 +22,7 @@ import {
   bucketOf,
   authorKey,
   allocateSlots,
+  floorAlloc,
   selectByQuota,
   diversifyBookPicks,
   verifyCandidates,
@@ -165,6 +166,45 @@ describe('allocateSlots', () => {
 
   it('falls back to all-book when the library is empty', () => {
     expect(allocateSlots(10, { book: 0, fic: 0 })).toEqual({ book: 10, fic: 0 })
+  })
+})
+
+describe('floorAlloc', () => {
+  const avail = { book: 100, fic: 100 } // plenty of both unless a test says otherwise
+
+  it('leaves a proportional alloc untouched when both buckets already clear the floor', () => {
+    expect(floorAlloc({ book: 18, fic: 18 }, 12, avail)).toEqual({ book: 18, fic: 18 })
+  })
+
+  it('raises the minority bucket to the floor, taking from the majority surplus', () => {
+    // 90/10 split of 36 → 4 books; floor of 12 pulls 8 from fic.
+    expect(floorAlloc({ book: 4, fic: 32 }, 12, avail)).toEqual({ book: 12, fic: 24 })
+  })
+
+  it('is symmetric — floors a starved fic bucket from the book surplus', () => {
+    expect(floorAlloc({ book: 32, fic: 4 }, 12, avail)).toEqual({ book: 24, fic: 12 })
+  })
+
+  it('keeps book + fic constant', () => {
+    const out = floorAlloc({ book: 2, fic: 34 }, 12, avail)
+    expect(out.book + out.fic).toBe(36)
+  })
+
+  it('caps the floor at how many candidates the bucket actually has', () => {
+    // Only 3 books exist → floor can only reach 3, not 12; fic keeps the rest.
+    expect(floorAlloc({ book: 1, fic: 35 }, 12, { book: 3, fic: 100 })).toEqual({
+      book: 3,
+      fic: 33,
+    })
+  })
+
+  it('does not drop the donor bucket below its own (availability-capped) floor', () => {
+    // Both want 12 but only 20 slots; fic has just 8 candidates so its floor is 8,
+    // leaving book able to take up to 12.
+    expect(floorAlloc({ book: 2, fic: 18 }, 12, { book: 100, fic: 8 })).toEqual({
+      book: 12,
+      fic: 8,
+    })
   })
 })
 

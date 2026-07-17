@@ -253,6 +253,42 @@ export function allocateSlots(
 }
 
 /**
+ * Minimum candidates of EACH bucket the emitted pool should hold so the Discover
+ * content-type filter (All/Books/Fanfiction) always has at least a page of the
+ * minority type to show. ≥ the renderer's PAGE_SIZE (12).
+ */
+export const DISCOVER_BUCKET_FLOOR = 12
+
+/**
+ * Nudge a proportional `allocateSlots` result so each bucket reaches `floor`,
+ * capped by how many candidates that bucket actually has (`avail`), taking the
+ * difference from the other bucket's surplus (never dropping the other below its
+ * own floor). Keeps `book + fic` constant. A TARGET, not a hard cap — selectByQuota
+ * still tops up an underfilled bucket — so the proportional feed is unchanged
+ * whenever both buckets already clear the floor. Pure.
+ */
+export function floorAlloc(
+  alloc: { book: number; fic: number },
+  floor: number,
+  avail: { book: number; fic: number },
+): { book: number; fic: number } {
+  let { book, fic } = alloc
+  const bookFloor = Math.min(floor, avail.book)
+  const ficFloor = Math.min(floor, avail.fic)
+  if (book < bookFloor) {
+    const take = Math.min(bookFloor - book, Math.max(0, fic - ficFloor))
+    book += take
+    fic -= take
+  }
+  if (fic < ficFloor) {
+    const take = Math.min(ficFloor - fic, Math.max(0, book - bookFloor))
+    fic += take
+    book -= take
+  }
+  return { book, fic }
+}
+
+/**
  * Select up to `k` picks honoring the per-bucket quota: MMR within each bucket for
  * its allotment, then—if a bucket underfills its quota—top the result up to `k`
  * from the best remaining candidates of either bucket (so the mix is a target, not
@@ -450,8 +486,15 @@ export async function recommend(
 
   // Source-balanced selection: fill book/fic quotas proportional to the library
   // mix so the feed mirrors what the reader actually reads (not just whichever
-  // source has the strongest embedding match).
-  const alloc = allocateSlots(limit, snapshot.mix)
+  // source has the strongest embedding match). Then floor each bucket so the pool
+  // carries at least a page of both types for Discover's content-type filter — the
+  // floored minority lands in the score-ordered tail, leaving the visible top of an
+  // unfiltered feed proportional as before.
+  const avail = {
+    book: scored.filter((s) => bucketOf(s.cand.source) === 'book').length,
+    fic: scored.filter((s) => bucketOf(s.cand.source) === 'fic').length,
+  }
+  const alloc = floorAlloc(allocateSlots(limit, snapshot.mix), DISCOVER_BUCKET_FLOOR, avail)
   const selected = selectByQuota(scored, limit, alloc, RERANK.LAMBDA, snapshot.ownedAuthors)
   const scoreById = new Map(selected.map((s) => [s.cand.sourceId, s.score]))
   const verified = verifyCandidates(
