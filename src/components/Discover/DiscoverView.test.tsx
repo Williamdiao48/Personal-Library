@@ -16,7 +16,7 @@ vi.mock('../../services/discover', () => ({
   discoverService: {
     get: vi.fn(),
     refresh: vi.fn(),
-    more: vi.fn(() => Promise.resolve({ cards: [] })),
+    more: vi.fn(() => Promise.resolve({ cards: [], nextPage: 2 })),
     dismiss: vi.fn(() => Promise.resolve()),
     openExternal: vi.fn(() => Promise.resolve()),
   },
@@ -351,15 +351,34 @@ describe('DiscoverView', () => {
 
   it('auto-loads the next page (excluding shown ids) once the pool is on screen', async () => {
     svc.get.mockResolvedValue({ cards: recs(2), generatedAt: Date.now() })
-    svc.more.mockResolvedValue({ cards: recs(1, 3) }) // one genuinely-new card
+    svc.more.mockResolvedValue({ cards: recs(1, 3), nextPage: 3 }) // one genuinely-new card
     renderView()
     await screen.findByText('Fic 1')
 
     await act(async () => fireIntersection())
 
     expect(await screen.findByText('Fic 3')).toBeInTheDocument()
-    // In All mode the dig is type-agnostic (contentMode undefined).
-    expect(svc.more).toHaveBeenCalledWith(['id-1', 'id-2'], undefined)
+    // In All mode the dig is type-agnostic (contentMode undefined); the cursor starts
+    // at page 2 (the initial refresh consumed page 1).
+    expect(svc.more).toHaveBeenCalledWith(['id-1', 'id-2'], undefined, 2)
+  })
+
+  it('advances the page cursor across successive load-mores (2 → nextPage)', async () => {
+    svc.get.mockResolvedValue({ cards: recs(2), generatedAt: Date.now() })
+    svc.more
+      .mockResolvedValueOnce({ cards: recs(1, 3), nextPage: 3 }) // page 2 → new card, resume at 3
+      .mockResolvedValueOnce({ cards: recs(1, 4), nextPage: 4 }) // page 3 → another
+    renderView()
+    await screen.findByText('Fic 1')
+
+    await act(async () => fireIntersection())
+    await screen.findByText('Fic 3')
+    await act(async () => fireIntersection())
+    await screen.findByText('Fic 4')
+
+    // Second load-more uses the nextPage the server returned (3), not a re-request of 2.
+    expect(svc.more).toHaveBeenNthCalledWith(1, ['id-1', 'id-2'], undefined, 2)
+    expect(svc.more).toHaveBeenNthCalledWith(2, ['id-1', 'id-2', 'id-3'], undefined, 3)
   })
 
   it('in a Books filter, load-more digs for books specifically (contentMode="books")', async () => {
@@ -367,19 +386,19 @@ describe('DiscoverView', () => {
     const book = (n: number) =>
       rec({ title: `Book ${n}`, source: 'book', sourceId: `b-${n}`, url: `https://ol/${n}` })
     svc.get.mockResolvedValue({ cards: [book(1), book(2)], generatedAt: Date.now() })
-    svc.more.mockResolvedValue({ cards: [book(3)] })
+    svc.more.mockResolvedValue({ cards: [book(3)], nextPage: 3 })
     renderView()
     await screen.findByText('Book 1')
 
     await act(async () => fireIntersection())
 
     expect(await screen.findByText('Book 3')).toBeInTheDocument()
-    expect(svc.more).toHaveBeenCalledWith(['b-1', 'b-2'], 'books')
+    expect(svc.more).toHaveBeenCalledWith(['b-1', 'b-2'], 'books', 2)
   })
 
   it('shows "all caught up" and stops when load-more returns nothing new', async () => {
     svc.get.mockResolvedValue({ cards: recs(2), generatedAt: Date.now() })
-    svc.more.mockResolvedValue({ cards: [] })
+    svc.more.mockResolvedValue({ cards: [], nextPage: 4 })
     renderView()
     await screen.findByText('Fic 1')
 
@@ -394,7 +413,7 @@ describe('DiscoverView', () => {
 
   it('shows the loading indicator while the next page is in flight', async () => {
     svc.get.mockResolvedValue({ cards: recs(2), generatedAt: Date.now() })
-    let resolveMore!: (v: { cards: Recommendation[] }) => void
+    let resolveMore!: (v: { cards: Recommendation[]; nextPage: number }) => void
     svc.more.mockReturnValue(new Promise((r) => (resolveMore = r)))
     renderView()
     await screen.findByText('Fic 1')
@@ -405,7 +424,7 @@ describe('DiscoverView', () => {
     expect(await screen.findByText(/finding more/i)).toBeInTheDocument()
 
     // …and it clears once the page resolves.
-    await act(async () => resolveMore({ cards: recs(1, 3) }))
+    await act(async () => resolveMore({ cards: recs(1, 3), nextPage: 3 }))
     await waitFor(() => expect(screen.queryByText(/finding more/i)).not.toBeInTheDocument())
   })
 })

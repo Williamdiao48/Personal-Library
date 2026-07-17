@@ -72,6 +72,12 @@ describe('buildFfnQueries', () => {
   it('returns [] with no fandom to anchor on (FFN keyword search would be noise)', () => {
     expect(buildFfnQueries({ ...emptySeeds(), genres: [{ term: 'Drama', weight: 1 }] })).toEqual([])
   })
+
+  it('advances the FFN result window: page 2 carries ppage=2 (page 1 omits it)', () => {
+    const seeds: TasteSeeds = { ...emptySeeds(), fandoms: [{ term: 'Harry Potter', weight: 3 }] }
+    expect(buildFfnQueries(seeds, FFN_SOURCE)[0].url).not.toContain('ppage=') // page 1
+    expect(buildFfnQueries(seeds, FFN_SOURCE, 2)[0].url).toContain('ppage=2')
+  })
 })
 
 // ── parseFfnResultsPage (pure) ────────────────────────────────────────────────

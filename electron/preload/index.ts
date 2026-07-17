@@ -229,8 +229,8 @@ contextBridge.exposeInMainWorld('api', {
     get: () => ipcRenderer.invoke('discover:get'),
     refresh: (excludeSourceIds: string[]) =>
       ipcRenderer.invoke('discover:refresh', excludeSourceIds),
-    more: (excludeSourceIds: string[], contentMode?: 'books' | 'fanfiction') =>
-      ipcRenderer.invoke('discover:more', excludeSourceIds, contentMode),
+    more: (excludeSourceIds: string[], contentMode?: 'books' | 'fanfiction', page?: number) =>
+      ipcRenderer.invoke('discover:more', excludeSourceIds, contentMode, page),
     dismiss: (card: import('../../src/types').Recommendation) =>
       ipcRenderer.invoke('discover:dismiss', card),
     openExternal: (url: string) => ipcRenderer.invoke('discover:openExternal', url),

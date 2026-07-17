@@ -420,6 +420,10 @@ export async function recommend(
     // sources and giving it every slot) instead of paging a mixed pool. Undefined =
     // the normal balanced/proportional run.
     contentMode?: 'books' | 'fanfiction'
+    // 1-based page window forwarded to every source so a "load more" fetches the NEXT
+    // window of results (deeper pages) rather than re-fetching page 1 and finding only
+    // works already shown. Default (undefined ⇒ page 1) = today's single-page behavior.
+    page?: number
   } = {},
 ): Promise<Recommendation[]> {
   const limit = opts.limit ?? RERANK.TOP_K
@@ -454,7 +458,7 @@ export async function recommend(
   // batch" guarantee, and results stay in `sources` order so the union's fanfic-first
   // tie-break is unchanged.
   const settled = await Promise.allSettled(
-    activeSources.map((s) => s.fetch(taste.liked, { fresh: opts.fresh })),
+    activeSources.map((s) => s.fetch(taste.liked, { fresh: opts.fresh, page: opts.page })),
   )
   const pools: Candidate[][] = settled.map((r) => (r.status === 'fulfilled' ? r.value : []))
   const fetched = unionCandidates(pools)

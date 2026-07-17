@@ -427,14 +427,18 @@ export interface Api {
      */
     refresh: (excludeSourceIds: string[]) => Promise<DiscoverResult>
     /**
-     * "Load more": re-run the engine excluding the cards already shown this session,
-     * appending the next best picks to the cached feed. Empty `cards` = pool exhausted.
-     * `contentMode` restricts the dig to one type (Discover's Books/Fanfiction filter).
+     * "Load more": re-run the engine at page window `page` (1-based; defaults to 2 —
+     * the initial refresh consumed page 1) excluding the cards already shown this
+     * session, appending the next best picks to the cached feed. Empty `cards` = pool
+     * exhausted. `contentMode` restricts the dig to one type (Books/Fanfiction filter).
+     * Returns `nextPage` — the window to request on the following load-more — so scroll
+     * keeps advancing deeper instead of re-fetching page 1.
      */
     more: (
       excludeSourceIds: string[],
       contentMode?: 'books' | 'fanfiction',
-    ) => Promise<{ cards: Recommendation[] }>
+      page?: number,
+    ) => Promise<{ cards: Recommendation[]; nextPage: number }>
     /** Exclude a card from future recs (not-interested / already-read). */
     dismiss: (card: Recommendation) => Promise<void>
     /** Open a card's http(s) source page in the external browser. */

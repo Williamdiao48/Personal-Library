@@ -223,25 +223,29 @@ function writeCache(queryKey: string, docs: OpenLibraryDoc[], now: number): void
 
 // ── fetch ───────────────────────────────────────────────────────────────────
 
-function searchUrl(q: string, limit: number): string {
+function searchUrl(q: string, limit: number, page: number): string {
   const params = new URLSearchParams({ q, fields: FIELDS, limit: String(limit) })
+  if (page > 1) params.set('page', String(page)) // OpenLibrary search.json native paging
   return `${OPENLIBRARY_SEARCH}?${params.toString()}`
 }
 
 /**
- * Docs for one seed query — cache-first, then network. A single query failing
- * (non-2xx or a thrown fetch) yields `[]` so one bad query never sinks the batch.
+ * Docs for one seed query at a given 1-based page — cache-first, then network. A
+ * single query failing (non-2xx or a thrown fetch) yields `[]` so one bad query
+ * never sinks the batch. `page` is folded into the cache key so each page window
+ * caches separately (Discover's "load more" pages deeper without re-fetching page 1).
  */
 async function fetchDocsForQuery(
   q: string,
   cfg: CandidatesConfig,
   now: number,
+  page: number,
 ): Promise<OpenLibraryDoc[]> {
-  const queryKey = `${q}::l=${cfg.LIMIT_PER_QUERY}`
+  const queryKey = `${q}::l=${cfg.LIMIT_PER_QUERY}::p=${page}`
   const cached = readCache(queryKey, cfg.CACHE_TTL_MS, now)
   if (cached) return cached
   try {
-    const res = await fetch(searchUrl(q, cfg.LIMIT_PER_QUERY), {
+    const res = await fetch(searchUrl(q, cfg.LIMIT_PER_QUERY, page), {
       signal: AbortSignal.timeout(cfg.FETCH_TIMEOUT_MS),
       headers: OL_HEADERS,
     })
@@ -317,12 +321,13 @@ export async function mapPool<T, R>(
  */
 export async function fetchCandidates(
   queries: SeedQuery[],
-  opts: { now?: number; cfg?: CandidatesConfig } = {},
+  opts: { now?: number; cfg?: CandidatesConfig; page?: number } = {},
 ): Promise<Candidate[]> {
   const cfg = opts.cfg ?? CANDIDATES
   const now = opts.now ?? Date.now()
+  const page = opts.page ?? 1
   const docsPerQuery = await mapPool(queries, cfg.CONCURRENCY, (q) =>
-    fetchDocsForQuery(q.q, cfg, now),
+    fetchDocsForQuery(q.q, cfg, now, page),
   )
   const byId = new Map<string, Candidate>()
   for (const docs of docsPerQuery) {
