@@ -526,6 +526,46 @@ describe('recommend', () => {
     expect(seen).toEqual([{ fresh: undefined }])
   })
 
+  it('contentMode="books" fetches only book sources and returns only books', async () => {
+    seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
+    const bookFetch = vi.fn(async () => [
+      cand({ title: 'A Book', author: 'BA', sourceId: '/works/B1', source: 'book' }),
+    ])
+    const ficFetch = vi.fn(async () => [
+      cand({ title: 'A Fic', author: 'FA', sourceId: 'https://ao3/1', source: 'ao3' }),
+    ])
+    const bookSrc: CandidateSource = { name: 'book', fetch: bookFetch }
+    const ficSrc: CandidateSource = { name: 'ao3', fetch: ficFetch }
+
+    const out = await recommend(stubEmbedder, [bookSrc, ficSrc], undefined, {
+      contentMode: 'books',
+    })
+
+    expect(bookFetch).toHaveBeenCalledTimes(1)
+    expect(ficFetch).not.toHaveBeenCalled() // fic source skipped entirely
+    expect(out.map((c) => c.source)).toEqual(['book'])
+  })
+
+  it('contentMode="fanfiction" fetches only fic sources and returns only fics', async () => {
+    seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
+    const bookFetch = vi.fn(async () => [
+      cand({ title: 'A Book', author: 'BA', sourceId: '/works/B1', source: 'book' }),
+    ])
+    const ficFetch = vi.fn(async () => [
+      cand({ title: 'A Fic', author: 'FA', sourceId: 'https://ao3/1', source: 'ao3' }),
+    ])
+    const bookSrc: CandidateSource = { name: 'book', fetch: bookFetch }
+    const ficSrc: CandidateSource = { name: 'ao3', fetch: ficFetch }
+
+    const out = await recommend(stubEmbedder, [bookSrc, ficSrc], undefined, {
+      contentMode: 'fanfiction',
+    })
+
+    expect(ficFetch).toHaveBeenCalledTimes(1)
+    expect(bookFetch).not.toHaveBeenCalled()
+    expect(out.map((c) => c.source)).toEqual(['ao3'])
+  })
+
   it("folds a fic's description (summary) into the text it embeds", async () => {
     seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
     const seen: string[] = []

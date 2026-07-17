@@ -157,7 +157,9 @@ export default function DiscoverView() {
     setLoadingMore(true)
     try {
       const shownIds = cards.map((c) => c.sourceId)
-      const res = await discoverService.more(shownIds)
+      // In a Books/Fanfiction filter, dig deeper into that type specifically so scroll
+      // keeps generating its recs instead of latching once the mixed pool runs dry.
+      const res = await discoverService.more(shownIds, mode === 'all' ? undefined : mode)
       const seen = new Set(shownIds)
       const fresh = res.cards.filter((c) => !seen.has(c.sourceId))
       if (fresh.length === 0) {

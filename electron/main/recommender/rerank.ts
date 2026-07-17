@@ -411,7 +411,16 @@ export async function recommend(
   embedder: Embedder,
   sources: CandidateSource[] = defaultSources(),
   taste: TasteResult = buildTaste(),
-  opts: { limit?: number; excludeIds?: readonly string[]; fresh?: boolean } = {},
+  opts: {
+    limit?: number
+    excludeIds?: readonly string[]
+    fresh?: boolean
+    // Restrict the whole run to one content type — used by Discover's Books/Fanfiction
+    // filter so a filtered "load more" digs deeper into THAT type (fetching only its
+    // sources and giving it every slot) instead of paging a mixed pool. Undefined =
+    // the normal balanced/proportional run.
+    contentMode?: 'books' | 'fanfiction'
+  } = {},
 ): Promise<Recommendation[]> {
   const limit = opts.limit ?? RERANK.TOP_K
   if (taste.centroids.length === 0) return [] // cold start — no taste, no recs (§8)
@@ -430,6 +439,14 @@ export async function recommend(
     ].map((t) => t.term.toLowerCase()),
   )
 
+  // A content-mode run fetches ONLY that type's sources (book → OpenLibrary; fanfic →
+  // AO3/FFN) — no point scraping fics we'll discard when the reader asked for books.
+  const wantBucket: SourceBucket | null =
+    opts.contentMode === 'books' ? 'book' : opts.contentMode === 'fanfiction' ? 'fic' : null
+  const activeSources = wantBucket
+    ? sources.filter((s) => bucketOf(s.name) === wantBucket)
+    : sources
+
   // Fan out to the sources CONCURRENTLY. They hit independent hosts (AO3, FFN via
   // Cloudflare, OpenLibrary), so overlapping them costs no per-host etiquette and
   // collapses the wall time from the SUM of the three to the slowest one (usually
@@ -437,7 +454,7 @@ export async function recommend(
   // batch" guarantee, and results stay in `sources` order so the union's fanfic-first
   // tie-break is unchanged.
   const settled = await Promise.allSettled(
-    sources.map((s) => s.fetch(taste.liked, { fresh: opts.fresh })),
+    activeSources.map((s) => s.fetch(taste.liked, { fresh: opts.fresh })),
   )
   const pools: Candidate[][] = settled.map((r) => (r.status === 'fulfilled' ? r.value : []))
   const fetched = unionCandidates(pools)
@@ -494,7 +511,11 @@ export async function recommend(
     book: scored.filter((s) => bucketOf(s.cand.source) === 'book').length,
     fic: scored.filter((s) => bucketOf(s.cand.source) === 'fic').length,
   }
-  const alloc = floorAlloc(allocateSlots(limit, snapshot.mix), DISCOVER_BUCKET_FLOOR, avail)
+  // A content-mode run gives every slot to the requested bucket (the other's sources
+  // weren't even fetched); otherwise floor both buckets on the proportional split.
+  const alloc = wantBucket
+    ? { book: wantBucket === 'book' ? limit : 0, fic: wantBucket === 'fic' ? limit : 0 }
+    : floorAlloc(allocateSlots(limit, snapshot.mix), DISCOVER_BUCKET_FLOOR, avail)
   const selected = selectByQuota(scored, limit, alloc, RERANK.LAMBDA, snapshot.ownedAuthors)
   const scoreById = new Map(selected.map((s) => [s.cand.sourceId, s.score]))
   const verified = verifyCandidates(

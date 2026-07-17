@@ -195,12 +195,26 @@ describe('discover:more', () => {
 
     expect(out.cards.map((x) => x.title)).toEqual(['C'])
     // The engine was told to exclude the shown ids (4th-arg opts).
-    const opts = recommendMock.mock.calls[1][3] as { limit?: number; excludeIds?: string[] }
+    const opts = recommendMock.mock.calls[1][3] as {
+      limit?: number
+      excludeIds?: string[]
+      fresh?: boolean
+    }
     expect(opts.excludeIds).toEqual(['id-a', 'id-b'])
     expect(opts.limit).toBeGreaterThan(12)
+    // Load-more digs with the same walking gradient as Refresh (re-scrapes aged
+    // sources) so scroll keeps finding recs instead of dead-ending at the first pool.
+    expect(opts.fresh).toBe(true)
     // Cache is now the accumulated feed A,B,C (survives a restart / next get()).
     const cached = (await invoke('discover:get')) as { cards: Recommendation[] }
     expect(cached.cards.map((x) => x.title)).toEqual(['A', 'B', 'C'])
+  })
+
+  it('forwards a content-mode filter so scroll digs into one type only', async () => {
+    recommendMock.mockResolvedValue([rec({ title: 'B', sourceId: 'id-b', source: 'book' })])
+    await invoke('discover:more', ['id-a'], 'books')
+    const opts = recommendMock.mock.calls[0][3] as { contentMode?: string }
+    expect(opts.contentMode).toBe('books')
   })
 
   it('short-circuits on cold start — no engine call, empty cards', async () => {

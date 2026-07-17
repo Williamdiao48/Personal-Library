@@ -429,8 +429,12 @@ export interface Api {
     /**
      * "Load more": re-run the engine excluding the cards already shown this session,
      * appending the next best picks to the cached feed. Empty `cards` = pool exhausted.
+     * `contentMode` restricts the dig to one type (Discover's Books/Fanfiction filter).
      */
-    more: (excludeSourceIds: string[]) => Promise<{ cards: Recommendation[] }>
+    more: (
+      excludeSourceIds: string[],
+      contentMode?: 'books' | 'fanfiction',
+    ) => Promise<{ cards: Recommendation[] }>
     /** Exclude a card from future recs (not-interested / already-read). */
     dismiss: (card: Recommendation) => Promise<void>
     /** Open a card's http(s) source page in the external browser. */

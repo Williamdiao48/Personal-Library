@@ -358,7 +358,23 @@ describe('DiscoverView', () => {
     await act(async () => fireIntersection())
 
     expect(await screen.findByText('Fic 3')).toBeInTheDocument()
-    expect(svc.more).toHaveBeenCalledWith(['id-1', 'id-2'])
+    // In All mode the dig is type-agnostic (contentMode undefined).
+    expect(svc.more).toHaveBeenCalledWith(['id-1', 'id-2'], undefined)
+  })
+
+  it('in a Books filter, load-more digs for books specifically (contentMode="books")', async () => {
+    mockSettings.discoverContentMode = 'books'
+    const book = (n: number) =>
+      rec({ title: `Book ${n}`, source: 'book', sourceId: `b-${n}`, url: `https://ol/${n}` })
+    svc.get.mockResolvedValue({ cards: [book(1), book(2)], generatedAt: Date.now() })
+    svc.more.mockResolvedValue({ cards: [book(3)] })
+    renderView()
+    await screen.findByText('Book 1')
+
+    await act(async () => fireIntersection())
+
+    expect(await screen.findByText('Book 3')).toBeInTheDocument()
+    expect(svc.more).toHaveBeenCalledWith(['b-1', 'b-2'], 'books')
   })
 
   it('shows "all caught up" and stops when load-more returns nothing new', async () => {
