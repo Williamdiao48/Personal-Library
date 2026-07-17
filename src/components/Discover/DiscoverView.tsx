@@ -67,6 +67,12 @@ export default function DiscoverView() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [exhausted, setExhausted] = useState(false)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
+  // Pagination cursor for load-more: the 1-based page window to request next. Starts
+  // at 2 (the initial refresh consumes page 1) and is set from each response's
+  // `nextPage`. Reset to 2 on Refresh only — NOT on a mode switch, since resetting
+  // would re-request page 1 of the new type (all already shown → a false "all caught
+  // up"). Kept monotonic so scroll always advances into new works.
+  const nextPageRef = useRef(2)
 
   // Content-type filter (All / Books / Fanfiction). Persisted in settings, applied
   // as a pure client-side filter over the cached pool — instant, no refetch. `cards`
@@ -136,9 +142,10 @@ export default function DiscoverView() {
       setCards(res.cards)
       setGeneratedAt(res.generatedAt)
       setColdStart(res.coldStart)
-      // Fresh feed → restart the scroll pagination.
+      // Fresh feed → restart the scroll pagination (page 1 just consumed → next is 2).
       setVisibleCount(PAGE_SIZE)
       setExhausted(false)
+      nextPageRef.current = 2
       if (res.coldStart) {
         updateToast(toastId, 'Read and rate a few items first', 'success')
       } else {
@@ -159,7 +166,14 @@ export default function DiscoverView() {
       const shownIds = cards.map((c) => c.sourceId)
       // In a Books/Fanfiction filter, dig deeper into that type specifically so scroll
       // keeps generating its recs instead of latching once the mixed pool runs dry.
-      const res = await discoverService.more(shownIds, mode === 'all' ? undefined : mode)
+      // `nextPageRef` advances the source page window so each fetch returns the NEXT
+      // works rather than re-fetching page 1.
+      const res = await discoverService.more(
+        shownIds,
+        mode === 'all' ? undefined : mode,
+        nextPageRef.current,
+      )
+      nextPageRef.current = res.nextPage
       const seen = new Set(shownIds)
       const fresh = res.cards.filter((c) => !seen.has(c.sourceId))
       if (fresh.length === 0) {

@@ -32,6 +32,12 @@ interface CachedDiscover {
 // book and fic in the pool, so the content-type filter is never starved.
 const DISCOVER_POOL = 36
 
+// "Load more" pages deeper into each source until it surfaces genuinely new cards.
+// A single seed query can hit a sparse page (no new works) while deeper pages still
+// have plenty, so one empty page must NOT dead-end the scroll — we advance and retry
+// up to this many consecutive empty pages before reporting honest exhaustion.
+const MORE_EMPTY_PAGE_BUDGET = 2
+
 /** Read + parse the single cache row; null when empty or unparseable. */
 function readCache(): CachedDiscover | null {
   const row = get<{ cards_json: string | null; generated_at: number | null }>(
@@ -144,22 +150,36 @@ export function registerDiscoverHandlers(): void {
       _e,
       excludeSourceIds: string[],
       contentMode?: 'books' | 'fanfiction',
-    ): Promise<{ cards: Recommendation[] }> => {
+      page = 2, // 1-based window; page 1 was consumed by the initial refresh
+    ): Promise<{ cards: Recommendation[]; nextPage: number }> => {
       const taste = buildTaste()
-      if (taste.centroids.length === 0) return { cards: [] }
-      // In a Books/Fanfiction filter, dig deeper into THAT type only; in All, the
-      // normal balanced page. Either way append to the cache as a superset so
-      // toggling filters still shows everything accumulated.
-      const cards = await recommend(workerEmbedder, undefined, taste, {
-        limit: DISCOVER_POOL,
-        excludeIds: excludeSourceIds,
-        fresh: true,
-        contentMode,
-      })
-      if (cards.length > 0) {
+      if (taste.centroids.length === 0) return { cards: [], nextPage: page }
+      const seen = new Set(excludeSourceIds)
+
+      // Page deeper until we surface genuinely new cards, skipping sparse pages up to
+      // MORE_EMPTY_PAGE_BUDGET consecutive empties before reporting exhaustion — so a
+      // single seed query running dry can't dead-end the scroll while deeper pages
+      // still have works. In a Books/Fanfiction filter this digs into THAT type only;
+      // in All, the normal balanced page.
+      let current = page
+      let fresh: Recommendation[] = []
+      for (let emptyStreak = 0; emptyStreak < MORE_EMPTY_PAGE_BUDGET; emptyStreak++) {
+        const cards = await recommend(workerEmbedder, undefined, taste, {
+          limit: DISCOVER_POOL,
+          excludeIds: excludeSourceIds,
+          fresh: true,
+          contentMode,
+          page: current,
+        })
+        current++
+        fresh = cards.filter((c) => !seen.has(c.sourceId))
+        if (fresh.length > 0) break
+      }
+
+      // Append the new cards to the cache as a superset so a restart restores the whole
+      // scrolled feed and toggling filters still shows everything accumulated.
+      if (fresh.length > 0) {
         const cached = readCache()
-        const seen = new Set(excludeSourceIds)
-        const fresh = cards.filter((c) => !seen.has(c.sourceId))
         if (cached) {
           const existingIds = new Set(cached.cards.map((c) => c.sourceId))
           writeCache(
@@ -170,7 +190,7 @@ export function registerDiscoverHandlers(): void {
           writeCache(fresh, Date.now())
         }
       }
-      return { cards }
+      return { cards: fresh, nextPage: current }
     },
   )
 

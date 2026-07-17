@@ -184,6 +184,17 @@ describe('fetchAo3Candidates', () => {
     expect(cached.map((c) => c.title)).toEqual(['First Fic', 'Second Fic', 'Third Fic'])
   })
 
+  it('windows deeper pages: load-more page 2 fetches AO3 result pages 3–4', async () => {
+    // Discover's scroll passes an advancing page window so it digs past the first
+    // pool instead of re-fetching pages 1–2 and finding only already-shown works.
+    mockFetchPage.mockResolvedValue(RESULTS_HTML)
+    await fetchAo3Candidates([relQ], { now: 1000, delayMs: 0, page: 2 })
+    const urls = mockFetchPage.mock.calls.map(([u]) => String(u))
+    expect(urls).toHaveLength(2) // PAGES_PER_QUERY-wide window
+    expect(urls[0]).toContain('page=3')
+    expect(urls[1]).toContain('page=4')
+  })
+
   it('stops paginating a query as soon as a page comes back empty', async () => {
     mockFetchPage.mockResolvedValueOnce(EMPTY_HTML)
     const out = await fetchAo3Candidates([relQ], { now: 1000, delayMs: 0 })

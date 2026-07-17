@@ -183,7 +183,7 @@ export function parseAo3ResultsPage(html: string, cfg = AO3_SOURCE): Candidate[]
  */
 export async function fetchAo3Candidates(
   queries: Ao3Query[],
-  opts: { now?: number; cfg?: typeof AO3_SOURCE; delayMs?: number } = {},
+  opts: { now?: number; cfg?: typeof AO3_SOURCE; delayMs?: number; page?: number } = {},
 ): Promise<Candidate[]> {
   const cfg = opts.cfg ?? AO3_SOURCE
   const now = opts.now ?? Date.now()
@@ -191,9 +191,16 @@ export async function fetchAo3Candidates(
   const byId = new Map<string, Candidate>()
   let requests = 0
 
+  // The 1-based load-more window maps onto a PAGES_PER_QUERY-wide slice of AO3
+  // result pages, so window 2 fetches pages 3–4 (not the same 1–2) — the deeper
+  // works Discover's scroll needs instead of dead-ending on the first pool.
+  const window = opts.page ?? 1
+  const firstPage = (window - 1) * cfg.PAGES_PER_QUERY + 1
+  const lastPage = window * cfg.PAGES_PER_QUERY
+
   for (const query of queries) {
     if (byId.size >= cfg.MAX_CANDIDATES || requests >= cfg.MAX_REQUESTS) break
-    for (let page = 1; page <= cfg.PAGES_PER_QUERY; page++) {
+    for (let page = firstPage; page <= lastPage; page++) {
       if (byId.size >= cfg.MAX_CANDIDATES || requests >= cfg.MAX_REQUESTS) break
       const url = ao3PageUrl(query, page)
       const key = `ao3:v${CANDIDATE_TEXT_VERSION}:${url}`
@@ -228,6 +235,6 @@ export const ao3Source: CandidateSource = {
     if (queries.length === 0) return []
     // A Refresh tightens the effective TTL to the soft floor so an aged pool re-scrapes.
     const cfg = opts.fresh ? { ...AO3_SOURCE, CACHE_TTL_MS: AO3_SOURCE.SOFT_FLOOR_MS } : AO3_SOURCE
-    return fetchAo3Candidates(queries, { cfg })
+    return fetchAo3Candidates(queries, { cfg, page: opts.page })
   },
 }

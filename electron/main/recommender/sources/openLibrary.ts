@@ -86,6 +86,8 @@ export const openLibrarySource: CandidateSource = {
     // re-query; the description cache (DESCRIPTION_CACHE_TTL_MS) is left untouched —
     // a book's blurb is recipe-independent and shouldn't churn on a refresh.
     const cfg = opts.fresh ? { ...CANDIDATES, CACHE_TTL_MS: CANDIDATES.SOFT_FLOOR_MS } : CANDIDATES
-    return fetchCandidates(queries, { cfg })
+    // `page` advances the OpenLibrary result window so Discover's "load more" digs
+    // deeper (page 2 = docs 41–80, …) instead of re-fetching the first page.
+    return fetchCandidates(queries, { cfg, page: opts.page })
   },
 }

@@ -236,6 +236,42 @@ describe('discover:more', () => {
     const cached = (await invoke('discover:get')) as { cards: Recommendation[] }
     expect(cached.cards.map((x) => x.title)).toEqual(['A', 'D'])
   })
+
+  it('forwards the page window and returns nextPage so the cursor advances', async () => {
+    recommendMock.mockResolvedValue([rec({ title: 'P3', sourceId: 'id-p3' })])
+    const out = (await invoke('discover:more', ['id-a'], undefined, 3)) as {
+      cards: Recommendation[]
+      nextPage: number
+    }
+    expect((recommendMock.mock.calls[0][3] as { page?: number }).page).toBe(3)
+    expect(out.cards.map((c) => c.title)).toEqual(['P3'])
+    expect(out.nextPage).toBe(4) // advanced past the fetched page
+  })
+
+  it('skips a sparse page and advances until it finds new cards', async () => {
+    recommendMock.mockResolvedValueOnce([]) // page 2: nothing new
+    recommendMock.mockResolvedValueOnce([rec({ title: 'Deep', sourceId: 'id-deep' })]) // page 3
+    const out = (await invoke('discover:more', ['id-a'], undefined, 2)) as {
+      cards: Recommendation[]
+      nextPage: number
+    }
+    expect(recommendMock).toHaveBeenCalledTimes(2)
+    expect((recommendMock.mock.calls[0][3] as { page?: number }).page).toBe(2)
+    expect((recommendMock.mock.calls[1][3] as { page?: number }).page).toBe(3)
+    expect(out.cards.map((c) => c.title)).toEqual(['Deep'])
+    expect(out.nextPage).toBe(4)
+  })
+
+  it('reports honest exhaustion (empty cards) after the empty-page budget', async () => {
+    recommendMock.mockResolvedValue([]) // every deeper page is dry
+    const out = (await invoke('discover:more', ['id-a'], undefined, 5)) as {
+      cards: Recommendation[]
+      nextPage: number
+    }
+    expect(out.cards).toEqual([])
+    expect(recommendMock).toHaveBeenCalledTimes(2) // MORE_EMPTY_PAGE_BUDGET, then give up
+    expect(out.nextPage).toBe(7) // 5 + budget(2)
+  })
 })
 
 describe('discover:dismiss', () => {

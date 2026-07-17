@@ -11,9 +11,16 @@ import type { LikedItem } from './taste'
 
 /** Per-call fetch options. `fresh` = a user-initiated Refresh: the source uses its
  *  shorter SOFT_FLOOR_MS as the effective cache-staleness threshold instead of its
- *  hard TTL, so an aged pool re-scrapes. Omitted/false = serve cache up to the TTL. */
+ *  hard TTL, so an aged pool re-scrapes. Omitted/false = serve cache up to the TTL.
+ *
+ *  `page` = which 1-based page-window of results to fetch (default 1). Discover's
+ *  "load more" advances this so each scroll fetches the NEXT window of works instead
+ *  of re-fetching page 1 — without it a source dead-ends at its first-page pool and
+ *  the feed latches "all caught up". Each source maps `page` onto its own catalog's
+ *  pagination (OpenLibrary `&page=`, AO3 a PAGES_PER_QUERY-wide slice, FFN `ppage=`). */
 export interface FetchOpts {
   fresh?: boolean
+  page?: number
 }
 
 export interface CandidateSource {

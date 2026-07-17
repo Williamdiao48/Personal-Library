@@ -6,8 +6,8 @@ export const discoverService = {
   setEnabled: (enabled: boolean) => window.api.discover.setEnabled(enabled),
   get: () => window.api.discover.get(),
   refresh: (excludeSourceIds: string[] = []) => window.api.discover.refresh(excludeSourceIds),
-  more: (excludeSourceIds: string[], contentMode?: 'books' | 'fanfiction') =>
-    window.api.discover.more(excludeSourceIds, contentMode),
+  more: (excludeSourceIds: string[], contentMode?: 'books' | 'fanfiction', page?: number) =>
+    window.api.discover.more(excludeSourceIds, contentMode, page),
   dismiss: (card: Recommendation) => window.api.discover.dismiss(card),
   openExternal: (url: string) => window.api.discover.openExternal(url),
 }

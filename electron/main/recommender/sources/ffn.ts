@@ -33,11 +33,12 @@ export interface FfnQuery {
 
 const FFN_ORIGIN = 'https://www.fanfiction.net'
 
-function ffnSearchUrl(keywords: string): string {
+function ffnSearchUrl(keywords: string, page = 1): string {
   const params = new URLSearchParams()
   params.set('keywords', keywords)
   params.set('type', 'story')
   params.set('ready', '1')
+  if (page > 1) params.set('ppage', String(page)) // FFN story-search page param
   return `${FFN_ORIGIN}/search/?${params.toString()}`
 }
 
@@ -46,7 +47,7 @@ function ffnSearchUrl(keywords: string): string {
  * freeform/genre terms. FFN keyword search without a fandom anchor is pure noise,
  * so with no fandoms we return `[]` (skip FFN for this library).
  */
-export function buildFfnQueries(seeds: TasteSeeds, cfg = FFN_SOURCE): FfnQuery[] {
+export function buildFfnQueries(seeds: TasteSeeds, cfg = FFN_SOURCE, page = 1): FfnQuery[] {
   const extras = [...seeds.freeforms, ...seeds.genres]
     .sort((a, b) => b.weight - a.weight)
     .slice(0, cfg.EXTRA_TERMS)
@@ -55,7 +56,8 @@ export function buildFfnQueries(seeds: TasteSeeds, cfg = FFN_SOURCE): FfnQuery[]
   const queries: FfnQuery[] = []
   for (const f of seeds.fandoms.slice(0, cfg.MAX_FANDOM_QUERIES)) {
     const keywords = [f.term, ...extras].join(' ')
-    queries.push({ term: f.term, url: ffnSearchUrl(keywords), weight: f.weight })
+    // `page` advances FFN's result window so load-more digs past the first page.
+    queries.push({ term: f.term, url: ffnSearchUrl(keywords, page), weight: f.weight })
   }
   return queries
 }
@@ -176,7 +178,7 @@ export async function fetchFfnCandidates(
 export const ffnSource: CandidateSource = {
   name: 'ffn',
   async fetch(liked: LikedItem[], opts: FetchOpts = {}): Promise<Candidate[]> {
-    const queries = buildFfnQueries(buildTasteSeeds(liked))
+    const queries = buildFfnQueries(buildTasteSeeds(liked), FFN_SOURCE, opts.page ?? 1)
     if (queries.length === 0) return []
     // A Refresh tightens the effective TTL to the soft floor so an aged pool re-scrapes.
     const cfg = opts.fresh ? { ...FFN_SOURCE, CACHE_TTL_MS: FFN_SOURCE.SOFT_FLOOR_MS } : FFN_SOURCE

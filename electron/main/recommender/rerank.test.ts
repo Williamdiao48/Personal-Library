@@ -510,7 +510,7 @@ describe('recommend', () => {
 
   it('forwards opts.fresh to every source (the Refresh soft-floor signal)', async () => {
     seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
-    const seen: Array<{ fresh?: boolean } | undefined> = []
+    const seen: Array<{ fresh?: boolean; page?: number } | undefined> = []
     const src: CandidateSource = {
       name: 'book',
       fetch: async (_liked, opts) => {
@@ -519,11 +519,25 @@ describe('recommend', () => {
       },
     }
     await recommend(stubEmbedder, [src], undefined, { fresh: true })
-    expect(seen).toEqual([{ fresh: true }])
+    expect(seen).toEqual([{ fresh: true, page: undefined }])
 
     seen.length = 0
     await recommend(stubEmbedder, [src]) // default read → not a fresh refresh
-    expect(seen).toEqual([{ fresh: undefined }])
+    expect(seen).toEqual([{ fresh: undefined, page: undefined }])
+  })
+
+  it('forwards opts.page to every source so a load-more digs a deeper window', async () => {
+    seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
+    const seen: Array<{ fresh?: boolean; page?: number } | undefined> = []
+    const src: CandidateSource = {
+      name: 'book',
+      fetch: async (_liked, opts) => {
+        seen.push(opts)
+        return [cand({ title: 'One', author: 'A', sourceId: '/works/C1', source: 'book' })]
+      },
+    }
+    await recommend(stubEmbedder, [src], undefined, { fresh: true, page: 3 })
+    expect(seen).toEqual([{ fresh: true, page: 3 }])
   })
 
   it('contentMode="books" fetches only book sources and returns only books', async () => {

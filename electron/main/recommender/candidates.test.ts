@@ -236,6 +236,24 @@ describe('fetchCandidates', () => {
     expect(searchCalls()).toHaveLength(2) // re-queried
   })
 
+  it('pages deeper: page 2 sends page=2 and caches separately from page 1', async () => {
+    stubFetch(
+      [okJson({ docs: [doc({ key: '/works/A' })] }), okJson({ docs: [doc({ key: '/works/B' })] })],
+      noDescriptions,
+    )
+    const now = 1_000_000
+    const p1 = await fetchCandidates([query('subject:"X"')], { now })
+    const p2 = await fetchCandidates([query('subject:"X"')], { now, page: 2 })
+    // A different page is a distinct cache key → a genuine miss, so both hit the
+    // network (page 2 is NOT served from the page-1 cache — that was the dead-end bug).
+    expect(searchCalls()).toHaveLength(2)
+    const urls = searchCalls().map(([u]) => String(u))
+    expect(urls[0]).not.toContain('page=') // page 1 omits the param
+    expect(urls[1]).toContain('page=2')
+    expect(p1.map((c) => c.sourceId)).toEqual(['/works/A'])
+    expect(p2.map((c) => c.sourceId)).toEqual(['/works/B'])
+  })
+
   // ── book descriptions (the OpenLibrary N+1) ───────────────────────────────────
 
   it('enriches each book candidate with its work description and caches it per-work', async () => {
