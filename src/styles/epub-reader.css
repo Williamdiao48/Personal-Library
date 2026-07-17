@@ -186,6 +186,21 @@
   margin: 1em auto;
 }
 
+/* Full-page cover images (SVG-wrapped rasters, tagged by the parser) fill the
+   page instead of the inline-illustration cap: scale up to the full page box,
+   drop the side padding from `.epub-page-content > *`, and no card chrome.
+   `column-span: all` lifts the image out of the narrow left column into a
+   full-width block spanning the two-page spread; `margin-left: auto` then seats
+   it on the right-hand (recto) page, like the opening page of a physical book.
+   The right margin keeps it off the page edge, matching the reader's side gap. */
+.epub-page-content img[data-epub-cover] {
+  column-span: all;
+  max-height: 100%;
+  padding: 0;
+  margin: 0 var(--epub-side-padding, 40px) 0 auto;
+  border-radius: 0;
+}
+
 .epub-page-content hr {
   border: none;
   border-top: 1px solid #333;

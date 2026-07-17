@@ -74,6 +74,67 @@ describe('transformChapterHtml (F9 DOM rewriting)', () => {
     expect(out).not.toMatch(/\bsrc=/i)
   })
 
+  // ── SVG <image> cover pages (Calibre pattern) ──
+  it('unwraps an SVG <image> cover into an inlined <img>, dropping the <svg>', () => {
+    // The standard Calibre cover page: a raster wrapped in an SVG viewport,
+    // referenced via xlink:href. sanitize-html strips <svg>/<image>, so without
+    // the unwrap this whole page renders blank.
+    const out = transformChapterHtml(
+      '<svg xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 600 800">' +
+        '<image width="600" height="800" xlink:href="cover.png"/></svg>',
+      ctx({ xhtmlDir: 'text/', zip: zipWith({ 'text/cover.png': PNG_1x1 }) }),
+    )
+    const doc = parse(out)
+    const img = doc.querySelector('img')
+    expect(img?.getAttribute('src')).toMatch(/^data:image\/png;base64,/)
+    // Tagged so the renderer gives it full-page (not inline-illustration) sizing.
+    expect(img?.hasAttribute('data-epub-cover')).toBe(true)
+    expect(doc.querySelector('svg')).toBeNull()
+    expect(doc.querySelector('image')).toBeNull()
+  })
+
+  it('handles an SVG <image> using a plain href (SVG2)', () => {
+    const out = transformChapterHtml(
+      '<svg viewBox="0 0 1 1"><image href="cover.png"/></svg>',
+      ctx({ xhtmlDir: 'text/', zip: zipWith({ 'text/cover.png': PNG_1x1 }) }),
+    )
+    expect(parse(out).querySelector('img')?.getAttribute('src')).toMatch(/^data:image\/png;base64,/)
+  })
+
+  it('emits no broken src when an SVG <image> reference is unresolvable', () => {
+    const out = transformChapterHtml(
+      '<svg><image xlink:href="missing.png"/></svg>',
+      ctx({ xhtmlDir: 'text/' }),
+    )
+    expect(out).not.toMatch(/\bsrc=/i)
+    expect(out).not.toContain('missing.png')
+  })
+
+  it('marks and hoists a plain <img> cover wrapped in <p> out of its wrapper', () => {
+    // The other common cover style (e.g. Last Smile in Sunder City): a plain
+    // <img> inside <p class="cover">. Nested in the auto-height <p>, a percentage
+    // max-height wouldn't constrain it, so it must be hoisted to a direct child.
+    const out = transformChapterHtml(
+      '<p class="cover"><img src="images/c.png"/></p>',
+      ctx({ xhtmlDir: 'text/', zip: zipWith({ 'text/images/c.png': PNG_1x1 }) }),
+    )
+    const doc = parse(out)
+    const img = doc.querySelector('img')
+    expect(img?.getAttribute('src')).toMatch(/^data:image\/png;base64,/)
+    expect(img?.hasAttribute('data-epub-cover')).toBe(true)
+    expect(img?.parentElement?.tagName).toBe('BODY') // hoisted out of the <p>
+    expect(doc.querySelector('p')).toBeNull()
+  })
+
+  it('does not mark an inline image on a page that also has text', () => {
+    const out = transformChapterHtml(
+      '<p>Some prose.</p><img src="images/c.png"/>',
+      ctx({ xhtmlDir: 'text/', zip: zipWith({ 'text/images/c.png': PNG_1x1 }) }),
+    )
+    expect(out).not.toContain('data-epub-cover')
+    expect(out).toContain('Some prose.')
+  })
+
   // ── internal link rewriting ──
   it('rewrites a cross-chapter link to data-epub-chapter + fragment, dropping href', () => {
     const out = transformChapterHtml(
