@@ -19,6 +19,8 @@ export type Theme =
   | 'midnight'
   | 'sand'
 export type GridDensity = 'compact' | 'normal' | 'comfortable'
+/** Discover content-type filter: everything, published books only, or fanfiction only. */
+export type ContentMode = 'all' | 'books' | 'fanfiction'
 export type SortBy =
   'date_saved' | 'last_read' | 'title' | 'word_count' | 'progress' | 'rating_high' | 'rating_low'
 
@@ -47,6 +49,7 @@ export interface AppSettings {
   defaultSort: SortBy
   customThemes: CustomTheme[]
   enableDiscover: boolean // show the Discover recommendations panel
+  discoverContentMode: ContentMode // Discover feed filter: all / books / fanfiction
   // User-facing meaning for each highlight color (e.g. yellow = "Key quote").
   // Drives the color-category legend/filters. App-global config, not per-annotation.
   highlightLabels: Record<HighlightColor, string>
@@ -72,6 +75,7 @@ const DEFAULTS: AppSettings = {
   defaultSort: 'date_saved',
   customThemes: [],
   enableDiscover: true,
+  discoverContentMode: 'all',
   highlightLabels: DEFAULT_HIGHLIGHT_LABELS,
 }
 

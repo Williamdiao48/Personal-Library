@@ -2,10 +2,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import DiscoverView, { formatRelativeTime } from './DiscoverView'
+import DiscoverView, { formatRelativeTime, matchesMode } from './DiscoverView'
 import { discoverService } from '../../services/discover'
 import { fireIntersection } from '../../../test/renderer/setup'
 import type { Recommendation } from '../../types'
+import type { ContentMode } from '../../contexts/SettingsContext'
 
 // The service layer + the toast context + the (heavy) capture modal are stubbed,
 // so these tests exercise DiscoverView's own state machine: cached load, refresh
@@ -27,8 +28,15 @@ vi.mock('../../contexts/ToastContext', () => ({
   useToast: () => ({ addToast, updateToast, removeToast: vi.fn() }),
 }))
 
+// Mutable so a test can preset the content-type filter before rendering. `mock`-
+// prefixed so the hoisted vi.mock factory may reference it.
+const mockSettings: { enableDiscover: boolean; discoverContentMode: ContentMode } = {
+  enableDiscover: true,
+  discoverContentMode: 'all',
+}
+const updateSettings = vi.fn()
 vi.mock('../../contexts/SettingsContext', () => ({
-  useSettings: () => ({ settings: { enableDiscover: true } }),
+  useSettings: () => ({ settings: mockSettings, updateSettings }),
 }))
 
 const startJob = vi.fn()
@@ -85,6 +93,7 @@ const renderView = () =>
 beforeEach(() => {
   vi.clearAllMocks()
   svc.get.mockResolvedValue(null)
+  mockSettings.discoverContentMode = 'all'
 })
 
 describe('formatRelativeTime', () => {
@@ -94,6 +103,69 @@ describe('formatRelativeTime', () => {
     expect(formatRelativeTime(now - 5 * 60_000, now)).toBe('5m ago')
     expect(formatRelativeTime(now - 3 * 3_600_000, now)).toBe('3h ago')
     expect(formatRelativeTime(now - 2 * 86_400_000, now)).toBe('2d ago')
+  })
+})
+
+describe('matchesMode', () => {
+  it('all matches every source', () => {
+    expect(matchesMode('book', 'all')).toBe(true)
+    expect(matchesMode('ao3', 'all')).toBe(true)
+    expect(matchesMode('ffn', 'all')).toBe(true)
+  })
+  it('books matches only the book source', () => {
+    expect(matchesMode('book', 'books')).toBe(true)
+    expect(matchesMode('ao3', 'books')).toBe(false)
+    expect(matchesMode('ffn', 'books')).toBe(false)
+  })
+  it('fanfiction matches every non-book source', () => {
+    expect(matchesMode('book', 'fanfiction')).toBe(false)
+    expect(matchesMode('ao3', 'fanfiction')).toBe(true)
+    expect(matchesMode('ffn', 'fanfiction')).toBe(true)
+  })
+})
+
+describe('DiscoverView content-type filter', () => {
+  it('renders the segmented control once there is a feed', async () => {
+    svc.get.mockResolvedValue({ cards: [rec({ title: 'A Fic' })], generatedAt: Date.now() })
+    renderView()
+    await screen.findByText('A Fic')
+
+    expect(screen.getByRole('tab', { name: 'All' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Books' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Fanfic' })).toBeInTheDocument()
+  })
+
+  it('with Books active, renders only book cards and a "books" subtitle', async () => {
+    mockSettings.discoverContentMode = 'books'
+    svc.get.mockResolvedValue({
+      cards: [rec({ title: 'A Book', source: 'book', sourceId: 'b1' }), rec({ title: 'A Fic' })],
+      generatedAt: Date.now(),
+    })
+    renderView()
+
+    expect(await screen.findByText('A Book')).toBeInTheDocument()
+    expect(screen.queryByText('A Fic')).not.toBeInTheDocument()
+    expect(screen.getByText(/1 books/)).toBeInTheDocument()
+  })
+
+  it('clicking a filter segment persists the choice', async () => {
+    svc.get.mockResolvedValue({ cards: [rec({ title: 'A Fic' })], generatedAt: Date.now() })
+    renderView()
+    await screen.findByText('A Fic')
+
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'Books' }))
+
+    expect(updateSettings).toHaveBeenCalledWith({ discoverContentMode: 'books' })
+  })
+
+  it('shows a mode-specific empty state when nothing in the pool matches the filter', async () => {
+    mockSettings.discoverContentMode = 'books'
+    svc.get.mockResolvedValue({ cards: [rec({ title: 'A Fic' })], generatedAt: Date.now() })
+    renderView()
+
+    expect(await screen.findByText(/No book recommendations in this batch/)).toBeInTheDocument()
+    // The engine is NOT called — it's a pure client-side filter of the cache.
+    expect(svc.refresh).not.toHaveBeenCalled()
   })
 })
 
@@ -286,7 +358,23 @@ describe('DiscoverView', () => {
     await act(async () => fireIntersection())
 
     expect(await screen.findByText('Fic 3')).toBeInTheDocument()
-    expect(svc.more).toHaveBeenCalledWith(['id-1', 'id-2'])
+    // In All mode the dig is type-agnostic (contentMode undefined).
+    expect(svc.more).toHaveBeenCalledWith(['id-1', 'id-2'], undefined)
+  })
+
+  it('in a Books filter, load-more digs for books specifically (contentMode="books")', async () => {
+    mockSettings.discoverContentMode = 'books'
+    const book = (n: number) =>
+      rec({ title: `Book ${n}`, source: 'book', sourceId: `b-${n}`, url: `https://ol/${n}` })
+    svc.get.mockResolvedValue({ cards: [book(1), book(2)], generatedAt: Date.now() })
+    svc.more.mockResolvedValue({ cards: [book(3)] })
+    renderView()
+    await screen.findByText('Book 1')
+
+    await act(async () => fireIntersection())
+
+    expect(await screen.findByText('Book 3')).toBeInTheDocument()
+    expect(svc.more).toHaveBeenCalledWith(['b-1', 'b-2'], 'books')
   })
 
   it('shows "all caught up" and stops when load-more returns nothing new', async () => {

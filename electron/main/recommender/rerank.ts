@@ -253,6 +253,42 @@ export function allocateSlots(
 }
 
 /**
+ * Minimum candidates of EACH bucket the emitted pool should hold so the Discover
+ * content-type filter (All/Books/Fanfiction) always has at least a page of the
+ * minority type to show. ≥ the renderer's PAGE_SIZE (12).
+ */
+export const DISCOVER_BUCKET_FLOOR = 12
+
+/**
+ * Nudge a proportional `allocateSlots` result so each bucket reaches `floor`,
+ * capped by how many candidates that bucket actually has (`avail`), taking the
+ * difference from the other bucket's surplus (never dropping the other below its
+ * own floor). Keeps `book + fic` constant. A TARGET, not a hard cap — selectByQuota
+ * still tops up an underfilled bucket — so the proportional feed is unchanged
+ * whenever both buckets already clear the floor. Pure.
+ */
+export function floorAlloc(
+  alloc: { book: number; fic: number },
+  floor: number,
+  avail: { book: number; fic: number },
+): { book: number; fic: number } {
+  let { book, fic } = alloc
+  const bookFloor = Math.min(floor, avail.book)
+  const ficFloor = Math.min(floor, avail.fic)
+  if (book < bookFloor) {
+    const take = Math.min(bookFloor - book, Math.max(0, fic - ficFloor))
+    book += take
+    fic -= take
+  }
+  if (fic < ficFloor) {
+    const take = Math.min(ficFloor - fic, Math.max(0, book - bookFloor))
+    fic += take
+    book -= take
+  }
+  return { book, fic }
+}
+
+/**
  * Select up to `k` picks honoring the per-bucket quota: MMR within each bucket for
  * its allotment, then—if a bucket underfills its quota—top the result up to `k`
  * from the best remaining candidates of either bucket (so the mix is a target, not
@@ -375,7 +411,16 @@ export async function recommend(
   embedder: Embedder,
   sources: CandidateSource[] = defaultSources(),
   taste: TasteResult = buildTaste(),
-  opts: { limit?: number; excludeIds?: readonly string[]; fresh?: boolean } = {},
+  opts: {
+    limit?: number
+    excludeIds?: readonly string[]
+    fresh?: boolean
+    // Restrict the whole run to one content type — used by Discover's Books/Fanfiction
+    // filter so a filtered "load more" digs deeper into THAT type (fetching only its
+    // sources and giving it every slot) instead of paging a mixed pool. Undefined =
+    // the normal balanced/proportional run.
+    contentMode?: 'books' | 'fanfiction'
+  } = {},
 ): Promise<Recommendation[]> {
   const limit = opts.limit ?? RERANK.TOP_K
   if (taste.centroids.length === 0) return [] // cold start — no taste, no recs (§8)
@@ -394,6 +439,14 @@ export async function recommend(
     ].map((t) => t.term.toLowerCase()),
   )
 
+  // A content-mode run fetches ONLY that type's sources (book → OpenLibrary; fanfic →
+  // AO3/FFN) — no point scraping fics we'll discard when the reader asked for books.
+  const wantBucket: SourceBucket | null =
+    opts.contentMode === 'books' ? 'book' : opts.contentMode === 'fanfiction' ? 'fic' : null
+  const activeSources = wantBucket
+    ? sources.filter((s) => bucketOf(s.name) === wantBucket)
+    : sources
+
   // Fan out to the sources CONCURRENTLY. They hit independent hosts (AO3, FFN via
   // Cloudflare, OpenLibrary), so overlapping them costs no per-host etiquette and
   // collapses the wall time from the SUM of the three to the slowest one (usually
@@ -401,7 +454,7 @@ export async function recommend(
   // batch" guarantee, and results stay in `sources` order so the union's fanfic-first
   // tie-break is unchanged.
   const settled = await Promise.allSettled(
-    sources.map((s) => s.fetch(taste.liked, { fresh: opts.fresh })),
+    activeSources.map((s) => s.fetch(taste.liked, { fresh: opts.fresh })),
   )
   const pools: Candidate[][] = settled.map((r) => (r.status === 'fulfilled' ? r.value : []))
   const fetched = unionCandidates(pools)
@@ -450,8 +503,19 @@ export async function recommend(
 
   // Source-balanced selection: fill book/fic quotas proportional to the library
   // mix so the feed mirrors what the reader actually reads (not just whichever
-  // source has the strongest embedding match).
-  const alloc = allocateSlots(limit, snapshot.mix)
+  // source has the strongest embedding match). Then floor each bucket so the pool
+  // carries at least a page of both types for Discover's content-type filter — the
+  // floored minority lands in the score-ordered tail, leaving the visible top of an
+  // unfiltered feed proportional as before.
+  const avail = {
+    book: scored.filter((s) => bucketOf(s.cand.source) === 'book').length,
+    fic: scored.filter((s) => bucketOf(s.cand.source) === 'fic').length,
+  }
+  // A content-mode run gives every slot to the requested bucket (the other's sources
+  // weren't even fetched); otherwise floor both buckets on the proportional split.
+  const alloc = wantBucket
+    ? { book: wantBucket === 'book' ? limit : 0, fic: wantBucket === 'fic' ? limit : 0 }
+    : floorAlloc(allocateSlots(limit, snapshot.mix), DISCOVER_BUCKET_FLOOR, avail)
   const selected = selectByQuota(scored, limit, alloc, RERANK.LAMBDA, snapshot.ownedAuthors)
   const scoreById = new Map(selected.map((s) => [s.cand.sourceId, s.score]))
   const verified = verifyCandidates(

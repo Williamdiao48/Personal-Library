@@ -35,8 +35,12 @@ export interface CandidatesConfig {
 
 export const CANDIDATES: CandidatesConfig = {
   MAX_SUBJECTS_PER_DOC: 8, // cap the subjects folded into a candidate's embed text
-  LIMIT_PER_QUERY: 20, // docs requested per seed query
-  MAX_CANDIDATES: 80, // cap the merged/deduped set (§9: ~50–100)
+  LIMIT_PER_QUERY: 40, // docs requested per seed query (deeper than the original 20 so
+  // the Discover Books filter has more to page through before it exhausts)
+  MAX_CANDIDATES: 200, // cap the merged/deduped book pool. Raised from 80: with a
+  // Books-only Discover filter a reader can scroll the whole pool, and 80 exhausted in
+  // one session. Candidate vectors are cached by sourceId, so the deeper pool only
+  // costs a one-time embed of the extra books, not every refresh.
   CACHE_TTL_MS: 7 * 24 * 60 * 60 * 1000, // 7 days — hard ceiling on the search cache
   SOFT_FLOOR_MS: 2 * 60 * 60 * 1000, // 2 h — a Refresh re-queries once search results are older than this
   FETCH_TIMEOUT_MS: 15_000,

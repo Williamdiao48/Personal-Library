@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useNavigate, Navigate } from 'react-router-dom'
 import { discoverService } from '../../services/discover'
 import { useToast } from '../../contexts/ToastContext'
-import { useSettings } from '../../contexts/SettingsContext'
+import { useSettings, type ContentMode } from '../../contexts/SettingsContext'
 import { useCaptureJobs } from '../../contexts/CaptureJobsContext'
 import AddItemModal from '../Capture/AddItemModal'
 import RecommendationCard from './RecommendationCard'
@@ -19,6 +19,12 @@ export function formatRelativeTime(ts: number, now: number = Date.now()): string
   if (hr < 24) return `${hr}h ago`
   const days = Math.floor(hr / 24)
   return `${days}d ago`
+}
+
+/** Whether a card belongs in the feed for the active content-type filter. Pure. */
+export function matchesMode(source: Recommendation['source'], mode: ContentMode): boolean {
+  if (mode === 'all') return true
+  return mode === 'books' ? source === 'book' : source !== 'book'
 }
 
 /** A shimmering placeholder card shown in the grid while the next page loads. */
@@ -42,7 +48,7 @@ function SkeletonCard() {
 export default function DiscoverView() {
   const navigate = useNavigate()
   const { addToast, updateToast } = useToast()
-  const { settings } = useSettings()
+  const { settings, updateSettings } = useSettings()
   const { startJob } = useCaptureJobs()
 
   const [cards, setCards] = useState<Recommendation[]>([])
@@ -61,6 +67,23 @@ export default function DiscoverView() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [exhausted, setExhausted] = useState(false)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
+
+  // Content-type filter (All / Books / Fanfiction). Persisted in settings, applied
+  // as a pure client-side filter over the cached pool — instant, no refetch. `cards`
+  // stays the FULL fetched pool (used for engine exclusions); `visibleCards` is what
+  // the grid renders. A refresh floors both buckets so this is never starved.
+  const mode = settings.discoverContentMode
+  const setMode = (m: ContentMode) => updateSettings({ discoverContentMode: m })
+  const visibleCards = useMemo(
+    () => cards.filter((c) => matchesMode(c.source, mode)),
+    [cards, mode],
+  )
+
+  // Switching filter restarts pagination so the new slice starts from its first page.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+    setExhausted(false)
+  }, [mode])
 
   // Modal (Add to Library) — same parent-owned pattern as LibraryView. We track the
   // rec being added (not just its URL) so we can drop it from the feed once it's
@@ -134,32 +157,46 @@ export default function DiscoverView() {
     setLoadingMore(true)
     try {
       const shownIds = cards.map((c) => c.sourceId)
-      const res = await discoverService.more(shownIds)
+      // In a Books/Fanfiction filter, dig deeper into that type specifically so scroll
+      // keeps generating its recs instead of latching once the mixed pool runs dry.
+      const res = await discoverService.more(shownIds, mode === 'all' ? undefined : mode)
       const seen = new Set(shownIds)
       const fresh = res.cards.filter((c) => !seen.has(c.sourceId))
       if (fresh.length === 0) {
         setExhausted(true)
       } else {
         setCards((prev) => [...prev, ...fresh])
-        setVisibleCount((c) => c + Math.min(PAGE_SIZE, fresh.length))
+        // Reveal by how many NEW cards match the active filter (a page in a lopsided
+        // mode may add few of the wanted type; the sentinel will fetch again).
+        const freshVisible = fresh.filter((c) => matchesMode(c.source, mode))
+        setVisibleCount((c) => c + Math.min(PAGE_SIZE, freshVisible.length))
       }
     } catch {
       setExhausted(true) // don't hammer the engine on a failed page
     } finally {
       setLoadingMore(false)
     }
-  }, [cards])
+  }, [cards, mode])
 
-  // Sentinel reached: first reveal more of the already-loaded pool (instant), and
+  // Sentinel reached: first reveal more of the already-loaded slice (instant), and
   // only once it's all on screen fetch the next page from the engine.
   const onReachEnd = useCallback(() => {
-    if (loading || refreshing || coldStart || cards.length === 0) return
-    if (visibleCount < cards.length) {
-      setVisibleCount((c) => Math.min(c + PAGE_SIZE, cards.length))
+    if (loading || refreshing || coldStart || visibleCards.length === 0) return
+    if (visibleCount < visibleCards.length) {
+      setVisibleCount((c) => Math.min(c + PAGE_SIZE, visibleCards.length))
       return
     }
     if (!loadingMore && !exhausted) void loadMore()
-  }, [loading, refreshing, coldStart, cards.length, visibleCount, loadingMore, exhausted, loadMore])
+  }, [
+    loading,
+    refreshing,
+    coldStart,
+    visibleCards.length,
+    visibleCount,
+    loadingMore,
+    exhausted,
+    loadMore,
+  ])
 
   // Observe the sentinel against the viewport, prefetching ~a screen early.
   useEffect(() => {
@@ -190,9 +227,10 @@ export default function DiscoverView() {
     void discoverService.openExternal(rec.url)
   }
 
+  const modeNoun = mode === 'books' ? 'books' : mode === 'fanfiction' ? 'fics' : 'picks'
   const subtitle =
-    generatedAt !== null && cards.length > 0
-      ? `Updated ${formatRelativeTime(generatedAt)} · ${cards.length} picks`
+    generatedAt !== null && visibleCards.length > 0
+      ? `Updated ${formatRelativeTime(generatedAt)} · ${visibleCards.length} ${modeNoun}`
       : ''
 
   // Guard: if the feature is disabled in Settings, the route is unreachable
@@ -206,6 +244,24 @@ export default function DiscoverView() {
           ← Library
         </button>
         <h1 className="discover-title">Discover</h1>
+        {/* Content-type filter — a pure client-side slice of the cached pool. Shown
+            alongside Refresh once there's a feed to filter (hidden on cold start). */}
+        {cards.length > 0 && !coldStart && (
+          <div className="discover-segmented" role="tablist" aria-label="Content type">
+            {(['all', 'books', 'fanfiction'] as ContentMode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                role="tab"
+                aria-selected={mode === m}
+                className={`discover-segmented-btn${mode === m ? ' is-active' : ''}`}
+                onClick={() => setMode(m)}
+              >
+                {m === 'all' ? 'All' : m === 'books' ? 'Books' : 'Fanfic'}
+              </button>
+            ))}
+          </div>
+        )}
         {/* Only offer the header Refresh once there are cards to refresh — while the
             feed is empty (cold start / "no recommendations yet") the empty state
             carries its own "Find recommendations" call to action. */}
@@ -259,10 +315,18 @@ export default function DiscoverView() {
                 {refreshing ? 'Refreshing…' : 'Find recommendations'}
               </button>
             </div>
+          ) : visibleCards.length === 0 ? (
+            // The pool has cards, but none of the active content type this batch.
+            <div className="empty-state">
+              <h2 className="empty-state-title">
+                No {mode === 'books' ? 'book' : 'fanfiction'} recommendations in this batch
+              </h2>
+              <p className="empty-state-body">Try Refresh for more, or switch back to All.</p>
+            </div>
           ) : (
             <>
               <div className="discover-grid">
-                {cards.slice(0, visibleCount).map((rec) => (
+                {visibleCards.slice(0, visibleCount).map((rec) => (
                   <RecommendationCard
                     key={rec.sourceId}
                     rec={rec}

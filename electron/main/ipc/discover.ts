@@ -28,7 +28,9 @@ interface CachedDiscover {
 // embeds + scores the WHOLE candidate pool per refresh, then discards all but this
 // many — so widening the page beyond the old 12 is nearly free (no extra fetch or
 // model work). The renderer reveals them ~12 at a time as the reader scrolls.
-const DISCOVER_POOL = 24
+// Sized so a proportional split still leaves ≥ DISCOVER_BUCKET_FLOOR (12) of BOTH
+// book and fic in the pool, so the content-type filter is never starved.
+const DISCOVER_POOL = 36
 
 /** Read + parse the single cache row; null when empty or unparseable. */
 function readCache(): CachedDiscover | null {
@@ -130,16 +132,29 @@ export function registerDiscoverHandlers(): void {
   // returns the NEXT best candidates rather than repeats, append them to the cached
   // snapshot (so a restart restores the whole scrolled feed), and return just the new
   // cards. Empty result = the pool is exhausted → the UI stops and shows an end
-  // marker. Warm-cheap: source docs + candidate embeddings are already cached, so
-  // this is a re-selection, not a re-fetch/re-embed.
+  // marker. `fresh: true` gives scroll the SAME walking-gradient dig as Refresh —
+  // once a source ages past its soft floor a load-more re-scrapes it for genuinely
+  // new works, so scrolling keeps finding recs instead of dead-ending at the
+  // first-fetched pool. (Unlike Refresh it does NOT wrap to the top on exhaustion —
+  // scroll stops honestly rather than repeating cards.) Warm within the soft floor:
+  // source docs + candidate embeddings are cached, so it's a re-selection there.
   ipcMain.handle(
     'discover:more',
-    async (_e, excludeSourceIds: string[]): Promise<{ cards: Recommendation[] }> => {
+    async (
+      _e,
+      excludeSourceIds: string[],
+      contentMode?: 'books' | 'fanfiction',
+    ): Promise<{ cards: Recommendation[] }> => {
       const taste = buildTaste()
       if (taste.centroids.length === 0) return { cards: [] }
+      // In a Books/Fanfiction filter, dig deeper into THAT type only; in All, the
+      // normal balanced page. Either way append to the cache as a superset so
+      // toggling filters still shows everything accumulated.
       const cards = await recommend(workerEmbedder, undefined, taste, {
         limit: DISCOVER_POOL,
         excludeIds: excludeSourceIds,
+        fresh: true,
+        contentMode,
       })
       if (cards.length > 0) {
         const cached = readCache()
