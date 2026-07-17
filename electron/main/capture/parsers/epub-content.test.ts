@@ -74,6 +74,39 @@ describe('transformChapterHtml (F9 DOM rewriting)', () => {
     expect(out).not.toMatch(/\bsrc=/i)
   })
 
+  // ── SVG <image> cover pages (Calibre pattern) ──
+  it('unwraps an SVG <image> cover into an inlined <img>, dropping the <svg>', () => {
+    // The standard Calibre cover page: a raster wrapped in an SVG viewport,
+    // referenced via xlink:href. sanitize-html strips <svg>/<image>, so without
+    // the unwrap this whole page renders blank.
+    const out = transformChapterHtml(
+      '<svg xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 600 800">' +
+        '<image width="600" height="800" xlink:href="cover.png"/></svg>',
+      ctx({ xhtmlDir: 'text/', zip: zipWith({ 'text/cover.png': PNG_1x1 }) }),
+    )
+    const doc = parse(out)
+    expect(doc.querySelector('img')?.getAttribute('src')).toMatch(/^data:image\/png;base64,/)
+    expect(doc.querySelector('svg')).toBeNull()
+    expect(doc.querySelector('image')).toBeNull()
+  })
+
+  it('handles an SVG <image> using a plain href (SVG2)', () => {
+    const out = transformChapterHtml(
+      '<svg viewBox="0 0 1 1"><image href="cover.png"/></svg>',
+      ctx({ xhtmlDir: 'text/', zip: zipWith({ 'text/cover.png': PNG_1x1 }) }),
+    )
+    expect(parse(out).querySelector('img')?.getAttribute('src')).toMatch(/^data:image\/png;base64,/)
+  })
+
+  it('emits no broken src when an SVG <image> reference is unresolvable', () => {
+    const out = transformChapterHtml(
+      '<svg><image xlink:href="missing.png"/></svg>',
+      ctx({ xhtmlDir: 'text/' }),
+    )
+    expect(out).not.toMatch(/\bsrc=/i)
+    expect(out).not.toContain('missing.png')
+  })
+
   // ── internal link rewriting ──
   it('rewrites a cross-chapter link to data-epub-chapter + fragment, dropping href', () => {
     const out = transformChapterHtml(

@@ -374,53 +374,90 @@ function extractTitleFromXhtml(xhtml: string, index: number): string {
 // ── Image inlining ─────────────────────────────────────────────────────────
 
 /**
+ * Resolve one image reference (a relative/absolute ZIP path or a pre-existing
+ * data: URI) to a safe inlined data URI, or `null` if it can't be safely inlined.
+ * Shared by <img> and SVG <image> handling. Returning `null` means "drop the
+ * source" — the same defence-in-depth failure policy for every rejection reason
+ * (unresolvable, decompression bomb, oversized, or unknown/unsafe MIME).
+ */
+function resolveImageDataUri(src: string, xhtmlDir: string, zip: AdmZip): string | null {
+  // Pre-existing data: URI — keep only safe image MIME types; drop
+  // data:text/html, data:application/javascript, etc. before the sanitizer.
+  if (src.startsWith('data:')) {
+    return isSafeImgDataUri(src) ? src : null
+  }
+
+  // External/relative URL — attempt to inline from the ZIP. On any failure,
+  // return null (never leave an http:// tracking URL or a broken reference).
+  const zipPath = resolveZipPath(xhtmlDir, src)
+  const entry = zipPath ? zip.getEntry(zipPath) : null
+  if (!zipPath || !entry) return null
+
+  // Reject a decompression-bomb image before materializing it.
+  try {
+    assertEntryInflateOk(entry)
+  } catch {
+    return null
+  }
+  const data = entry.getData()
+  if (data.length > IMAGE_MAX_BYTES) return null
+
+  const ext = zipPath.split('.').pop()?.toLowerCase() ?? ''
+  const mime = MIME_BY_EXT[ext]
+  if (!mime) return null
+
+  return `data:${mime};base64,${data.toString('base64')}`
+}
+
+/**
  * Inline every <img> reference as a base64 data URI, editing nodes on the parsed
  * DOM (no regex over raw markup). Unresolvable, oversized, or unsafe sources have
- * their `src` removed rather than the whole book aborting — the same failure
- * policy as before, now expressed as node operations.
+ * their `src` removed rather than the whole book aborting.
  */
 function inlineImageNodes(doc: Document, xhtmlDir: string, zip: AdmZip): void {
   for (const img of doc.querySelectorAll('img')) {
     const src = img.getAttribute('src')
     if (src === null) continue
+    const dataUri = resolveImageDataUri(src, xhtmlDir, zip)
+    if (dataUri === null) img.removeAttribute('src')
+    else img.setAttribute('src', dataUri)
+  }
+}
 
-    // Pre-existing data: URI — keep only safe image MIME types; drop
-    // data:text/html, data:application/javascript, etc. before the sanitizer.
-    if (src.startsWith('data:')) {
-      if (!isSafeImgDataUri(src)) img.removeAttribute('src')
-      continue
-    }
+const XLINK_NS = 'http://www.w3.org/1999/xlink'
 
-    // External/relative URL — attempt to inline from the ZIP. On any failure,
-    // strip src entirely (defence-in-depth: never leave an http:// tracking URL).
-    const zipPath = resolveZipPath(xhtmlDir, src)
-    const entry = zipPath ? zip.getEntry(zipPath) : null
-    if (!zipPath || !entry) {
-      img.removeAttribute('src')
-      continue
-    }
+/** Read an SVG <image> reference from any of the href spellings it may use. */
+function svgImageHref(el: Element): string | null {
+  return (
+    el.getAttribute('xlink:href') ?? el.getAttributeNS(XLINK_NS, 'href') ?? el.getAttribute('href')
+  )
+}
 
-    // Reject a decompression-bomb image before materializing it.
-    try {
-      assertEntryInflateOk(entry)
-    } catch {
-      img.removeAttribute('src')
-      continue
-    }
-    const data = entry.getData()
-    if (data.length > IMAGE_MAX_BYTES) {
-      img.removeAttribute('src')
-      continue
-    }
+/**
+ * Convert SVG <image> elements into plain inlined <img> tags before sanitizing.
+ *
+ * The common trigger is the Calibre cover-page pattern —
+ * `<svg viewBox="…"><image xlink:href="cover.jpeg"/></svg>` — used as the book's
+ * first spine page. `sanitize-html` strips <svg>/<image>/xlink:href wholesale, so
+ * without this the cover page renders as a blank white page. We extract only the
+ * raster reference and emit an <img> (inlined via the same validated path as any
+ * other chapter image); no SVG markup ever reaches the renderer, so the SVG
+ * exclusion (scripts / <foreignObject> / external refs) stays fully intact.
+ *
+ * The <img> is left in place inside the <svg>; sanitize-html discards the <svg>
+ * wrapper but preserves the allowed <img> child.
+ */
+function inlineSvgImageNodes(doc: Document, xhtmlDir: string, zip: AdmZip): void {
+  for (const image of doc.querySelectorAll('image')) {
+    const href = svgImageHref(image)
+    const dataUri = href ? resolveImageDataUri(href, xhtmlDir, zip) : null
 
-    const ext = zipPath.split('.').pop()?.toLowerCase() ?? ''
-    const mime = MIME_BY_EXT[ext]
-    if (!mime) {
-      img.removeAttribute('src')
-      continue
-    }
+    const img = doc.createElement('img')
+    if (dataUri) img.setAttribute('src', dataUri)
+    const alt = image.getAttribute('alt')
+    if (alt) img.setAttribute('alt', alt)
 
-    img.setAttribute('src', `data:${mime};base64,${data.toString('base64')}`)
+    image.replaceWith(img)
   }
 }
 
@@ -501,6 +538,7 @@ export function transformChapterHtml(xhtml: string, ctx: ChapterContext): string
   try {
     const doc = dom.window.document
     inlineImageNodes(doc, ctx.xhtmlDir, ctx.zip)
+    inlineSvgImageNodes(doc, ctx.xhtmlDir, ctx.zip)
     rewriteLinkNodes(doc, ctx.xhtmlDir, ctx.spineHrefToIndex)
     stripLeadingTitleNodes(doc.body, ctx.bookTitle)
     return sanitizeHtml(doc.body.innerHTML, SANITIZE_OPTIONS)
