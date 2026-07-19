@@ -235,4 +235,7 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('discover:dismiss', card),
     openExternal: (url: string) => ipcRenderer.invoke('discover:openExternal', url),
   },
+  dictionary: {
+    lookup: (word: string) => ipcRenderer.invoke('dictionary:lookup', word),
+  },
 })

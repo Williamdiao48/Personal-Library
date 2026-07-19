@@ -276,6 +276,27 @@ export interface DiscoverResult {
   coldStart: boolean
 }
 
+export type DictionaryPos = 'noun' | 'verb' | 'adjective' | 'adverb'
+
+export interface DictionarySense {
+  definition: string
+  /** An illustrative usage quote from WordNet, when present. */
+  example?: string
+  synonyms: string[]
+}
+
+export interface DictionaryEntry {
+  pos: DictionaryPos
+  senses: DictionarySense[]
+}
+
+export interface DictionaryResult {
+  /** The headword actually resolved — may be a lemma of the queried form (geese→goose). */
+  word: string
+  found: boolean
+  entries: DictionaryEntry[]
+}
+
 // Type the window.api surface so the renderer gets full type-safety
 export interface Api {
   library: {
@@ -443,6 +464,10 @@ export interface Api {
     dismiss: (card: Recommendation) => Promise<void>
     /** Open a card's http(s) source page in the external browser. */
     openExternal: (url: string) => Promise<void>
+  }
+  dictionary: {
+    /** Look up a single word in the bundled WordNet dictionary (offline). */
+    lookup: (word: string) => Promise<DictionaryResult>
   }
 }
 

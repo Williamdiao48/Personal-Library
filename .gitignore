@@ -20,6 +20,9 @@ playwright-report/
 *.db-journal
 *.db-wal
 *.db-shm
+# ...except the bundled read-only WordNet dictionary, a committed build artifact
+# (see scripts/dictionary/build.mjs).
+!resources/dictionary/dictionary.db
 
 # Environment / secrets
 .env
