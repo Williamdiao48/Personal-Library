@@ -999,3 +999,76 @@
   text-decoration-color: #b09070;
   background: none;
 }
+
+/* Definition popover — the reader theme's text color cascades into this
+   (fixed-position) descendant, so each text element is set explicitly per theme
+   to avoid dark-on-dark. Base (dark) lives in globals.css. */
+.html-theme-light .definition-popover,
+.html-theme-light .definition-popover-head {
+  background: #fff;
+}
+.html-theme-light .definition-popover {
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+}
+.html-theme-light .definition-popover-head {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+.html-theme-light .definition-popover-word {
+  color: #1a1a1a;
+}
+.html-theme-light .definition-popover-close {
+  color: #bbb;
+}
+.html-theme-light .definition-popover-close:hover {
+  color: #555;
+}
+.html-theme-light .definition-popover-status,
+.html-theme-light .definition-sense-example {
+  color: #777;
+}
+.html-theme-light .definition-sense-synonyms {
+  color: #888;
+}
+.html-theme-light .definition-pos-label {
+  color: #2b6cb0;
+}
+.html-theme-light .definition-sense,
+.html-theme-light .definition-sense-text {
+  color: #333;
+}
+
+.html-theme-sepia .definition-popover,
+.html-theme-sepia .definition-popover-head {
+  background: #f5ead0;
+}
+.html-theme-sepia .definition-popover {
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+.html-theme-sepia .definition-popover-head {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+.html-theme-sepia .definition-popover-word {
+  color: #3a2a1c;
+}
+.html-theme-sepia .definition-popover-close {
+  color: #a08060;
+}
+.html-theme-sepia .definition-popover-close:hover {
+  color: #4a3728;
+}
+.html-theme-sepia .definition-popover-status,
+.html-theme-sepia .definition-sense-example {
+  color: #8a7060;
+}
+.html-theme-sepia .definition-sense-synonyms {
+  color: #9a8070;
+}
+.html-theme-sepia .definition-pos-label {
+  color: #7a5a2a;
+}
+.html-theme-sepia .definition-sense,
+.html-theme-sepia .definition-sense-text {
+  color: #4a3728;
+}

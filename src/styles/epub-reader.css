@@ -1364,6 +1364,79 @@
   background: none;
 }
 
+/* Definition popover — the reader theme's text color cascades into this
+   (fixed-position) descendant, so each text element is set explicitly per theme
+   to avoid dark-on-dark. Base (dark) lives in globals.css. */
+.epub-theme-light .definition-popover,
+.epub-theme-light .definition-popover-head {
+  background: #fff;
+}
+.epub-theme-light .definition-popover {
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+}
+.epub-theme-light .definition-popover-head {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+.epub-theme-light .definition-popover-word {
+  color: #1a1a1a;
+}
+.epub-theme-light .definition-popover-close {
+  color: #bbb;
+}
+.epub-theme-light .definition-popover-close:hover {
+  color: #555;
+}
+.epub-theme-light .definition-popover-status,
+.epub-theme-light .definition-sense-example {
+  color: #777;
+}
+.epub-theme-light .definition-sense-synonyms {
+  color: #888;
+}
+.epub-theme-light .definition-pos-label {
+  color: #2b6cb0;
+}
+.epub-theme-light .definition-sense,
+.epub-theme-light .definition-sense-text {
+  color: #333;
+}
+
+.epub-theme-sepia .definition-popover,
+.epub-theme-sepia .definition-popover-head {
+  background: #f5ead0;
+}
+.epub-theme-sepia .definition-popover {
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+.epub-theme-sepia .definition-popover-head {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+.epub-theme-sepia .definition-popover-word {
+  color: #3a2a1c;
+}
+.epub-theme-sepia .definition-popover-close {
+  color: #a08060;
+}
+.epub-theme-sepia .definition-popover-close:hover {
+  color: #4a3728;
+}
+.epub-theme-sepia .definition-popover-status,
+.epub-theme-sepia .definition-sense-example {
+  color: #8a7060;
+}
+.epub-theme-sepia .definition-sense-synonyms {
+  color: #9a8070;
+}
+.epub-theme-sepia .definition-pos-label {
+  color: #7a5a2a;
+}
+.epub-theme-sepia .definition-sense,
+.epub-theme-sepia .definition-sense-text {
+  color: #4a3728;
+}
+
 /* Read-only theme chips on annotation panel rows */
 .annotation-row-themes {
   display: flex;

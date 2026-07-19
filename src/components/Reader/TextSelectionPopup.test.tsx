@@ -2,12 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { createRef } from 'react'
 import TextSelectionPopup from './TextSelectionPopup'
+import { installMockApi } from '../../../test/renderer/mockWindowApi'
 
 // Build a container with real text and a Range over it, and stub window.getSelection
 // to return a non-collapsed selection with a non-zero bounding rect.
 function stubSelection(container: HTMLElement, text = 'selected') {
   const range = document.createRange()
   range.selectNodeContents(container)
+  // The component reads range.toString() to gate the single-word "Define"
+  // button, so drive it from `text` rather than the container's full contents.
+  range.toString = () => text
   range.getBoundingClientRect = () =>
     ({
       left: 100,
@@ -63,7 +67,12 @@ function selectAndMouseUp(container: HTMLElement) {
   mouseUpIn(container)
 }
 
-beforeEach(() => vi.useFakeTimers())
+beforeEach(() => {
+  vi.useFakeTimers()
+  // DefinitionPopover (mounted when "Define" is clicked) calls window.api on mount.
+  const api = installMockApi()
+  api.dictionary.lookup.mockResolvedValue({ word: 'selected', found: false, entries: [] })
+})
 afterEach(() => {
   vi.runOnlyPendingTimers()
   vi.useRealTimers()
@@ -139,6 +148,32 @@ describe('TextSelectionPopup', () => {
       document.dispatchEvent(new Event('selectionchange'))
     })
     expect(screen.queryByText('Note')).toBeNull()
+  })
+
+  it('shows "Define" for a single-word selection and opens the definition popover', async () => {
+    const { container } = setup()
+    stubSelection(container, 'serendipity')
+    mouseUpIn(container)
+    const defineBtn = screen.getByText('Define')
+    expect(defineBtn).toBeInTheDocument()
+    act(() => {
+      fireEvent.click(defineBtn)
+    })
+    // The selection popup closes and the definition dialog opens for the word.
+    expect(screen.queryByText('Note')).toBeNull()
+    expect(screen.getByRole('dialog', { name: /Definition of serendipity/ })).toBeInTheDocument()
+    // Flush DefinitionPopover's async lookup so its state settles inside act().
+    await act(async () => {
+      await Promise.resolve()
+    })
+  })
+
+  it('hides "Define" for a multi-word selection', () => {
+    const { container } = setup()
+    stubSelection(container, 'two words')
+    mouseUpIn(container)
+    expect(screen.getByText('Note')).toBeInTheDocument() // popup is up
+    expect(screen.queryByText('Define')).toBeNull()
   })
 
   it('dismisses when the clearTrigger changes', () => {

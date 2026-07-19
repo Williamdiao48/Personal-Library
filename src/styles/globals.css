@@ -3265,6 +3265,103 @@ html[data-theme='sepia'] .item-card-refresh-status--error {
   background: rgba(255, 255, 255, 0.14);
 }
 
+/* ── Dictionary definition popover ──────────────────────────────────────── */
+
+.definition-popover {
+  position: fixed;
+  z-index: 1000;
+  width: 320px;
+  max-height: 340px;
+  overflow-y: auto;
+  background: #1e1e1e;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+  color: #ddd;
+  padding: 0;
+  pointer-events: all;
+}
+
+.definition-popover-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px 6px;
+  background: #1e1e1e;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.definition-popover-word {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  word-break: break-word;
+}
+.definition-popover-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.definition-popover-close:hover {
+  color: #fff;
+}
+
+.definition-popover-status {
+  padding: 12px;
+  margin: 0;
+  font-size: 13px;
+  color: #999;
+}
+
+.definition-popover-body {
+  padding: 8px 12px 12px;
+}
+.definition-pos-group {
+  margin-top: 8px;
+}
+.definition-pos-group:first-child {
+  margin-top: 0;
+}
+.definition-pos-label {
+  display: inline-block;
+  font-style: italic;
+  font-size: 12px;
+  color: #7fb0e0;
+  margin-bottom: 3px;
+}
+.definition-sense-list {
+  margin: 0;
+  padding-left: 18px;
+}
+.definition-sense {
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 6px;
+  color: #ddd;
+}
+.definition-sense-text {
+  display: inline;
+}
+.definition-sense-example {
+  display: block;
+  color: #9a9a9a;
+  font-style: italic;
+  margin-top: 1px;
+}
+.definition-sense-synonyms {
+  display: block;
+  color: #808080;
+  font-size: 12px;
+  margin-top: 1px;
+}
+
 /* ── Note editor modal ──────────────────────────────────────────────────── */
 
 .note-editor-overlay {
