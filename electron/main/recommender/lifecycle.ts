@@ -23,12 +23,18 @@ let embedHostMod: typeof import('../workers/embed-host') | null = null
 
 function fire(): void {
   void (async () => {
-    const [{ scheduleBackfill }, embedHost] = await Promise.all([
+    const [{ scheduleBackfill }, embedHost, { schedulePrewarm }] = await Promise.all([
       import('./backfill'),
       import('../workers/embed-host'),
+      import('./prewarm'),
     ])
     embedHostMod = embedHost
     scheduleBackfill(embedHost.workerEmbedHost)
+    // Same "content changed" signal warms Discover's OpenLibrary blurb cache on idle,
+    // so the description N+1 never lands on a user Refresh. Debounced independently;
+    // no worker, no embedding — just the network caches. Gated by `armed` (Discover
+    // off ⇒ no prewarm), same as backfill.
+    schedulePrewarm()
   })().catch((err) => console.error('[backfill] trigger failed:', err))
 }
 

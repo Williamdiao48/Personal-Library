@@ -1,6 +1,7 @@
 import { get, run } from '../db'
 import type { SeedQuery } from './seedQueries'
 import { readCandidateCache, writeCandidateCache } from './candidateCache'
+import { now as timingNow, logTiming } from './timing'
 
 // C4.3 — OpenLibrary candidate generation (§9 step 1). Turn seed queries into a
 // deduplicated set of real books: hit `search.json` (free, no key), normalize
@@ -326,9 +327,13 @@ export async function fetchCandidates(
   const cfg = opts.cfg ?? CANDIDATES
   const now = opts.now ?? Date.now()
   const page = opts.page ?? 1
+  // [discover-timing] OpenLibrary splits into a cheap search phase and the expensive
+  // per-work description N+1 — time them separately so we can see which dominates.
+  const tSearch = timingNow()
   const docsPerQuery = await mapPool(queries, cfg.CONCURRENCY, (q) =>
     fetchDocsForQuery(q.q, cfg, now, page),
   )
+  logTiming('ol:search', tSearch, { queries: queries.length })
   const byId = new Map<string, Candidate>()
   for (const docs of docsPerQuery) {
     if (byId.size >= cfg.MAX_CANDIDATES) break
@@ -343,7 +348,8 @@ export async function fetchCandidates(
   // Enrich each deduped book with its work description (the OpenLibrary N+1),
   // bounded-concurrency and cache-first per-work — so descriptions influence the
   // whole pool's ranking, and a warm refresh (all cached) fetches nothing.
-  return mapPool(
+  const tDesc = timingNow()
+  const enriched = await mapPool(
     [...byId.values()],
     cfg.DESCRIPTION_CONCURRENCY,
     async (c): Promise<Candidate> => ({
@@ -351,4 +357,9 @@ export async function fetchCandidates(
       description: await fetchWorkDescription(c.sourceId, cfg, now),
     }),
   )
+  logTiming('ol:descriptions', tDesc, {
+    books: byId.size,
+    concurrency: cfg.DESCRIPTION_CONCURRENCY,
+  })
+  return enriched
 }

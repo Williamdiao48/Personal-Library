@@ -6,7 +6,8 @@ import { statsService } from './stats'
 import { goalsService } from './goals'
 import { convertService } from './convert'
 import { backupService } from './backup'
-import { annotationsService } from './annotationsService'
+import { annotationsService, annotationThemesService } from './annotationsService'
+import { discoverService } from './discover'
 
 // The service layer is a thin pass-through to window.api. These tests lock the
 // wiring for every non-library service — right namespace, right method, right
@@ -157,5 +158,73 @@ describe('annotationsService delegation', () => {
   it('swapSortOrder forwards both ids', () => {
     annotationsService.swapSortOrder('a1', 'a2')
     expect(api.annotations.swapSortOrder).toHaveBeenCalledWith('a1', 'a2')
+  })
+  it('getAll → api.annotations.getAll', () => {
+    annotationsService.getAll()
+    expect(api.annotations.getAll).toHaveBeenCalledTimes(1)
+  })
+  it('setColor forwards id + color', () => {
+    annotationsService.setColor('a1', 'green')
+    expect(api.annotations.setColor).toHaveBeenCalledWith('a1', 'green')
+  })
+  it('setThemes forwards annotationId + theme ids', () => {
+    annotationsService.setThemes('a1', ['t1', 't2'])
+    expect(api.annotations.setThemes).toHaveBeenCalledWith('a1', ['t1', 't2'])
+  })
+  it('exportQuotes forwards rows + format', () => {
+    const rows = [{ text: 'q' }] as any
+    annotationsService.exportQuotes(rows, 'md')
+    expect(api.annotations.exportQuotes).toHaveBeenCalledWith(rows, 'md')
+  })
+})
+
+describe('annotationThemesService delegation', () => {
+  it('list → api.annotationThemes.list', () => {
+    annotationThemesService.list()
+    expect(api.annotationThemes.list).toHaveBeenCalledTimes(1)
+  })
+  it('create forwards the name', () => {
+    annotationThemesService.create('Symbolism')
+    expect(api.annotationThemes.create).toHaveBeenCalledWith('Symbolism')
+  })
+  it('rename forwards id + name', () => {
+    annotationThemesService.rename('t1', 'New name')
+    expect(api.annotationThemes.rename).toHaveBeenCalledWith('t1', 'New name')
+  })
+  it('delete forwards the id', () => {
+    annotationThemesService.delete('t1')
+    expect(api.annotationThemes.delete).toHaveBeenCalledWith('t1')
+  })
+})
+
+describe('discoverService delegation', () => {
+  it('setEnabled forwards the flag', () => {
+    discoverService.setEnabled(true)
+    expect(api.discover.setEnabled).toHaveBeenCalledWith(true)
+  })
+  it('get → api.discover.get', () => {
+    discoverService.get()
+    expect(api.discover.get).toHaveBeenCalledTimes(1)
+  })
+  it('refresh defaults excludeSourceIds to []', () => {
+    discoverService.refresh()
+    expect(api.discover.refresh).toHaveBeenCalledWith([])
+  })
+  it('refresh forwards explicit excludeSourceIds', () => {
+    discoverService.refresh(['s1', 's2'])
+    expect(api.discover.refresh).toHaveBeenCalledWith(['s1', 's2'])
+  })
+  it('more forwards excludeIds + contentMode + page', () => {
+    discoverService.more(['s1'], 'books', 2)
+    expect(api.discover.more).toHaveBeenCalledWith(['s1'], 'books', 2)
+  })
+  it('dismiss forwards the card', () => {
+    const card = { sourceId: 's1', title: 'T' } as any
+    discoverService.dismiss(card)
+    expect(api.discover.dismiss).toHaveBeenCalledWith(card)
+  })
+  it('openExternal forwards the url', () => {
+    discoverService.openExternal('https://x')
+    expect(api.discover.openExternal).toHaveBeenCalledWith('https://x')
   })
 })

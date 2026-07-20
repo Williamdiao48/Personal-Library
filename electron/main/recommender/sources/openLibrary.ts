@@ -14,6 +14,11 @@ import { resolveOwnedBookSubjects, type OwnedBook } from '../ownedBookSubjects'
 
 const SEED_SOURCE_LIMIT = 100 // cap liked items fed to the seeder (keeps the IN() bounded)
 
+// Gentler per-work description concurrency for the speculative background prewarm
+// (half the refresh rate) — filling the blurb cache on idle stays polite to
+// OpenLibrary and never competes with a real refresh for bandwidth.
+const PREWARM_DESCRIPTION_CONCURRENCY = 2
+
 function placeholders(n: number): string {
   return Array.from({ length: n }, () => '?').join(',')
 }
@@ -90,4 +95,24 @@ export const openLibrarySource: CandidateSource = {
     // deeper (page 2 = docs 41–80, …) instead of re-fetching the first page.
     return fetchCandidates(queries, { cfg, page: opts.page })
   },
+}
+
+/**
+ * Background prewarm: fetch the current taste's page-1 book pool (search + the
+ * per-work description N+1) into the caches WITHOUT reranking or touching the feed,
+ * so a later Refresh finds the expensive descriptions already warm (the N+1 is ~88%
+ * of a cold refresh's latency). Cache-first per work, so after the first fill it
+ * fetches only newly-surfaced or TTL-expired blurbs; runs at a gentler description
+ * concurrency than a refresh. Returns the number of books now in the pool (for
+ * logging). Books-only by design — the N+1 is the sole heavy cost, and it's light
+ * JSON, whereas AO3/FFN are cheap and FFN's Cloudflare browser is too heavy to run
+ * speculatively. Never touches the search cache's freshness (default TTL, not the
+ * refresh soft floor): prewarm reuses an already-fetched pool, it doesn't re-query.
+ */
+export async function prewarmBooks(liked: LikedItem[]): Promise<number> {
+  const queries = buildSeedQueries(await loadSeedSources(liked))
+  if (queries.length === 0) return 0
+  const cfg = { ...CANDIDATES, DESCRIPTION_CONCURRENCY: PREWARM_DESCRIPTION_CONCURRENCY }
+  const books = await fetchCandidates(queries, { cfg })
+  return books.length
 }
