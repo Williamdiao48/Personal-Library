@@ -280,3 +280,29 @@
 .settings-color-label-input:focus {
   border-color: var(--accent);
 }
+
+/* ── Local-LLM: model-download progress + inline link ─────────────────────── */
+.llm-pull-bar {
+  width: 100%;
+  height: 6px;
+  margin-top: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.llm-pull-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+.settings-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}

@@ -238,4 +238,25 @@ contextBridge.exposeInMainWorld('api', {
   dictionary: {
     lookup: (word: string) => ipcRenderer.invoke('dictionary:lookup', word),
   },
+
+  // Local LLM (Ollama) book reranker — opt-in refinement of book recommendations.
+  llm: {
+    setConfig: (cfg: { enabled: boolean; model: string; baseUrl: string }) =>
+      ipcRenderer.invoke('llm:setConfig', cfg),
+    probe: (cfg: { model: string; baseUrl: string }) => ipcRenderer.invoke('llm:probe', cfg),
+    pullModel: (cfg: { model: string; baseUrl: string }) =>
+      ipcRenderer.invoke('llm:pullModel', cfg),
+    onPullProgress: (
+      callback: (p: {
+        status: string
+        completed?: number
+        total?: number
+        percent: number
+      }) => void,
+    ) => {
+      const handler = (_e: unknown, p: Parameters<typeof callback>[0]) => callback(p)
+      ipcRenderer.on('llm:pullProgress', handler)
+      return () => ipcRenderer.removeListener('llm:pullProgress', handler)
+    },
+  },
 })

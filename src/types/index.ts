@@ -469,6 +469,26 @@ export interface Api {
     /** Look up a single word in the bundled WordNet dictionary (offline). */
     lookup: (word: string) => Promise<DictionaryResult>
   }
+  llm: {
+    /** Sync the local-LLM reranker setting to the main process (mirrors discover.setEnabled). */
+    setConfig: (cfg: { enabled: boolean; model: string; baseUrl: string }) => Promise<void>
+    /** Test-connection probe: is Ollama reachable and the chosen model installed? */
+    probe: (cfg: {
+      model: string
+      baseUrl: string
+    }) => Promise<{ reachable: boolean; hasModel: boolean }>
+    /** Download the model via Ollama's streaming pull; resolves when done or failed. */
+    pullModel: (cfg: { model: string; baseUrl: string }) => Promise<{ ok: boolean; error?: string }>
+    /** Subscribe to pull progress; returns an unsubscribe fn. */
+    onPullProgress: (
+      callback: (p: {
+        status: string
+        completed?: number
+        total?: number
+        percent: number
+      }) => void,
+    ) => () => void
+  }
 }
 
 declare global {

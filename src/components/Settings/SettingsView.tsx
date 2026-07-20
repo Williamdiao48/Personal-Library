@@ -6,6 +6,8 @@ import type { Theme, GridDensity, SortBy, CustomTheme } from '../../contexts/Set
 import CustomSelect from '../ui/CustomSelect'
 import { HIGHLIGHT_COLORS } from '../../constants/highlightColors'
 import { backupService } from '../../services/backup'
+import { llmService } from '../../services/llm'
+import { discoverService } from '../../services/discover'
 import { deriveCustomTheme, isValidHex } from '../../utils/themeDerive'
 import '../../styles/settings.css'
 
@@ -225,6 +227,169 @@ const NEW_EDITOR: EditorState = {
   bg: '#1a1a1a',
   accent: '#7c6aff',
   isLight: false,
+}
+
+// ── Local-LLM (Ollama) book reranker settings ────────────────────────────────
+type ProbeState =
+  | { status: 'idle' }
+  | { status: 'testing' }
+  | { status: 'ok'; hasModel: boolean }
+  | { status: 'unreachable' }
+
+type PullState =
+  | { status: 'idle' }
+  | { status: 'pulling'; percent: number; label: string }
+  | { status: 'error'; message: string }
+
+const OLLAMA_DOWNLOAD_URL = 'https://ollama.com/download'
+
+function LlmRerankSettings() {
+  const { settings, updateSettings } = useSettings()
+  const [probe, setProbe] = useState<ProbeState>({ status: 'idle' })
+  const [pull, setPull] = useState<PullState>({ status: 'idle' })
+  const modelId = useId()
+  const urlId = useId()
+
+  async function testConnection() {
+    setProbe({ status: 'testing' })
+    try {
+      const r = await llmService.probe({ model: settings.llmModel, baseUrl: settings.llmBaseUrl })
+      setProbe(r.reachable ? { status: 'ok', hasModel: r.hasModel } : { status: 'unreachable' })
+    } catch {
+      setProbe({ status: 'unreachable' })
+    }
+  }
+
+  async function downloadModel() {
+    setPull({ status: 'pulling', percent: 0, label: 'starting' })
+    const unsub = llmService.onPullProgress((p) => {
+      setPull({ status: 'pulling', percent: p.percent, label: p.status })
+    })
+    try {
+      const res = await llmService.pullModel({
+        model: settings.llmModel,
+        baseUrl: settings.llmBaseUrl,
+      })
+      if (res.ok) {
+        setPull({ status: 'idle' })
+        void testConnection() // re-probe: the model should now be present
+      } else {
+        setPull({ status: 'error', message: res.error ?? 'Download failed' })
+      }
+    } finally {
+      unsub()
+    }
+  }
+
+  const pulling = pull.status === 'pulling'
+
+  return (
+    <>
+      <div className="settings-row settings-row--top">
+        <div className="settings-row-stack">
+          <label className="settings-row-label" htmlFor="toggle-llm-rerank">
+            Refine book picks with a local AI (experimental)
+          </label>
+          <span className="settings-row-hint">
+            Uses a local Ollama model to reorder book recommendations by fit to your taste. Fully
+            offline; falls back to the normal ranking if Ollama isn’t running. Fanfiction is
+            unaffected.
+          </span>
+        </div>
+        <Toggle
+          id="toggle-llm-rerank"
+          checked={settings.llmRerankEnabled}
+          onChange={(v) => updateSettings({ llmRerankEnabled: v })}
+        />
+      </div>
+
+      {settings.llmRerankEnabled && (
+        <>
+          <div className="settings-row">
+            <label className="settings-row-label" htmlFor={modelId}>
+              Model
+            </label>
+            <input
+              id={modelId}
+              className="settings-color-label-input"
+              value={settings.llmModel}
+              placeholder="llama3.2:3b"
+              onChange={(e) => updateSettings({ llmModel: e.target.value })}
+            />
+          </div>
+          <div className="settings-row">
+            <label className="settings-row-label" htmlFor={urlId}>
+              Ollama URL
+            </label>
+            <input
+              id={urlId}
+              className="settings-color-label-input"
+              value={settings.llmBaseUrl}
+              placeholder="http://127.0.0.1:11434"
+              onChange={(e) => updateSettings({ llmBaseUrl: e.target.value })}
+            />
+          </div>
+          <div className="settings-row">
+            <button
+              className="settings-action-btn"
+              onClick={testConnection}
+              disabled={probe.status === 'testing' || pulling}
+            >
+              {probe.status === 'testing' ? 'Testing…' : 'Test connection'}
+            </button>
+
+            {/* Reachable + model present → all set. */}
+            {probe.status === 'ok' && probe.hasModel && (
+              <span className="settings-feedback">Connected — model ready.</span>
+            )}
+
+            {/* Reachable but model missing → offer an in-app download. */}
+            {probe.status === 'ok' && !probe.hasModel && !pulling && (
+              <button className="settings-action-btn" onClick={downloadModel}>
+                Download “{settings.llmModel}”
+              </button>
+            )}
+
+            {/* Not reachable → Ollama isn't installed or isn't running. */}
+            {probe.status === 'unreachable' && (
+              <span className="settings-feedback settings-feedback--err">
+                Couldn’t reach Ollama.{' '}
+                <button
+                  className="settings-link-btn"
+                  onClick={() => void discoverService.openExternal(OLLAMA_DOWNLOAD_URL)}
+                >
+                  Install Ollama
+                </button>{' '}
+                then make sure it’s running.
+              </span>
+            )}
+          </div>
+
+          {/* Live download progress. */}
+          {pulling && (
+            <div className="settings-row settings-row--top">
+              <div className="settings-row-stack" style={{ width: '100%' }}>
+                <span className="settings-row-hint">
+                  Downloading {settings.llmModel} — {pull.label} {pull.percent}%
+                </span>
+                <div className="llm-pull-bar">
+                  <div className="llm-pull-bar-fill" style={{ width: `${pull.percent}%` }} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {pull.status === 'error' && (
+            <div className="settings-row">
+              <span className="settings-feedback settings-feedback--err">
+                Download failed: {pull.message}
+              </span>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  )
 }
 
 export default function SettingsView() {
@@ -477,6 +642,8 @@ export default function SettingsView() {
               onChange={(v) => updateSettings({ enableDiscover: v })}
             />
           </div>
+
+          {settings.enableDiscover && <LlmRerankSettings />}
         </section>
 
         {/* ── Reading ── */}

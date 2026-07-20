@@ -6,6 +6,8 @@ import { workerEmbedder } from '../workers/embed-host'
 import { buildTaste } from '../recommender/taste'
 import { isHttpUrl } from './capture'
 import { armBackfill, disarmBackfill } from '../recommender/lifecycle'
+import { getLlmConfig, ollamaConfigFrom } from './llm'
+import { ollamaClient } from '../recommender/llm/ollamaClient'
 import type { Recommendation } from '../../../src/types'
 
 // C5.3 — the Discover IPC seam. Wires the headless recommender engine
@@ -81,6 +83,17 @@ function readReconciledCache(): CachedDiscover | null {
   return visible.length === cached.cards.length ? cached : { ...cached, cards: visible }
 }
 
+/**
+ * The `llmRerank` option for recommend() when the local-LLM setting is enabled, else
+ * undefined (⇒ today's cosine-only book ordering). Building the client is cheap (no
+ * connection yet); the reranker itself is fail-soft if Ollama is unreachable.
+ */
+function llmRerankOpt(): { client: ReturnType<typeof ollamaClient> } | undefined {
+  const cfg = getLlmConfig()
+  if (!cfg.enabled) return undefined
+  return { client: ollamaClient(ollamaConfigFrom(cfg)) }
+}
+
 /** Upsert the single cache row. */
 function writeCache(cards: Recommendation[], generatedAt: number): void {
   run(
@@ -121,7 +134,12 @@ export function registerDiscoverHandlers(): void {
       // `fresh: true` lets each source re-scrape once its pool is past the soft floor
       // (the "walking gradient"); `excludeIds` = the feed currently on screen, so a
       // still-warm refresh ROTATES to the next-best slice instead of repeating.
-      const opts = { limit: DISCOVER_POOL, excludeIds: excludeSourceIds, fresh: true }
+      const opts = {
+        limit: DISCOVER_POOL,
+        excludeIds: excludeSourceIds,
+        fresh: true,
+        llmRerank: llmRerankOpt(),
+      }
       let cards = coldStart ? [] : await recommend(workerEmbedder, undefined, taste, opts)
       // Exhausted the whole ranked pool (rotated past the end) → wrap to the top.
       if (!coldStart && cards.length === 0 && excludeSourceIds.length > 0) {
@@ -170,6 +188,7 @@ export function registerDiscoverHandlers(): void {
           fresh: true,
           contentMode,
           page: current,
+          llmRerank: llmRerankOpt(),
         })
         current++
         fresh = cards.filter((c) => !seen.has(c.sourceId))
