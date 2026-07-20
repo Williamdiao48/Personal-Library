@@ -4,6 +4,7 @@ import { recommend } from '../recommender/rerank'
 import { candidateKey } from '../recommender/candidates'
 import { workerEmbedder } from '../workers/embed-host'
 import { buildTaste } from '../recommender/taste'
+import { now, logTiming } from '../recommender/timing'
 import { isHttpUrl } from './capture'
 import { armBackfill, disarmBackfill } from '../recommender/lifecycle'
 import { getLlmConfig, ollamaConfigFrom } from './llm'
@@ -129,7 +130,13 @@ export function registerDiscoverHandlers(): void {
       _e,
       excludeSourceIds: string[] = [],
     ): Promise<{ cards: Recommendation[]; generatedAt: number; coldStart: boolean }> => {
+      const tRefresh = now() // [discover-timing] end-to-end refresh IPC
+      const tTaste = now()
       const taste = buildTaste()
+      logTiming('taste:build', tTaste, {
+        liked: taste.liked.length,
+        centroids: taste.centroids.length,
+      })
       const coldStart = taste.centroids.length === 0
       // `fresh: true` lets each source re-scrape once its pool is past the soft floor
       // (the "walking gradient"); `excludeIds` = the feed currently on screen, so a
@@ -147,6 +154,7 @@ export function registerDiscoverHandlers(): void {
       }
       const generatedAt = Date.now()
       writeCache(cards, generatedAt)
+      logTiming('refresh:total', tRefresh, { cards: cards.length, coldStart })
       return { cards, generatedAt, coldStart }
     },
   )

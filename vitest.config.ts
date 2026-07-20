@@ -27,19 +27,25 @@ export default defineConfig({
         'src/vite-env.d.ts',
         'src/polyfills/**',
         'src/workers/**',
+        // Opt-in dev-only stage-timing instrumentation (DISCOVER_TIMING=1; silent by
+        // default and under Vitest). A logging helper, not a unit-test target — excluded
+        // so it doesn't drag the denominator.
+        'electron/main/recommender/timing.ts',
       ],
       // Floors ratcheted to just under the achieved numbers so any coverage
-      // regression fails CI. Bumped after Tier-5 Batch D (HtmlReader, EpubReader,
-      // PdfReader engines) landed (achieved: stmts/lines 74.74, funcs 68.13,
-      // branches 81.52). Functions stays at 68 because rendering the big reader
-      // engines instruments many nested handlers the canvas/pdfjs paths never
-      // reach under jsdom (the V8 all:true gotcha), so the func denominator is
-      // large. Only ever raise these — never lower to make a change pass.
+      // regression fails CI. Bumped after the recommender/services coverage batch
+      // (discover service, openLibrary + candidateCache sources, annotationsService,
+      // highlightColors, useGridColumns, AnnotationFilterBar) plus excluding the two
+      // throwaway Discover diagnostics from the denominator — achieved: stmts/lines
+      // 83.05, funcs 76.67, branches 84.12. Functions stays lowest because rendering
+      // the big reader engines instruments many nested handlers the canvas/pdfjs
+      // paths never reach under jsdom (the V8 all:true gotcha), so the func
+      // denominator is large. Only ever raise these — never lower to make a change pass.
       thresholds: {
-        lines: 74,
-        functions: 68,
-        branches: 81,
-        statements: 74,
+        lines: 82,
+        functions: 76,
+        branches: 83,
+        statements: 82,
       },
     },
   },

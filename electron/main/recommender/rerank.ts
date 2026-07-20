@@ -11,8 +11,9 @@ import { openLibrarySource } from './sources/openLibrary'
 import { ao3Source } from './sources/ao3'
 import { ffnSource } from './sources/ffn'
 import { buildTasteDigest } from './tasteDigest'
-import { llmRerankBooks, applyLlmBookRerank } from './llm/llmRerank'
+import { llmRerankBooks, applyLlmBookRerank, LLM } from './llm/llmRerank'
 import type { LlmClient } from './llm/ollamaClient'
+import { now, logTiming, timed } from './timing'
 import type { Recommendation } from '../../../src/types'
 
 // C4.4 + F4 — the rerank (§9 steps 2–4): union the candidate sources (books + AO3
@@ -436,6 +437,7 @@ export async function recommend(
   } = {},
 ): Promise<Recommendation[]> {
   const limit = opts.limit ?? RERANK.TOP_K
+  const tTotal = now() // [discover-timing] whole-pipeline wall clock
   if (taste.centroids.length === 0) return [] // cold start — no taste, no recs (§8)
 
   // The reader's taste terms (lowercased union of every seed category) — the set a
@@ -466,9 +468,15 @@ export async function recommend(
   // FFN's browser fetch). `allSettled` keeps the "one source down doesn't sink the
   // batch" guarantee, and results stay in `sources` order so the union's fanfic-first
   // tie-break is unchanged.
+  // [discover-timing] each source is wrapped so we see AO3 vs FFN vs OpenLibrary wall
+  // time individually — they run concurrently, so the fan-out total is the slowest one.
+  const tFanout = now()
   const settled = await Promise.allSettled(
-    activeSources.map((s) => s.fetch(taste.liked, { fresh: opts.fresh, page: opts.page })),
+    activeSources.map((s) =>
+      timed(`source:${s.name}`, () => s.fetch(taste.liked, { fresh: opts.fresh, page: opts.page })),
+    ),
   )
+  logTiming('fanout', tFanout, { page: opts.page ?? 1, mode: opts.contentMode ?? 'all' })
   const pools: Candidate[][] = settled.map((r) => (r.status === 'fulfilled' ? r.value : []))
   const fetched = unionCandidates(pools)
   if (fetched.length === 0) return [] // no tags/authors to search on, or all sources empty
@@ -495,6 +503,8 @@ export async function recommend(
   )
   const misses = kept.filter((c) => !vecById.has(c.sourceId))
   if (misses.length > 0) {
+    // [discover-timing] cold embedding = model load + N inferences; cached hits skip this.
+    const tEmbed = now()
     const missVecs = await embedder.embed(
       misses.map((c) =>
         itemMetadataText(
@@ -503,6 +513,7 @@ export async function recommend(
         ),
       ),
     )
+    logTiming('embed', tEmbed, { misses: misses.length, cached: kept.length - misses.length })
     saveCandidateVectors(
       misses.map((c, i) => ({ sourceId: c.sourceId, vec: missVecs[i] })),
       candCacheVersion,
@@ -525,7 +536,13 @@ export async function recommend(
     const bookShortlist = scored
       .filter((s) => s.cand.source === 'book')
       .sort((a, b) => b.score - a.score)
-    const fitById = await llmRerankBooks(bookShortlist, digest, opts.llmRerank.client)
+    // [discover-timing] isolate the LLM reranker's added latency (one local Ollama chat).
+    // `sent` = books actually scored (capped at LLM.SHORTLIST); `pool` = the set chosen from.
+    const client = opts.llmRerank.client
+    const fitById = await timed('llm:rerank', () => llmRerankBooks(bookShortlist, digest, client), {
+      sent: Math.min(bookShortlist.length, LLM.SHORTLIST),
+      pool: bookShortlist.length,
+    })
     ranked = applyLlmBookRerank(scored, fitById)
   }
 
@@ -553,6 +570,11 @@ export async function recommend(
     fetched,
   )
 
+  logTiming('recommend:total', tTotal, {
+    fetched: fetched.length,
+    kept: kept.length,
+    cards: verified.length,
+  })
   return verified.map((c) => ({
     title: c.title,
     author: c.author,

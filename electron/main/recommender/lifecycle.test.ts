@@ -4,14 +4,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // suite stays light + ABI-agnostic (no DB, no transformers). Proves the `armed`
 // guard, the delegation to scheduleBackfill(workerEmbedHost), and worker
 // shutdown — without spawning anything.
-const { scheduleBackfill, shutdownEmbedWorker, workerEmbedHost } = vi.hoisted(() => ({
-  scheduleBackfill: vi.fn(),
-  shutdownEmbedWorker: vi.fn(),
-  workerEmbedHost: { modelVersion: 'test-model', embed: vi.fn() },
-}))
+const { scheduleBackfill, shutdownEmbedWorker, workerEmbedHost, schedulePrewarm } = vi.hoisted(
+  () => ({
+    scheduleBackfill: vi.fn(),
+    shutdownEmbedWorker: vi.fn(),
+    workerEmbedHost: { modelVersion: 'test-model', embed: vi.fn() },
+    schedulePrewarm: vi.fn(),
+  }),
+)
 
 vi.mock('./backfill', () => ({ scheduleBackfill }))
 vi.mock('../workers/embed-host', () => ({ workerEmbedHost, shutdownEmbedWorker }))
+vi.mock('./prewarm', () => ({ schedulePrewarm }))
 
 import {
   armBackfill,
@@ -25,6 +29,7 @@ beforeEach(() => {
   _resetLifecycle()
   scheduleBackfill.mockReset()
   shutdownEmbedWorker.mockReset()
+  schedulePrewarm.mockReset()
 })
 
 describe('backfill lifecycle', () => {
@@ -39,6 +44,18 @@ describe('backfill lifecycle', () => {
   it('armBackfill arms and kicks the initial pass with the worker host', async () => {
     armBackfill()
     await vi.waitFor(() => expect(scheduleBackfill).toHaveBeenCalledWith(workerEmbedHost))
+  })
+
+  it('armBackfill also schedules a Discover blurb prewarm', async () => {
+    armBackfill()
+    await vi.waitFor(() => expect(schedulePrewarm).toHaveBeenCalledTimes(1))
+  })
+
+  it('prewarm stays a no-op until armed (same gate as backfill)', async () => {
+    triggerBackfill()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(schedulePrewarm).not.toHaveBeenCalled()
   })
 
   it('triggers again after arming (content-change events)', async () => {
