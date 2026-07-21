@@ -57,6 +57,13 @@ resources/models/
 # audits, and the development journal). See docs/internal/README.md.
 docs/internal/
 
+# Internal security audit — kept local only, must never be committed/published.
+security.md
+
+# Cloud Phase 0 throwaway spikes (R2 / Turso de-risking experiments). Own
+# package.json + creds; never ship. See docs/internal/planning/cloud/phase-0-foundations.md.
+spikes/
+
 # Throwaway eyeball-gate harnesses — opt-in, run against a COPY of the real
 # library. Named *.harness.test.ts so vitest can run them by path, but never
 # committed (they embed with the real model and read the user's real content).
