@@ -28,7 +28,8 @@ const handlers = new Map<string, IpcHandler>()
 // A fake IpcMainInvokeEvent. `sender.send` is a no-op so handlers that push
 // progress events don't blow up under test; `isDestroyed` is always false so
 // handlers that guard sends with it (e.g. the capture pipeline) run cleanly.
-const fakeEvent = { sender: { send: () => {}, isDestroyed: () => false } }
+// Exported so a suite can spy on `sender.send` to assert a handler's push events.
+export const fakeEvent = { sender: { send: () => {}, isDestroyed: () => false } }
 
 export const ipcMain = {
   handle(channel: string, fn: IpcHandler): void {

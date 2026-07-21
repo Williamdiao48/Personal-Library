@@ -9,7 +9,7 @@ vi.mock('../fetch', () => ({
   fetchPagesWithSession: vi.fn(),
 }))
 
-import { captureAo3, parseAo3Metadata } from './ao3'
+import { captureAo3, parseAo3Metadata, getAo3ChapterCount } from './ao3'
 import { fetchPage, fetchPagesWithSession } from '../fetch'
 
 const mockFetchPage = vi.mocked(fetchPage)
@@ -168,6 +168,166 @@ describe('captureAo3', () => {
       category: 'relationship',
     })
     expect(result.sourceMeta).toMatchObject({ kudos: 1234, words: 50123, status: 'complete' })
+  })
+})
+
+// A minimal multi-page work builder: every page carries real `#chapters > .chapter`
+// blocks so allChapterEls accumulates across pages. `pagination` emits the
+// `ol.pagination` anchors captureAo3 reads to size the parallel batch; `next`
+// emits the `a[rel="next"]` that gates whether more pages are fetched at all.
+function paginatedPage(
+  bodies: string[],
+  opts: { next?: boolean; pagination?: number[]; titled?: boolean } = {},
+): string {
+  const chapters = bodies
+    .map(
+      (b, i) => `
+      <div class="chapter" id="ch-${i}">
+        <div class="chapter preface group">
+          ${opts.titled === false ? '' : `<h3 class="title">Chapter ${i + 1}</h3>`}
+        </div>
+        <div class="userstuff module" role="article">${b}</div>
+      </div>`,
+    )
+    .join('')
+  const pag = opts.pagination
+    ? `<ol class="pagination">${opts.pagination
+        .map((p) => `<li><a href="?page=${p}">${p}</a></li>`)
+        .join('')}</ol>`
+    : ''
+  return `<!DOCTYPE html><html><head></head><body>
+    <h2 class="title heading">Work</h2>
+    <h3 class="byline heading"><a rel="author" href="/users/x">Author</a></h3>
+    <dd class="chapters">${bodies.length}/${bodies.length}</dd>
+    <div id="workskin"><div id="chapters">${chapters}</div></div>
+    ${pag}
+    ${opts.next ? '<a rel="next" href="?page=2">Next</a>' : ''}
+  </body></html>`
+}
+
+describe('captureAo3 — multi-page fetch', () => {
+  it('batch-fetches the remaining pages in parallel using the pagination page count', async () => {
+    mockFetchPage.mockResolvedValue(
+      paginatedPage(['<p>Page1 chapter.</p>'], { next: true, pagination: [1, 2, 3] }),
+    )
+    mockFetchPages.mockImplementation((_urls, _delay, onProgress?: (i: number) => void) => {
+      onProgress?.(0) // exercises the per-page progress-forwarding callback
+      return Promise.resolve([
+        paginatedPage(['<p>Page2 chapter.</p>']),
+        paginatedPage(['<p>Page3 chapter.</p>']),
+      ])
+    })
+
+    const progress: string[] = []
+    const result = await captureAo3('https://archiveofourown.org/works/77', (m) => progress.push(m))
+
+    // Two remaining pages (page 2 and page 3) fetched in one parallel batch.
+    expect(mockFetchPages).toHaveBeenCalledOnce()
+    expect(mockFetchPages.mock.calls[0][0]).toEqual([
+      'https://archiveofourown.org/works/77?view_full_work=true&page=2',
+      'https://archiveofourown.org/works/77?view_full_work=true&page=3',
+    ])
+    // Content from all three pages is assembled into chapter blocks.
+    const blocks = result.html.match(/class="chapter"/g) ?? []
+    expect(blocks.length).toBe(3)
+    expect(result.html).toContain('Page1 chapter.')
+    expect(result.html).toContain('Page3 chapter.')
+    expect(progress.some((m) => /parallel/i.test(m))).toBe(true)
+  })
+
+  it('stops the parallel batch early once the requested chapter range is satisfied', async () => {
+    mockFetchPage.mockResolvedValue(
+      paginatedPage(['<p>C1.</p>'], { next: true, pagination: [1, 2, 3] }),
+    )
+    mockFetchPages.mockResolvedValue([
+      paginatedPage(['<p>C2.</p>']),
+      paginatedPage(['<p>C3.</p>']),
+    ])
+    const result = await captureAo3('https://archiveofourown.org/works/8', undefined, {
+      start: 1,
+      end: 2,
+    })
+    expect(result.html).toContain('C1.')
+    expect(result.html).toContain('C2.')
+    expect(result.html).not.toContain('C3.') // sliced out — batch broke at range.end
+  })
+
+  it('falls back to sequential paging when the page count is not parseable', async () => {
+    // rel="next" present but NO ol.pagination anchors → maxPage stays 1 → the
+    // sequential fallback loop fetches page 2, then stops (page 2 has no next).
+    mockFetchPage
+      .mockResolvedValueOnce(paginatedPage(['<p>Seq1.</p>'], { next: true }))
+      .mockResolvedValueOnce(paginatedPage(['<p>Seq2.</p>'], { next: false }))
+
+    const result = await captureAo3('https://archiveofourown.org/works/99')
+
+    expect(mockFetchPage).toHaveBeenCalledTimes(2)
+    expect(mockFetchPages).not.toHaveBeenCalled()
+    const blocks = result.html.match(/class="chapter"/g) ?? []
+    expect(blocks.length).toBe(2)
+    expect(result.html).toContain('Seq1.')
+    expect(result.html).toContain('Seq2.')
+  })
+
+  it('falls back to .userstuff.module when a chapter body lacks role="article"', async () => {
+    // Content element selection is `.userstuff[role="article"]` ?? `.userstuff.module`
+    // ?? `.userstuff`. Two chapters whose bodies are bare `.userstuff.module`
+    // (no role) exercise the second selector in that chain.
+    const chapter = (b: string, i: number) => `
+      <div class="chapter" id="ch-${i}">
+        <div class="chapter preface group"><h3 class="title">Chapter ${i + 1}</h3></div>
+        <div class="userstuff module">${b}</div>
+      </div>`
+    mockFetchPage.mockResolvedValue(`<!DOCTYPE html><html><body>
+      <h2 class="title heading">Work</h2>
+      <h3 class="byline heading"><a rel="author" href="/u">A</a></h3>
+      <dd class="chapters">2/2</dd>
+      <div id="workskin"><div id="chapters">${chapter('<p>Body A.</p>', 0)}${chapter('<p>Body B.</p>', 1)}</div></div>
+    </body></html>`)
+    const result = await captureAo3('https://archiveofourown.org/works/66')
+    expect(result.html).toContain('Body A.')
+    expect(result.html).toContain('Body B.')
+  })
+
+  it('synthesizes a title from the chapter index when a chapter has no heading', async () => {
+    // A multi-chapter work whose chapters carry no <h3 class="title"> → the
+    // assembler synthesizes "Chapter N" from the (range-adjusted) index rather
+    // than emitting a titleless block.
+    mockFetchPage.mockResolvedValue(
+      paginatedPage(['<p>First body.</p>', '<p>Second body.</p>'], { titled: false }),
+    )
+    const result = await captureAo3('https://archiveofourown.org/works/55')
+    expect(result.html).toContain('First body.')
+    expect(result.html).toContain('Second body.')
+    expect(result.html).toContain('Chapter 1') // synthesized
+    expect(result.html).toContain('Chapter 2') // synthesized fallback title
+  })
+})
+
+describe('getAo3ChapterCount', () => {
+  it('returns the posted chapter count from the "X/Y" chapters stat', async () => {
+    mockFetchPage.mockResolvedValue('<dd class="chapters">7/12</dd>')
+    expect(await getAo3ChapterCount('https://archiveofourown.org/works/123')).toBe(7)
+  })
+
+  it('reads the posted count for a WIP work ("X/?")', async () => {
+    mockFetchPage.mockResolvedValue('<dd class="chapters">3/?</dd>')
+    expect(await getAo3ChapterCount('https://archiveofourown.org/works/123/chapters/9')).toBe(3)
+  })
+
+  it('returns null when the URL has no parseable work id (no fetch)', async () => {
+    expect(await getAo3ChapterCount('https://archiveofourown.org/tags/foo')).toBeNull()
+    expect(mockFetchPage).not.toHaveBeenCalled()
+  })
+
+  it('returns null when the chapters stat is absent', async () => {
+    mockFetchPage.mockResolvedValue('<html><body>no stats here</body></html>')
+    expect(await getAo3ChapterCount('https://archiveofourown.org/works/1')).toBeNull()
+  })
+
+  it('degrades to null when the fetch throws', async () => {
+    mockFetchPage.mockRejectedValue(new Error('network down'))
+    expect(await getAo3ChapterCount('https://archiveofourown.org/works/1')).toBeNull()
   })
 })
 
