@@ -1,5 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { invoke, resetIpc } from '../../../test/stubs/electron'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { invoke, resetIpc, dialog, app } from '../../../test/stubs/electron'
 import {
   openTestDb,
   closeTestDb,
@@ -9,16 +12,47 @@ import {
   type TestDb,
 } from '../../../test/db/harness'
 import { registerLibraryHandlers, clampRating } from './library'
+import { computeContentHash } from '../util/contentHash'
 import type { Item } from '../../../src/types'
 
+// library:refresh reaches into the capture pipeline + recommender; mock those
+// edges so the refresh branch-matrix is drivable without the network/DB churn.
+vi.mock('../capture', () => ({
+  refreshContent: vi.fn(),
+  appendChapters: vi.fn(),
+  getChapterCount: vi.fn(),
+}))
+vi.mock('../recommender/lifecycle', () => ({ triggerBackfill: vi.fn() }))
+import { refreshContent, appendChapters, getChapterCount } from '../capture'
+import { triggerBackfill } from '../recommender/lifecycle'
+
+type Mock = ReturnType<typeof vi.fn>
+
 let db: TestDb
+// A per-test userData dir (app.getPath is overridden to it) so the handlers'
+// real file writes never collide with other suites sharing the stub's fixed
+// /tmp/pl-test-userdata path when Vitest runs files in parallel.
+let userData: string
+let CONTENT_DIR: string
 
 beforeEach(() => {
   resetIpc()
   db = openTestDb()
+  userData = mkdtempSync(join(tmpdir(), 'pl-lib-'))
+  CONTENT_DIR = join(userData, 'content')
+  mkdirSync(CONTENT_DIR, { recursive: true })
+  vi.spyOn(app, 'getPath').mockImplementation((name: string) =>
+    name === 'userData' ? userData : join('/tmp', `pl-test-${name}`),
+  )
   registerLibraryHandlers()
 })
-afterEach(() => closeTestDb())
+afterEach(() => {
+  closeTestDb()
+  vi.restoreAllMocks() // spies (dialog, app.getPath)
+  vi.clearAllMocks() // call history on the ../capture + lifecycle module mocks
+  vi.unstubAllGlobals()
+  rmSync(userData, { recursive: true, force: true })
+})
 
 // Insert a contentless-FTS row for an item so library:search can MATCH it.
 function indexFts(itemId: string, content: string): void {
@@ -241,5 +275,216 @@ describe('library IPC — FTS search', () => {
   it('returns [] for malformed FTS syntax instead of throwing', () => {
     seedItem(db, {})
     expect(invoke('library:search', '"unbalanced')).toEqual([])
+  })
+})
+
+describe('library IPC — simple reads & scroll position', () => {
+  it('getById returns the joined item + progress row, or undefined for a miss', async () => {
+    seedItem(db, { id: 'g1', title: 'Found' })
+    await invoke('library:updateProgress', 'g1', 0.4)
+    const item = (await invoke('library:getById', 'g1')) as any
+    expect(item).toMatchObject({ id: 'g1', title: 'Found', scroll_position: 0.4 })
+    expect(await invoke('library:getById', 'nope')).toBeUndefined()
+  })
+
+  it('findBySourceUrl matches on the source URL', async () => {
+    seedItem(db, { id: 's1', source_url: 'https://ao3.org/works/1' })
+    const hit = (await invoke('library:findBySourceUrl', 'https://ao3.org/works/1')) as any
+    expect(hit?.id).toBe('s1')
+    expect(await invoke('library:findBySourceUrl', 'https://none')).toBeUndefined()
+  })
+
+  it('saveScrollPos upserts the chapter + scroll anchor without touching derived items', async () => {
+    seedItem(db, { id: 'sp' })
+    await invoke('library:saveScrollPos', 'sp', 3, 420)
+    const row = db
+      .prepare('SELECT scroll_chapter, scroll_y FROM progress WHERE item_id = ?')
+      .get('sp') as any
+    expect(row).toMatchObject({ scroll_chapter: 3, scroll_y: 420 })
+  })
+
+  it('updateProgress on a derived item also advances its source (reverse sync)', async () => {
+    seedItem(db, { id: 'src' })
+    seedItem(db, { id: 'epub' })
+    db.prepare('UPDATE items SET derived_from = ? WHERE id = ?').run('src', 'epub')
+    await invoke('library:updateProgress', 'epub', 0.7)
+    const parent = db
+      .prepare('SELECT scroll_position FROM progress WHERE item_id = ?')
+      .get('src') as any
+    expect(parent.scroll_position).toBe(0.7)
+  })
+})
+
+describe('library IPC — trash file cleanup (cover paths)', () => {
+  it('permanentlyDelete tolerates a cover_path whose file is already gone', async () => {
+    seedItem(db, { id: 'pd', deleted_at: 1, cover_path: 'content/pd-cover.png' })
+    await invoke('library:permanentlyDelete', 'pd') // unlink throws → caught, row still deleted
+    expect(db.prepare('SELECT COUNT(*) n FROM items').get()).toEqual({ n: 0 })
+  })
+
+  it('emptyTrash tolerates trashed rows with cover paths', async () => {
+    seedItem(db, { id: 'et', deleted_at: 2, cover_path: 'content/et-cover.png' })
+    await invoke('library:emptyTrash')
+    expect(db.prepare('SELECT COUNT(*) n FROM items').get()).toEqual({ n: 0 })
+  })
+})
+
+describe('library IPC — cover images', () => {
+  it('setCover rejects an unsupported extension', async () => {
+    seedItem(db, { id: 'c1' })
+    expect(await invoke('library:setCover', 'c1', new ArrayBuffer(4), 'svg')).toBeNull()
+  })
+
+  it('setCover writes the file, stores the path, and propagates to uncovered derived items', async () => {
+    seedItem(db, { id: 'pdf', cover_path: null })
+    seedItem(db, { id: 'derived', cover_path: null })
+    db.prepare('UPDATE items SET derived_from = ? WHERE id = ?').run('pdf', 'derived')
+
+    const bytes = new Uint8Array([1, 2, 3, 4]).buffer
+    const path = (await invoke('library:setCover', 'pdf', bytes, 'png')) as string
+    expect(path).toBe('content/pdf-cover.png')
+    expect(existsSync(join(CONTENT_DIR, 'pdf-cover.png'))).toBe(true)
+
+    // Derived EPUB with no cover inherits its own copy.
+    const derived = db.prepare('SELECT cover_path FROM items WHERE id = ?').get('derived') as any
+    expect(derived.cover_path).toBe('content/derived-cover.png')
+    expect(existsSync(join(CONTENT_DIR, 'derived-cover.png'))).toBe(true)
+  })
+
+  it('setCover removes a pre-existing cover file before writing the new one', async () => {
+    seedItem(db, { id: 'c2', cover_path: 'content/c2-cover.png' })
+    writeFileSync(join(CONTENT_DIR, 'c2-cover.png'), 'old')
+    await invoke('library:setCover', 'c2', new Uint8Array([9]).buffer, 'jpg')
+    const row = db.prepare('SELECT cover_path FROM items WHERE id = ?').get('c2') as any
+    expect(row.cover_path).toBe('content/c2-cover.jpg')
+  })
+
+  it('pickCover returns null when the dialog is canceled', async () => {
+    seedItem(db, { id: 'pc' })
+    vi.spyOn(dialog, 'showOpenDialog').mockResolvedValue({ canceled: true, filePaths: [] })
+    expect(await invoke('library:pickCover', 'pc')).toBeNull()
+  })
+
+  it('pickCover rejects a non-image selection', async () => {
+    seedItem(db, { id: 'pc' })
+    vi.spyOn(dialog, 'showOpenDialog').mockResolvedValue({
+      canceled: false,
+      filePaths: ['/tmp/notes.txt'],
+    })
+    expect(await invoke('library:pickCover', 'pc')).toBeNull()
+  })
+
+  it('pickCover copies the chosen image and stores its path', async () => {
+    seedItem(db, { id: 'pc', cover_path: null })
+    const src = join(CONTENT_DIR, 'source.png')
+    writeFileSync(src, 'imagebytes')
+    vi.spyOn(dialog, 'showOpenDialog').mockResolvedValue({ canceled: false, filePaths: [src] })
+
+    const path = (await invoke('library:pickCover', 'pc')) as string
+    expect(path).toBe('content/pc-cover.png')
+    expect(readFileSync(join(CONTENT_DIR, 'pc-cover.png'), 'utf8')).toBe('imagebytes')
+  })
+})
+
+describe('library IPC — refresh', () => {
+  const mockRefreshContent = refreshContent as Mock
+  const mockGetChapterCount = getChapterCount as Mock
+  const mockAppendChapters = appendChapters as Mock
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 })) // headChanged → may have changed
+  })
+
+  it('throws when the item does not exist', async () => {
+    await expect(invoke('library:refresh', 'ghost')).rejects.toThrow(/not found/i)
+  })
+
+  it('throws when the item has no source URL', async () => {
+    seedItem(db, { id: 'nosrc', source_url: null })
+    await expect(invoke('library:refresh', 'nosrc')).rejects.toThrow(/no source URL/i)
+  })
+
+  it('short-circuits to "not changed" when the server answers 304', async () => {
+    ;(globalThis.fetch as Mock).mockResolvedValue({ status: 304 })
+    seedItem(db, { id: 'nm', source_url: 'https://x', word_count: 12 })
+    const result = await invoke('library:refresh', 'nm')
+    expect(result).toEqual({ changed: false, wordCount: 12 })
+    expect(mockRefreshContent).not.toHaveBeenCalled()
+  })
+
+  it('reports "not changed" for a multi-chapter item with no new chapters', async () => {
+    seedItem(db, { id: 'mc', source_url: 'https://x', word_count: 50 })
+    db.prepare('UPDATE items SET chapter_start = 1, chapter_end = 5 WHERE id = ?').run('mc')
+    mockGetChapterCount.mockResolvedValue(5)
+    const result = await invoke('library:refresh', 'mc')
+    expect(result).toEqual({ changed: false, wordCount: 50 })
+    expect(mockAppendChapters).not.toHaveBeenCalled()
+  })
+
+  it('appends only the delta when new chapters appear', async () => {
+    seedItem(db, { id: 'mc2', source_url: 'https://x' })
+    db.prepare('UPDATE items SET chapter_start = 1, chapter_end = 5 WHERE id = ?').run('mc2')
+    mockGetChapterCount.mockResolvedValue(8)
+    mockAppendChapters.mockResolvedValue({ wordCount: 900 })
+    const result = await invoke('library:refresh', 'mc2')
+    expect(mockAppendChapters).toHaveBeenCalledWith('mc2', 8)
+    expect(result).toEqual({ changed: true, wordCount: 900 })
+    expect(triggerBackfill).toHaveBeenCalled()
+  })
+
+  it('full re-scrape: skips all I/O when the content hash is unchanged', async () => {
+    const text = 'the very same words'
+    seedItem(db, {
+      id: 'same',
+      source_url: 'https://x',
+      word_count: 4,
+      content_hash: computeContentHash(text),
+    })
+    mockRefreshContent.mockResolvedValue({ html: '<p>x</p>', textContent: text })
+    const result = await invoke('library:refresh', 'same')
+    expect(result).toEqual({ changed: false, wordCount: 4 })
+  })
+
+  it('full re-scrape: rewrites content + FTS and reports the new word count when changed', async () => {
+    ;(globalThis.fetch as Mock).mockRejectedValue(new Error('HEAD failed')) // headChanged catch → proceed
+    seedItem(db, {
+      id: 'chg',
+      source_url: 'https://x',
+      file_path: 'chg.html',
+      content_hash: 'stale',
+      word_count: 1,
+    })
+    writeFileSync(join(CONTENT_DIR, 'chg.html'), '<p>old body</p>') // so the FTS-delete read succeeds
+    indexFts('chg', 'old body') // contentless FTS 'delete' needs the originally-indexed tokens
+    mockRefreshContent.mockResolvedValue({
+      html: '<p>brand new content here</p>',
+      textContent: 'brand new content here',
+    })
+
+    const result = await invoke('library:refresh', 'chg')
+    expect(result).toEqual({ changed: true, wordCount: 4 })
+    const row = db.prepare('SELECT word_count, content_hash FROM items WHERE id = ?').get('chg') as any
+    expect(row.word_count).toBe(4)
+    expect(row.content_hash).not.toBe('stale')
+    expect(readFileSync(join(CONTENT_DIR, 'chg.html'), 'utf8')).toContain('brand new content')
+    expect(triggerBackfill).toHaveBeenCalled()
+  })
+
+  it('falls through to a full re-scrape when getChapterCount is null (unsupported parser)', async () => {
+    seedItem(db, {
+      id: 'null-cc',
+      source_url: 'https://x',
+      file_path: 'null-cc.html',
+      content_hash: 'stale',
+    })
+    db.prepare('UPDATE items SET chapter_start = 1, chapter_end = 2 WHERE id = ?').run('null-cc')
+    writeFileSync(join(CONTENT_DIR, 'null-cc.html'), '<p>zzz</p>')
+    indexFts('null-cc', 'zzz') // contentless FTS 'delete' needs the originally-indexed tokens
+    mockGetChapterCount.mockResolvedValue(null) // unsupported → fall through
+    mockRefreshContent.mockResolvedValue({ html: '<p>fresh</p>', textContent: 'fresh words now' })
+    const result = (await invoke('library:refresh', 'null-cc')) as any
+    expect(result.changed).toBe(true)
+    // range was passed through from the item's chapter bounds
+    expect(mockRefreshContent).toHaveBeenCalledWith('https://x', undefined, { start: 1, end: 2 })
   })
 })
