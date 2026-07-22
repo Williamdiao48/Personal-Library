@@ -9,7 +9,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 30
+export const CURRENT_VERSION = 31
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -281,6 +281,13 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   // it's a no-op on a DB that never had it. (idx_item_tags_tag_id from migration 6
   // stays — the PK can't serve a bare `WHERE tag_id = ?`.)
   30: `DROP INDEX IF EXISTS idx_item_tags_item_id;`,
+  // Normalized "how far through the book" fraction (0.0–1.0) for each annotation,
+  // computed by the reader at creation time (it alone knows the total chapter /
+  // page count). Lets the cross-book Annotations hub show a consistent "42%"
+  // location across EPUB / HTML / PDF instead of mixing chapters and page numbers.
+  // NULL for annotations created before this migration (the hub falls back to the
+  // native chapter/page label). Added via MIGRATIONS only, never in SCHEMA.
+  31: `ALTER TABLE annotations ADD COLUMN book_fraction REAL DEFAULT NULL;`,
 }
 
 export function initDatabase(): void {

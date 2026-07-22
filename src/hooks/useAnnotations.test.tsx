@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
-import { useAnnotations, clearAnnotationMarks } from './useAnnotations'
+import { useAnnotations, clearAnnotationMarks, bookFractionFor } from './useAnnotations'
 import type { Annotation, AnnotationTheme } from '../types'
 
 vi.mock('../services/annotationsService', () => ({
@@ -40,10 +40,12 @@ function ann(over: Partial<Annotation>): Annotation {
   } as Annotation
 }
 
-function setup(initial: Annotation[] = []) {
+function setup(initial: Annotation[] = [], bookLength?: number) {
   svc.getForItem.mockResolvedValue(initial)
   const ref = { current: document.createElement('div') }
-  return renderHook(() => useAnnotations({ itemId: 'item1', contentRef: ref, chapterIndex: 0 }))
+  return renderHook(() =>
+    useAnnotations({ itemId: 'item1', contentRef: ref, chapterIndex: 0, bookLength }),
+  )
 }
 
 /** Render the hook against a real jsdom container so DOM-mutating paths run. */
@@ -77,6 +79,25 @@ function rangeInText(root: HTMLElement, substr: string): Range {
 
 beforeEach(() => vi.clearAllMocks())
 
+describe('bookFractionFor', () => {
+  it('normalizes chaptered content by (chapter + within-chapter frac) / total', () => {
+    expect(bookFractionFor(2, 0.1, 5)).toBeCloseTo(0.42)
+    expect(bookFractionFor(0, 0, 4)).toBe(0)
+  })
+  it('normalizes PDF/single-page (chapter null) by position / total', () => {
+    expect(bookFractionFor(null, 12, 19)).toBeCloseTo(12 / 19) // PDF page 12 of 19
+    expect(bookFractionFor(null, 0.5, 1)).toBe(0.5) // single-page article
+  })
+  it('clamps within-chapter position and the final fraction to [0,1]', () => {
+    expect(bookFractionFor(4, 2, 5)).toBe(1) // position clamped to 1 → (4+1)/5
+    expect(bookFractionFor(0, -0.3, 4)).toBe(0)
+  })
+  it('returns null when the total is unknown (0 / undefined)', () => {
+    expect(bookFractionFor(1, 0.5, 0)).toBeNull()
+    expect(bookFractionFor(1, 0.5, undefined)).toBeNull()
+  })
+})
+
 describe('useAnnotations hook', () => {
   it('loads annotations for the item on mount', async () => {
     const { result } = setup([ann({ id: 'a1' })])
@@ -101,6 +122,17 @@ describe('useAnnotations hook', () => {
       }),
     )
     expect(result.current.annotations.map((a) => a.id)).toContain('bm')
+  })
+
+  it('threads a normalized book_fraction into the create payload from bookLength', async () => {
+    const { result } = setup([], 5) // 5-chapter book, chapterIndex 0
+    await waitFor(() => expect(svc.getForItem).toHaveBeenCalled())
+    svc.create.mockResolvedValue(ann({ id: 'bm2', type: 'bookmark', position: 0.5 }))
+
+    await act(async () => {
+      await result.current.createBookmark(0.5) // (0 + 0.5) / 5 = 0.1
+    })
+    expect(svc.create).toHaveBeenCalledWith(expect.objectContaining({ book_fraction: 0.1 }))
   })
 
   it('deleteAnnotation removes it from state and calls the service', async () => {
