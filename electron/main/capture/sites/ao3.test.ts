@@ -239,10 +239,7 @@ describe('captureAo3 — multi-page fetch', () => {
     mockFetchPage.mockResolvedValue(
       paginatedPage(['<p>C1.</p>'], { next: true, pagination: [1, 2, 3] }),
     )
-    mockFetchPages.mockResolvedValue([
-      paginatedPage(['<p>C2.</p>']),
-      paginatedPage(['<p>C3.</p>']),
-    ])
+    mockFetchPages.mockResolvedValue([paginatedPage(['<p>C2.</p>']), paginatedPage(['<p>C3.</p>'])])
     const result = await captureAo3('https://archiveofourown.org/works/8', undefined, {
       start: 1,
       end: 2,

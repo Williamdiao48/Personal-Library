@@ -10,11 +10,7 @@ vi.mock('../recommender/llm/ollamaClient', () => ({
   pullModel: vi.fn(() => Promise.resolve({ ok: true })),
 }))
 
-import {
-  registerLlmHandlers,
-  getLlmConfig,
-  ollamaConfigFrom,
-} from './llm'
+import { registerLlmHandlers, getLlmConfig, ollamaConfigFrom } from './llm'
 import { probeOllama, pullModel } from '../recommender/llm/ollamaClient'
 
 const mockProbe = vi.mocked(probeOllama)
