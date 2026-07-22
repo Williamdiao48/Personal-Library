@@ -33,19 +33,19 @@ export default defineConfig({
         'electron/main/recommender/timing.ts',
       ],
       // Floors ratcheted to just under the achieved numbers so any coverage
-      // regression fails CI. Bumped after the security/dictionary/site-parser batch
-      // (net-guard SSRF DNS + safeFetch redirects, safe-zip dir + aggregate-cap
-      // branches, dictionary db open path, AO3 pagination + getAo3ChapterCount, and
-      // the llm IPC handler) — achieved: stmts/lines 83.35, funcs 76.49, branches
-      // 84.45. Functions stays lowest because rendering the big reader engines
-      // instruments many nested handlers the canvas/pdfjs paths never reach under
-      // jsdom (the V8 all:true gotcha), so the func denominator is large. Only ever
-      // raise these — never lower to make a change pass.
+      // regression fails CI. Raised across the recommender/services, CollectionView,
+      // LibraryView, IPC-handler (capture/library/backup), and security/dictionary/
+      // site-parser + llm-IPC batches — combined achieved: stmts/lines 87.22, funcs
+      // 80.97, branches 85.44. Stmts/lines/branches are kept ~1pt back to absorb the
+      // ~0.5pt run-to-run fluctuation V8 all:true shows; the functions floor stays
+      // lowest because rendering the big reader engines instruments many nested
+      // handlers the canvas/pdfjs paths never reach under jsdom (the all:true gotcha),
+      // so the func denominator is large. Only ever raise these — never lower.
       thresholds: {
-        lines: 83,
-        functions: 76,
+        lines: 86,
+        functions: 80,
         branches: 84,
-        statements: 83,
+        statements: 86,
       },
     },
   },
