@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { existsSync } from 'fs'
+import { existsSync, mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import { invoke, resetIpc } from '../../../test/stubs/electron'
+import { invoke, resetIpc, app } from '../../../test/stubs/electron'
 import { openTestDb, closeTestDb, seedItem, type TestDb } from '../../../test/db/harness'
 import { registerConvertHandlers } from './convert'
 import type { ConvertResult } from '../../../src/types'
@@ -16,16 +17,33 @@ vi.mock('epub-gen-memory', () => ({
   default: vi.fn().mockResolvedValue(Buffer.from('fake epub bytes')),
 }))
 
-const CONTENT_DIR = '/tmp/pl-test-userdata/content'
-
 let db: TestDb
+let userData: string
+let getPathSpy: ReturnType<typeof vi.spyOn>
 
 beforeEach(() => {
   resetIpc()
   db = openTestDb()
+  // Isolate this suite's content dir. The main project runs test files in
+  // parallel, and every suite shares the stub's fixed userData path — so a
+  // sibling suite rmSync-ing /tmp/pl-test-userdata/content mid-write would
+  // intermittently break the epub write here (a real, order-dependent flake).
+  // A per-test mkdtemp userData dir removes the shared-path race entirely.
+  userData = mkdtempSync(join(tmpdir(), 'pl-convert-'))
+  getPathSpy = vi
+    .spyOn(app, 'getPath')
+    .mockImplementation((name: string) =>
+      name === 'userData' ? userData : join('/tmp', `pl-test-${name}`),
+    )
   registerConvertHandlers()
 })
-afterEach(() => closeTestDb())
+afterEach(() => {
+  closeTestDb()
+  // Restore ONLY this spy — a blanket vi.restoreAllMocks() would also wipe the
+  // module-level crypto.randomUUID mock that later tests depend on.
+  getPathSpy.mockRestore()
+  rmSync(userData, { recursive: true, force: true })
+})
 
 describe('convert:pdfToEpub', () => {
   it('throws when the source item does not exist', async () => {
@@ -49,7 +67,7 @@ describe('convert:pdfToEpub', () => {
     })) as ConvertResult
 
     expect(result.title).toBe('My Book')
-    expect(existsSync(join(CONTENT_DIR, `${result.id}.epub`))).toBe(true)
+    expect(existsSync(join(userData, 'content', `${result.id}.epub`))).toBe(true)
 
     const row = db.prepare('SELECT * FROM items WHERE id = ?').get(result.id) as any
     expect(row).toMatchObject({
@@ -87,7 +105,7 @@ describe('convert:pdfToEpub', () => {
       }),
     ).rejects.toThrow()
 
-    expect(existsSync(join(CONTENT_DIR, `${collidingId}.epub`))).toBe(false)
+    expect(existsSync(join(userData, 'content', `${collidingId}.epub`))).toBe(false)
     const count = db.prepare('SELECT COUNT(*) as n FROM items WHERE id = ?').get(collidingId) as {
       n: number
     }
