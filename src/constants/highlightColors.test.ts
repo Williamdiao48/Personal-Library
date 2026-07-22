@@ -13,7 +13,12 @@ describe('highlight color palette', () => {
     expect(DEFAULT_HIGHLIGHT_COLOR).toBe('yellow')
     // every swatch has a hex color + a default label
     expect(HIGHLIGHT_COLORS.every((c) => /^#[0-9a-f]{6}$/i.test(c.swatch) && c.label)).toBe(true)
-    expect(Object.keys(DEFAULT_HIGHLIGHT_LABELS).sort()).toEqual(['blue', 'green', 'pink', 'yellow'])
+    expect(Object.keys(DEFAULT_HIGHLIGHT_LABELS).sort()).toEqual([
+      'blue',
+      'green',
+      'pink',
+      'yellow',
+    ])
   })
 })
 

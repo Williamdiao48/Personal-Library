@@ -70,18 +70,42 @@ vi.mock('./ItemCard', () => ({
     <div data-testid={`card-${item.id}`}>
       <span data-testid={`status-${item.id}`}>{item.status ?? 'none'}</span>
       <span data-testid={`tags-${item.id}`}>{(tags ?? []).map((t: any) => t.name).join(',')}</span>
-      <button data-testid={`open-${item.id}`} onClick={onClick}>open</button>
-      <button data-testid={`delete-${item.id}`} onClick={onDelete}>delete</button>
-      <button data-testid={`remove-${item.id}`} onClick={onRemoveFromCollection}>remove</button>
-      <button data-testid={`edit-tags-${item.id}`} onClick={onEditTags}>edit tags</button>
-      <button data-testid={`finish-${item.id}`} onClick={() => onStatusChange('finished')}>finish</button>
-      <button data-testid={`title-${item.id}`} onClick={() => onTitleChange('Retitled')}>title</button>
-      <button data-testid={`author-${item.id}`} onClick={() => onAuthorChange('New Author')}>author</button>
-      <button data-testid={`cover-${item.id}`} onClick={() => onCoverChange('/covers/x.png')}>cover</button>
-      <button data-testid={`tagclick-${item.id}`} onClick={() => onTagClick('t1')}>tagclick</button>
-      <button data-testid={`authorclick-${item.id}`} onClick={() => onAuthorClick('Alice & Co')}>authorclick</button>
-      <button data-testid={`rate-${item.id}`} onClick={() => onRatingChange(4)}>rate</button>
-      <button data-testid={`review-${item.id}`} onClick={onWriteReview}>review</button>
+      <button data-testid={`open-${item.id}`} onClick={onClick}>
+        open
+      </button>
+      <button data-testid={`delete-${item.id}`} onClick={onDelete}>
+        delete
+      </button>
+      <button data-testid={`remove-${item.id}`} onClick={onRemoveFromCollection}>
+        remove
+      </button>
+      <button data-testid={`edit-tags-${item.id}`} onClick={onEditTags}>
+        edit tags
+      </button>
+      <button data-testid={`finish-${item.id}`} onClick={() => onStatusChange('finished')}>
+        finish
+      </button>
+      <button data-testid={`title-${item.id}`} onClick={() => onTitleChange('Retitled')}>
+        title
+      </button>
+      <button data-testid={`author-${item.id}`} onClick={() => onAuthorChange('New Author')}>
+        author
+      </button>
+      <button data-testid={`cover-${item.id}`} onClick={() => onCoverChange('/covers/x.png')}>
+        cover
+      </button>
+      <button data-testid={`tagclick-${item.id}`} onClick={() => onTagClick('t1')}>
+        tagclick
+      </button>
+      <button data-testid={`authorclick-${item.id}`} onClick={() => onAuthorClick('Alice & Co')}>
+        authorclick
+      </button>
+      <button data-testid={`rate-${item.id}`} onClick={() => onRatingChange(4)}>
+        rate
+      </button>
+      <button data-testid={`review-${item.id}`} onClick={onWriteReview}>
+        review
+      </button>
     </div>
   ),
 }))
@@ -89,7 +113,9 @@ vi.mock('./ItemCard', () => ({
 // TagsModal stub: exposes only a close button so a test can trigger onClose.
 vi.mock('./TagsModal', () => ({
   default: ({ onClose }: any) => (
-    <button data-testid="tags-modal-close" onClick={onClose}>close tags</button>
+    <button data-testid="tags-modal-close" onClick={onClose}>
+      close tags
+    </button>
   ),
 }))
 
@@ -97,8 +123,12 @@ vi.mock('./TagsModal', () => ({
 vi.mock('./ReviewModal', () => ({
   default: ({ onSave, onClose }: any) => (
     <div>
-      <button data-testid="review-save" onClick={() => onSave('Loved it', 5)}>save review</button>
-      <button data-testid="review-close" onClick={onClose}>close review</button>
+      <button data-testid="review-save" onClick={() => onSave('Loved it', 5)}>
+        save review
+      </button>
+      <button data-testid="review-close" onClick={onClose}>
+        close review
+      </button>
     </div>
   ),
 }))
@@ -113,7 +143,9 @@ vi.mock('./AddToCollectionModal', () => ({
       >
         add item
       </button>
-      <button data-testid="add-close" onClick={onClose}>close add</button>
+      <button data-testid="add-close" onClick={onClose}>
+        close add
+      </button>
     </div>
   ),
 }))
@@ -122,10 +154,18 @@ vi.mock('./AddToCollectionModal', () => ({
 vi.mock('./Sidebar', () => ({
   default: ({ collectionMgmt }: any) => (
     <div>
-      <button data-testid="col-create" onClick={() => collectionMgmt.onCreate('New Col')}>create</button>
-      <button data-testid="col-rename" onClick={() => collectionMgmt.onRename('c1', 'Renamed')}>rename</button>
-      <button data-testid="col-delete" onClick={() => collectionMgmt.onDelete('c1')}>delete current</button>
-      <button data-testid="col-delete-other" onClick={() => collectionMgmt.onDelete('c2')}>delete other</button>
+      <button data-testid="col-create" onClick={() => collectionMgmt.onCreate('New Col')}>
+        create
+      </button>
+      <button data-testid="col-rename" onClick={() => collectionMgmt.onRename('c1', 'Renamed')}>
+        rename
+      </button>
+      <button data-testid="col-delete" onClick={() => collectionMgmt.onDelete('c1')}>
+        delete current
+      </button>
+      <button data-testid="col-delete-other" onClick={() => collectionMgmt.onDelete('c2')}>
+        delete other
+      </button>
     </div>
   ),
 }))

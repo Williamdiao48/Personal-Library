@@ -463,7 +463,9 @@ describe('library IPC — refresh', () => {
 
     const result = await invoke('library:refresh', 'chg')
     expect(result).toEqual({ changed: true, wordCount: 4 })
-    const row = db.prepare('SELECT word_count, content_hash FROM items WHERE id = ?').get('chg') as any
+    const row = db
+      .prepare('SELECT word_count, content_hash FROM items WHERE id = ?')
+      .get('chg') as any
     expect(row.word_count).toBe(4)
     expect(row.content_hash).not.toBe('stale')
     expect(readFileSync(join(CONTENT_DIR, 'chg.html'), 'utf8')).toContain('brand new content')

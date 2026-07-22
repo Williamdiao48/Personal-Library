@@ -380,7 +380,9 @@ describe('LibraryView — filter bar dropdowns', () => {
       mkItem({ id: 'i1', title: 'Art', author: 'Ann', content_type: 'article' }),
       mkItem({ id: 'i2', title: 'Book', author: 'Bob', content_type: 'epub' }),
     ])
-    lib.getAllItemTags.mockResolvedValue([{ item_id: 'i1', tag_id: 't1', name: 'scifi', color: '#f00' }])
+    lib.getAllItemTags.mockResolvedValue([
+      { item_id: 'i1', tag_id: 't1', name: 'scifi', color: '#f00' },
+    ])
     tagSvc.getAll.mockResolvedValue([{ id: 't1', name: 'scifi', color: '#f00' }])
   })
 
@@ -410,9 +412,30 @@ describe('LibraryView — filter bar dropdowns', () => {
 
 describe('LibraryView — sorting & modal', () => {
   const sortItems = [
-    mkItem({ id: 'i1', title: 'Zebra', last_read_at: 100, word_count: 50, scroll_position: 0.1, rating: 2 }),
-    mkItem({ id: 'i2', title: 'Apple', last_read_at: 300, word_count: 900, scroll_position: 0.9, rating: 5 }),
-    mkItem({ id: 'i3', title: 'Mango', last_read_at: 200, word_count: 500, scroll_position: 0.5, rating: null }),
+    mkItem({
+      id: 'i1',
+      title: 'Zebra',
+      last_read_at: 100,
+      word_count: 50,
+      scroll_position: 0.1,
+      rating: 2,
+    }),
+    mkItem({
+      id: 'i2',
+      title: 'Apple',
+      last_read_at: 300,
+      word_count: 900,
+      scroll_position: 0.9,
+      rating: 5,
+    }),
+    mkItem({
+      id: 'i3',
+      title: 'Mango',
+      last_read_at: 200,
+      word_count: 500,
+      scroll_position: 0.5,
+      rating: null,
+    }),
   ]
 
   it('sorts by title when that is the default sort', async () => {
@@ -631,10 +654,7 @@ describe('LibraryView — sidebar collection management', () => {
 })
 
 describe('LibraryView — bulk actions', () => {
-  const two = [
-    mkItem({ id: 'i1', title: 'Alpha' }),
-    mkItem({ id: 'i2', title: 'Beta' }),
-  ]
+  const two = [mkItem({ id: 'i1', title: 'Alpha' }), mkItem({ id: 'i2', title: 'Beta' })]
 
   beforeEach(() => {
     lib.getAll.mockResolvedValue(two)
