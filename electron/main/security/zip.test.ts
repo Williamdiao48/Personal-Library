@@ -1,11 +1,31 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import AdmZip from 'adm-zip'
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync, statSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { safeExtractAll } from './zip'
 
 const MiB = 1_048_576
+
+// A lightweight IZipEntry-shaped stub. safeExtractAll only reads entryName,
+// isDirectory, header.size/compressedSize, and getData() — so we can drive the
+// directory-creation and aggregate-size-cap branches without materializing the
+// hundreds of MB of real payload those paths would otherwise require.
+function fakeEntry(
+  entryName: string,
+  opts: { isDirectory?: boolean; size?: number; compressed?: number; data?: Buffer } = {},
+): AdmZip.IZipEntry {
+  const size = opts.size ?? 0
+  return {
+    entryName,
+    isDirectory: opts.isDirectory ?? false,
+    header: { size, compressedSize: opts.compressed ?? size },
+    getData: () => opts.data ?? Buffer.alloc(0),
+  } as unknown as AdmZip.IZipEntry
+}
+function fakeZip(entries: AdmZip.IZipEntry[]): AdmZip {
+  return { getEntries: () => entries } as unknown as AdmZip
+}
 
 describe('safeExtractAll', () => {
   let dest: string
@@ -52,5 +72,24 @@ describe('safeExtractAll', () => {
     zip.addFile('content/bomb.bin', Buffer.alloc(26 * MiB))
     expect(() => safeExtractAll(zip, dest)).toThrow(/too large when decompressed|ratio too high/)
     expect(existsSync(join(dest, 'content', 'bomb.bin'))).toBe(false)
+  })
+
+  it('creates a directory for an explicit directory entry', () => {
+    safeExtractAll(fakeZip([fakeEntry('subdir/', { isDirectory: true })]), dest)
+    expect(existsSync(join(dest, 'subdir'))).toBe(true)
+    expect(statSync(join(dest, 'subdir')).isDirectory()).toBe(true)
+  })
+
+  it('aborts once the aggregate decompressed size exceeds the archive total cap', () => {
+    // Each entry is 24 MB (under the 25 MB per-entry cap) with a 1:1 ratio (under
+    // the 100:1 bomb guard), so only the 250 MB *aggregate* cap can trip. Eleven
+    // such entries (264 MB) cross it — the 11th throws before it is written.
+    const chunk = 24 * MiB
+    const entries = Array.from({ length: 11 }, (_, i) =>
+      fakeEntry(`content/part${i}.bin`, { size: chunk, compressed: chunk }),
+    )
+    expect(() => safeExtractAll(fakeZip(entries), dest)).toThrow(/maximum total decompressed size/i)
+    // The final entry (the one that crossed the cap) was never written.
+    expect(existsSync(join(dest, 'content', 'part10.bin'))).toBe(false)
   })
 })

@@ -34,18 +34,18 @@ export default defineConfig({
       ],
       // Floors ratcheted to just under the achieved numbers so any coverage
       // regression fails CI. Raised across the recommender/services, CollectionView,
-      // LibraryView, and IPC-handler (capture/library/backup) test batches — achieved:
-      // stmts/lines 86.46, funcs 80.69, branches 85.24. Stmts/lines/branches are kept a
-      // point back to absorb the ~0.5pt run-to-run fluctuation V8 all:true shows; the
-      // functions floor sits at 80 (the IPC batch was line-heavy — few large handlers —
-      // so funcs barely moved). Functions stays lowest overall because rendering the big
-      // reader engines instruments many nested handlers the canvas/pdfjs paths never
-      // reach under jsdom (the all:true gotcha). Only ever raise these — never lower.
+      // LibraryView, IPC-handler (capture/library/backup), and security/dictionary/
+      // site-parser + llm-IPC batches — combined achieved: stmts/lines 87.22, funcs
+      // 80.97, branches 85.44. Stmts/lines/branches are kept ~1pt back to absorb the
+      // ~0.5pt run-to-run fluctuation V8 all:true shows; the functions floor stays
+      // lowest because rendering the big reader engines instruments many nested
+      // handlers the canvas/pdfjs paths never reach under jsdom (the all:true gotcha),
+      // so the func denominator is large. Only ever raise these — never lower.
       thresholds: {
-        lines: 85,
+        lines: 86,
         functions: 80,
         branches: 84,
-        statements: 85,
+        statements: 86,
       },
     },
   },
