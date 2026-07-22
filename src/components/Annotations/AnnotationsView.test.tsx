@@ -19,6 +19,8 @@ vi.mock('../../services/annotationsService', () => ({
   },
 }))
 
+// Mutable so individual tests can flip the color-meaning toggle.
+const settingsState = vi.hoisted(() => ({ labelsEnabled: true }))
 vi.mock('../../contexts/SettingsContext', () => ({
   useSettings: () => ({
     settings: {
@@ -28,6 +30,7 @@ vi.mock('../../contexts/SettingsContext', () => ({
         blue: 'Vocabulary',
         pink: 'Question',
       },
+      highlightLabelsEnabled: settingsState.labelsEnabled,
     },
   }),
 }))
@@ -66,6 +69,7 @@ function renderView() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  settingsState.labelsEnabled = true
   getAll.mockResolvedValue([
     ann({ id: 'a1', selected_text: 'So we beat on', item_title: 'Gatsby' }),
     ann({ id: 'a2', selected_text: 'Big Brother is watching', item_title: '1984', item_id: 'b2' }),
@@ -81,6 +85,29 @@ describe('AnnotationsView', () => {
     // color category label from settings
     expect(screen.getAllByText('Theme').length).toBeGreaterThan(0)
     expect(screen.getByText('2 of 2')).toBeInTheDocument()
+  })
+
+  it('gives a standalone note a distinct violet swatch, not the yellow default', async () => {
+    getAll.mockResolvedValue([
+      ann({ id: 'n1', type: 'note', color: null, note_text: 'my note', selected_text: null }),
+    ])
+    const { container } = renderView()
+    await waitFor(() => expect(screen.getByText('my note')).toBeInTheDocument())
+    const bar = container.querySelector('.quote-color') as HTMLElement
+    expect(bar).toHaveStyle({ background: '#a78bfa' })
+  })
+
+  it('hides category chips and drops export categories when meanings are disabled', async () => {
+    settingsState.labelsEnabled = false
+    renderView()
+    await waitFor(() => expect(screen.getByText('So we beat on')).toBeInTheDocument())
+    // No color-category chip renders
+    expect(screen.queryByText('Theme')).toBeNull()
+    // Export rows carry a null category
+    fireEvent.click(screen.getByText('Export .md'))
+    await waitFor(() => expect(exportQuotes).toHaveBeenCalled())
+    const [rows] = exportQuotes.mock.calls[0]
+    expect(rows[0]).toMatchObject({ title: 'Gatsby', category: null })
   })
 
   it('filters by the search box', async () => {

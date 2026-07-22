@@ -77,6 +77,19 @@ describe('SettingsView — navigation & appearance', () => {
     await user.click(screen.getByRole('option', { name: 'Last read' }))
     expect(screen.getByRole('button', { name: ': Last read' })).toBeInTheDocument()
   })
+
+  it('hides the per-color label inputs when color meanings are toggled off', () => {
+    renderView()
+    const toggle = screen.getByRole('switch', { name: 'Color meanings' })
+    // On by default → the four editable meaning inputs are present.
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByLabelText('Yellow highlight label')).toBeInTheDocument()
+    expect(screen.getAllByPlaceholderText(/^(Yellow|Green|Blue|Pink)$/)).toHaveLength(4)
+    // Toggling off hides them.
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    expect(screen.queryByLabelText('Yellow highlight label')).toBeNull()
+  })
 })
 
 describe('SettingsView — custom theme editor', () => {

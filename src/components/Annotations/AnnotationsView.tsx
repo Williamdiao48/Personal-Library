@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { AnnotationTheme, AnnotationWithSource, ExportQuoteRow } from '../../types'
+import type {
+  AnnotationTheme,
+  AnnotationWithSource,
+  ExportQuoteRow,
+  HighlightColor,
+} from '../../types'
 import { annotationsService, annotationThemesService } from '../../services/annotationsService'
 import { useSettings } from '../../contexts/SettingsContext'
 import { DEFAULT_HIGHLIGHT_COLOR, HIGHLIGHT_COLORS } from '../../constants/highlightColors'
@@ -15,7 +20,12 @@ function chapterLabel(a: AnnotationWithSource): string | null {
   return null
 }
 
+/** Distinct swatch for standalone notes so they don't collide with the yellow
+ *  highlight color. Notes carry no highlight color, so the bar signals "note". */
+const NOTE_SWATCH = '#a78bfa' // violet
+
 function swatchFor(a: AnnotationWithSource): string {
+  if (a.type === 'note') return NOTE_SWATCH
   const key = a.color ?? DEFAULT_HIGHLIGHT_COLOR
   return HIGHLIGHT_COLORS.find((c) => c.key === key)?.swatch ?? HIGHLIGHT_COLORS[0].swatch
 }
@@ -23,7 +33,15 @@ function swatchFor(a: AnnotationWithSource): string {
 export default function AnnotationsView() {
   const navigate = useNavigate()
   const { settings } = useSettings()
+  const labelsEnabled = settings.highlightLabelsEnabled
   const labels = settings.highlightLabels
+  // When meanings are off, the color filter falls back to plain color names.
+  const filterLabels = labelsEnabled
+    ? labels
+    : (Object.fromEntries(HIGHLIGHT_COLORS.map((c) => [c.key, c.label])) as Record<
+        HighlightColor,
+        string
+      >)
 
   const [annotations, setAnnotations] = useState<AnnotationWithSource[]>([])
   const [allThemes, setAllThemes] = useState<AnnotationTheme[]>([])
@@ -76,7 +94,7 @@ export default function AnnotationsView() {
       title: a.item_title,
       author: a.item_author,
       chapterLabel: chapterLabel(a),
-      category: a.color ? labels[a.color] : null,
+      category: labelsEnabled && a.color ? labels[a.color] : null,
       themes: a.themes.map((t) => t.name),
     }))
   }
@@ -122,7 +140,7 @@ export default function AnnotationsView() {
         themeFilter={themeFilter}
         onThemeFilter={setThemeFilter}
         allThemes={allThemes}
-        labels={labels}
+        labels={filterLabels}
       />
 
       {loading ? (
@@ -157,7 +175,9 @@ export default function AnnotationsView() {
                     )}
                     {a.note_text && <p className="quote-note">{a.note_text}</p>}
                     <div className="quote-meta">
-                      {a.color && <span className="quote-category">{labels[a.color]}</span>}
+                      {a.color && labelsEnabled && (
+                        <span className="quote-category">{labels[a.color]}</span>
+                      )}
                       {chapterLabel(a) && <span className="quote-chapter">{chapterLabel(a)}</span>}
                     </div>
                     <ThemeEditor

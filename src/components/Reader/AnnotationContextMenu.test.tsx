@@ -10,6 +10,7 @@ vi.mock('../../services/annotationsService', () => ({
 }))
 
 import AnnotationContextMenu from './AnnotationContextMenu'
+import { SettingsProvider, type AppSettings } from '../../contexts/SettingsContext'
 
 const annot = (over: Partial<Annotation> = {}): Annotation =>
   ({
@@ -28,7 +29,10 @@ const annot = (over: Partial<Annotation> = {}): Annotation =>
     ...over,
   }) as Annotation
 
-function renderMenu(over: Partial<React.ComponentProps<typeof AnnotationContextMenu>> = {}) {
+function renderMenu(
+  over: Partial<React.ComponentProps<typeof AnnotationContextMenu>> = {},
+  settings?: Partial<AppSettings>,
+) {
   const props = {
     x: 200,
     y: 300,
@@ -39,12 +43,17 @@ function renderMenu(over: Partial<React.ComponentProps<typeof AnnotationContextM
     onClose: vi.fn(),
     ...over,
   }
-  render(<AnnotationContextMenu {...props} />)
+  const menu = <AnnotationContextMenu {...props} />
+  // With no provider the menu falls back to DEFAULTS (meanings enabled); pass
+  // `settings` to exercise the disabled/custom-label tooltip behavior.
+  if (settings) localStorage.setItem('app-settings', JSON.stringify(settings))
+  render(settings ? <SettingsProvider>{menu}</SettingsProvider> : menu)
   return props
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear()
   Object.defineProperty(navigator, 'clipboard', {
     value: { writeText: vi.fn() },
     configurable: true,
@@ -68,25 +77,35 @@ describe('AnnotationContextMenu', () => {
 
   it('shows a recolor swatch row for a highlight and marks the active color', () => {
     renderMenu({ annotation: annot({ type: 'highlight', color: 'blue', note_text: null }) })
-    const swatches = ['Yellow', 'Green', 'Blue', 'Pink'].map((n) =>
+    // With meanings enabled (default) each swatch is named "<Color>: <meaning>".
+    const swatches = [/^Yellow:/, /^Green:/, /^Blue:/, /^Pink:/].map((n) =>
       screen.getByRole('button', { name: n }),
     )
     expect(swatches).toHaveLength(4)
-    expect(screen.getByRole('button', { name: 'Blue' }).className).toMatch(/\bactive\b/)
+    expect(screen.getByRole('button', { name: /^Blue:/ }).className).toMatch(/\bactive\b/)
   })
 
   it('recolors a highlight and closes when a swatch is clicked', () => {
     const props = renderMenu({
       annotation: annot({ type: 'highlight', color: 'yellow', note_text: null }),
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Green' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Green:/ }))
     expect(props.onSetColor).toHaveBeenCalledWith('a1', 'green')
     expect(props.onClose).toHaveBeenCalled()
   })
 
+  it('swatch tooltip falls back to the color name when meanings are disabled', () => {
+    renderMenu(
+      { annotation: annot({ type: 'highlight', color: 'blue', note_text: null }) },
+      { highlightLabelsEnabled: false },
+    )
+    expect(screen.getByRole('button', { name: 'Blue' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Blue:/ })).toBeNull()
+  })
+
   it('shows no recolor swatches for a note', () => {
     renderMenu()
-    expect(screen.queryByRole('button', { name: 'Green' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Green:/ })).toBeNull()
   })
 
   it('copies the selected text to the clipboard and closes', () => {
