@@ -95,16 +95,13 @@ describe('SettingsContext', () => {
     expect(JSON.parse(localStorage.getItem('app-settings')!).highlightLabelsEnabled).toBe(false)
   })
 
-  it('defaults annotation sort/group and persists updates', () => {
+  it('defaults annotation sort and persists updates', () => {
     const { result } = setup()
     expect(result.current.settings.annotationSortBy).toBe('title')
-    expect(result.current.settings.annotationGroupBy).toBe('book')
-    act(() =>
-      result.current.updateSettings({ annotationSortBy: 'newest', annotationGroupBy: 'color' }),
-    )
+    act(() => result.current.updateSettings({ annotationSortBy: 'newest' }))
     expect(result.current.settings.annotationSortBy).toBe('newest')
     const stored = JSON.parse(localStorage.getItem('app-settings')!)
-    expect(stored).toMatchObject({ annotationSortBy: 'newest', annotationGroupBy: 'color' })
+    expect(stored).toMatchObject({ annotationSortBy: 'newest' })
   })
 
   it('useSettingsSafe returns defaults outside a provider instead of throwing', () => {
