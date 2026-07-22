@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { SettingsProvider, useSettings, type CustomTheme } from './SettingsContext'
+import { SettingsProvider, useSettings, useSettingsSafe, type CustomTheme } from './SettingsContext'
 
 const html = () => document.documentElement
 
@@ -85,5 +85,19 @@ describe('SettingsContext', () => {
 
   it('useSettings throws when used outside a provider', () => {
     expect(() => renderHook(() => useSettings())).toThrow(/SettingsProvider/)
+  })
+
+  it('defaults highlightLabelsEnabled to true and persists a disable toggle', () => {
+    const { result } = setup()
+    expect(result.current.settings.highlightLabelsEnabled).toBe(true)
+    act(() => result.current.updateSettings({ highlightLabelsEnabled: false }))
+    expect(result.current.settings.highlightLabelsEnabled).toBe(false)
+    expect(JSON.parse(localStorage.getItem('app-settings')!).highlightLabelsEnabled).toBe(false)
+  })
+
+  it('useSettingsSafe returns defaults outside a provider instead of throwing', () => {
+    const { result } = renderHook(() => useSettingsSafe())
+    expect(result.current.highlightLabelsEnabled).toBe(true)
+    expect(result.current.theme).toBe('dark')
   })
 })

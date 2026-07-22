@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { createRef } from 'react'
 import TextSelectionPopup from './TextSelectionPopup'
+import { SettingsProvider, type AppSettings } from '../../contexts/SettingsContext'
 import { installMockApi } from '../../../test/renderer/mockWindowApi'
 
 // Build a container with real text and a Range over it, and stub window.getSelection
@@ -34,7 +35,10 @@ function stubSelection(container: HTMLElement, text = 'selected') {
   return range
 }
 
-function setup(props: Partial<React.ComponentProps<typeof TextSelectionPopup>> = {}) {
+function setup(
+  props: Partial<React.ComponentProps<typeof TextSelectionPopup>> = {},
+  settings?: Partial<AppSettings>,
+) {
   const container = document.createElement('div')
   container.textContent = 'selected text in the reader'
   document.body.appendChild(container)
@@ -42,9 +46,13 @@ function setup(props: Partial<React.ComponentProps<typeof TextSelectionPopup>> =
   ;(ref as { current: HTMLElement }).current = container
   const onHighlight = vi.fn()
   const onNote = vi.fn()
-  const utils = render(
-    <TextSelectionPopup containerRef={ref} onHighlight={onHighlight} onNote={onNote} {...props} />,
+  const popup = (
+    <TextSelectionPopup containerRef={ref} onHighlight={onHighlight} onNote={onNote} {...props} />
   )
+  // When settings are provided, wrap in a real SettingsProvider (seeded via
+  // localStorage) so the swatch tooltips reflect the color-meaning config.
+  if (settings) localStorage.setItem('app-settings', JSON.stringify(settings))
+  const utils = render(settings ? <SettingsProvider>{popup}</SettingsProvider> : popup)
   // Spread utils first so our text container isn't shadowed by RTL's render root.
   return { ...utils, container, onHighlight, onNote }
 }
@@ -78,6 +86,7 @@ afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
   document.body.innerHTML = ''
+  localStorage.clear()
 })
 
 describe('TextSelectionPopup', () => {
@@ -90,14 +99,29 @@ describe('TextSelectionPopup', () => {
     const { container, onHighlight } = setup()
     const range = stubSelection(container)
     mouseUpIn(container)
-    // All four swatches render
-    expect(screen.getByLabelText('Highlight yellow')).toBeInTheDocument()
-    expect(screen.getByLabelText('Highlight green')).toBeInTheDocument()
-    expect(screen.getByLabelText('Highlight blue')).toBeInTheDocument()
-    expect(screen.getByLabelText('Highlight pink')).toBeInTheDocument()
-    // Clicking a non-default swatch threads that color through
-    fireEvent.click(screen.getByLabelText('Highlight green'))
+    // All four swatches render (yellow, green, blue, pink — in palette order)
+    const swatches = document.querySelectorAll('.sel-popup-swatch')
+    expect(swatches).toHaveLength(4)
+    // Clicking a non-default swatch (green, index 1) threads that color through
+    fireEvent.click(swatches[1])
     expect(onHighlight).toHaveBeenCalledWith(range, 'green')
+  })
+
+  it('swatch tooltip shows the color meaning when meanings are enabled', () => {
+    const { container } = setup({}, { highlightLabelsEnabled: true })
+    stubSelection(container)
+    mouseUpIn(container)
+    // Default meaning for yellow is "Key quote"
+    expect(screen.getByLabelText('Yellow: Key quote')).toBeInTheDocument()
+    expect(screen.getByLabelText('Green: Theme / motif')).toBeInTheDocument()
+  })
+
+  it('swatch tooltip falls back to the color name when meanings are disabled', () => {
+    const { container } = setup({}, { highlightLabelsEnabled: false })
+    stubSelection(container)
+    mouseUpIn(container)
+    expect(screen.getByLabelText('Highlight yellow')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Yellow: Key quote')).toBeNull()
   })
 
   it('Note fires with the range', () => {

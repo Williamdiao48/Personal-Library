@@ -59,6 +59,9 @@ export interface AppSettings {
   // User-facing meaning for each highlight color (e.g. yellow = "Key quote").
   // Drives the color-category legend/filters. App-global config, not per-annotation.
   highlightLabels: Record<HighlightColor, string>
+  // When false, colors are purely visual: category chips/exports drop the meaning
+  // and swatch tooltips show plain color names. Custom labels are preserved.
+  highlightLabelsEnabled: boolean
 }
 
 const CUSTOM_THEME_VARS: Array<[keyof CustomTheme, string]> = [
@@ -86,6 +89,7 @@ const DEFAULTS: AppSettings = {
   llmModel: 'llama3.2:3b',
   llmBaseUrl: 'http://127.0.0.1:11434',
   highlightLabels: DEFAULT_HIGHLIGHT_LABELS,
+  highlightLabelsEnabled: true,
 }
 
 const STORAGE_KEY = 'app-settings'
@@ -165,4 +169,14 @@ export function useSettings(): SettingsContextValue {
   const ctx = useContext(SettingsContext)
   if (!ctx) throw new Error('useSettings must be used within SettingsProvider')
   return ctx
+}
+
+/**
+ * Like {@link useSettings} but returns DEFAULTS when no provider is mounted,
+ * rather than throwing. For leaf components (e.g. the in-reader selection popup)
+ * that always sit under the app's SettingsProvider in production but get
+ * unit-tested in isolation without one.
+ */
+export function useSettingsSafe(): AppSettings {
+  return useContext(SettingsContext)?.settings ?? DEFAULTS
 }

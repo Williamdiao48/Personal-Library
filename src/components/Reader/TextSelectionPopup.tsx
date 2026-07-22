@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { HighlightColor } from '../../types'
 import { HIGHLIGHT_COLORS } from '../../constants/highlightColors'
+import { useSettingsSafe } from '../../contexts/SettingsContext'
 import DefinitionPopover from './DefinitionPopover'
 
 // A selection is "definable" when it's a single word (letters, with inner
@@ -35,6 +36,7 @@ export default function TextSelectionPopup({
   disabled,
   clearTrigger,
 }: Props) {
+  const settings = useSettingsSafe()
   const [popup, setPopup] = useState<PopupState | null>(null)
   const [define, setDefine] = useState<DefineState | null>(null)
   const popupRef = useRef<HTMLDivElement | null>(null)
@@ -180,16 +182,21 @@ export default function TextSelectionPopup({
           onMouseDown={(e) => e.preventDefault()}
         >
           <div className="sel-popup-swatches" role="group" aria-label="Highlight color">
-            {HIGHLIGHT_COLORS.map(({ key, label, swatch }) => (
-              <button
-                key={key}
-                className="sel-popup-swatch"
-                style={{ background: swatch }}
-                onClick={() => handleHighlight(key)}
-                title={`Highlight ${label.toLowerCase()}`}
-                aria-label={`Highlight ${label.toLowerCase()}`}
-              />
-            ))}
+            {HIGHLIGHT_COLORS.map(({ key, label, swatch }) => {
+              const tip = settings.highlightLabelsEnabled
+                ? `${label}: ${settings.highlightLabels[key]}`
+                : `Highlight ${label.toLowerCase()}`
+              return (
+                <button
+                  key={key}
+                  className="sel-popup-swatch"
+                  style={{ background: swatch }}
+                  onClick={() => handleHighlight(key)}
+                  title={tip}
+                  aria-label={tip}
+                />
+              )
+            })}
           </div>
           <span className="sel-popup-divider" aria-hidden="true" />
           <button className="sel-popup-btn" onClick={handleNote} title="Add note">

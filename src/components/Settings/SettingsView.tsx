@@ -665,30 +665,45 @@ export default function SettingsView() {
         {/* ── Annotations ── */}
         <section className="settings-section">
           <h3 className="settings-section-title">Annotations</h3>
-          <p className="settings-row-hint" style={{ marginBottom: 6 }}>
-            Give each highlight color a meaning. These labels show as categories in the Annotations
-            view and in exports.
-          </p>
-          {HIGHLIGHT_COLORS.map((c) => (
-            <div className="settings-row" key={c.key}>
-              <span
-                className="settings-color-swatch"
-                style={{ background: c.swatch }}
-                aria-hidden="true"
-              />
-              <input
-                className="settings-color-label-input"
-                value={settings.highlightLabels[c.key]}
-                placeholder={c.label}
-                aria-label={`${c.label} highlight label`}
-                onChange={(e) =>
-                  updateSettings({
-                    highlightLabels: { ...settings.highlightLabels, [c.key]: e.target.value },
-                  })
-                }
-              />
+
+          <div className="settings-row settings-row--top">
+            <div className="settings-row-stack">
+              <label className="settings-row-label" htmlFor="toggle-color-meanings">
+                Color meanings
+              </label>
+              <span className="settings-row-hint">
+                Give each highlight color a meaning. These labels show as categories in the
+                Annotations view and in exports, and as tooltips on the color swatches.
+              </span>
             </div>
-          ))}
+            <Toggle
+              id="toggle-color-meanings"
+              checked={settings.highlightLabelsEnabled}
+              onChange={(v) => updateSettings({ highlightLabelsEnabled: v })}
+            />
+          </div>
+
+          {settings.highlightLabelsEnabled &&
+            HIGHLIGHT_COLORS.map((c) => (
+              <div className="settings-row" key={c.key}>
+                <span
+                  className="settings-color-swatch"
+                  style={{ background: c.swatch }}
+                  aria-hidden="true"
+                />
+                <input
+                  className="settings-color-label-input"
+                  value={settings.highlightLabels[c.key]}
+                  placeholder={c.label}
+                  aria-label={`${c.label} highlight label`}
+                  onChange={(e) =>
+                    updateSettings({
+                      highlightLabels: { ...settings.highlightLabels, [c.key]: e.target.value },
+                    })
+                  }
+                />
+              </div>
+            ))}
         </section>
 
         {/* ── Data ── */}

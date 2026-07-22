@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import type { Annotation, AnnotationTheme, HighlightColor } from '../../types'
 import { HIGHLIGHT_COLORS, DEFAULT_HIGHLIGHT_COLOR } from '../../constants/highlightColors'
+import { useSettingsSafe } from '../../contexts/SettingsContext'
 import ThemePicker from '../Annotations/ThemePicker'
 
 interface Props {
@@ -33,6 +34,9 @@ export default function AnnotationContextMenu({
   onSetThemes,
   onVocabChange,
 }: Props) {
+  const settings = useSettingsSafe()
+  const labelsEnabled = settings.highlightLabelsEnabled
+  const highlightLabels = settings.highlightLabels
   const ref = useRef<HTMLDivElement>(null)
   const [editing, setEditing] = useState(false)
   const [themeEditing, setThemeEditing] = useState(false)
@@ -142,6 +146,7 @@ export default function AnnotationContextMenu({
               <div className="annot-ctx-swatches" role="group" aria-label="Highlight color">
                 {HIGHLIGHT_COLORS.map(({ key, label, swatch }) => {
                   const active = (annotation.color ?? DEFAULT_HIGHLIGHT_COLOR) === key
+                  const tip = labelsEnabled ? `${label}: ${highlightLabels[key]}` : label
                   return (
                     <button
                       key={key}
@@ -151,8 +156,8 @@ export default function AnnotationContextMenu({
                         onSetColor(annotation.id, key)
                         onClose()
                       }}
-                      title={label}
-                      aria-label={label}
+                      title={tip}
+                      aria-label={tip}
                     />
                   )
                 })}
