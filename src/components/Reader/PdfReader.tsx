@@ -665,6 +665,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     itemId: item.id,
     contentRef: outerRef, // PDF has no text DOM; outerRef is just used for deletion
     chapterIndex: null, // PDF annotations are page-indexed, no chapter concept
+    bookLength: totalPages, // page/totalPages → 0–1 book fraction
   })
 
   const pdfBookmarks = annot.annotations.filter((a) => a.type === 'bookmark')

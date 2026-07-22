@@ -203,6 +203,7 @@ export default function EpubReader({ item, onBack }: Props) {
     itemId: item.id,
     contentRef: contentRef,
     chapterIndex: chapter,
+    bookLength: book?.chapters.length ?? 0,
   })
 
   // Close all overlays whenever the visible page changes — covers keyboard arrows,

@@ -15,6 +15,28 @@ interface UseAnnotationsOptions {
   /** null for single-page articles and PDF (no chapter concept).
    *  0-based chapter index for EPUB and multi-chapter HTML. */
   chapterIndex: number | null
+  /** Total addressable units for normalizing a new annotation to a 0–1 book
+   *  fraction: total chapter count (EPUB / HTML, including a 1-chapter article)
+   *  or total page count (PDF). Omit / 0 when unknown → book_fraction stays null. */
+  bookLength?: number
+}
+
+/** Normalize an annotation's location to a 0–1 fraction through the whole book.
+ *  Chaptered (chapterIndex != null): (chapter + within-chapter frac) / totalChapters.
+ *  PDF / single-page (chapterIndex == null): position / bookLength — position is a
+ *  page number for PDF, a whole-doc scroll fraction for a 1-"chapter" article.
+ *  Returns null when the total is unknown so book_fraction stays null. */
+export function bookFractionFor(
+  chapterIndex: number | null,
+  position: number,
+  bookLength: number | undefined,
+): number | null {
+  if (!bookLength || bookLength <= 0) return null
+  const raw =
+    chapterIndex === null
+      ? position / bookLength
+      : (chapterIndex + Math.min(Math.max(position, 0), 1)) / bookLength
+  return Math.min(Math.max(raw, 0), 1)
 }
 
 export interface UseAnnotationsReturn {
@@ -247,7 +269,7 @@ function reanchorHighlight(annotation: Annotation, container: HTMLElement): void
 // ── Hook ──────────────────────────────────────────────────────────────────
 
 export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsReturn {
-  const { itemId, contentRef, chapterIndex } = opts
+  const { itemId, contentRef, chapterIndex, bookLength } = opts
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [allThemes, setAllThemes] = useState<AnnotationTheme[]>([])
   // Track the last chapter we applied highlights for, to avoid redundant work
@@ -276,11 +298,12 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
         type: 'bookmark',
         chapter_index: chapterIndex,
         position,
+        book_fraction: bookFractionFor(chapterIndex, position, bookLength),
       }
       const created = await annotationsService.create(payload)
       setAnnotations((prev) => [...prev, created])
     },
-    [itemId, chapterIndex],
+    [itemId, chapterIndex, bookLength],
   )
 
   const createHighlight = useCallback(
@@ -298,13 +321,14 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
         context_before: contextBefore || null,
         context_after: contextAfter || null,
         color,
+        book_fraction: bookFractionFor(chapterIndex, position, bookLength),
       }
       const created = await annotationsService.create(payload)
       setAnnotations((prev) => [...prev, created])
       // Immediately paint the mark so it appears without waiting for applyHighlightsToDOM
       applyMarkToRange(range, created.id, 'highlight', color)
     },
-    [itemId, chapterIndex],
+    [itemId, chapterIndex, bookLength],
   )
 
   const createNote = useCallback(
@@ -331,6 +355,7 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
         context_before: contextBefore,
         context_after: contextAfter,
         note_text: noteText,
+        book_fraction: bookFractionFor(chapterIndex, position, bookLength),
       }
       const created = await annotationsService.create(payload)
       // Attach any themes chosen in the composer (create returns themes:[]).
@@ -345,7 +370,7 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
       // If anchored to text, immediately paint the mark
       if (range && text) applyMarkToRange(range, created.id, 'note')
     },
-    [itemId, chapterIndex],
+    [itemId, chapterIndex, bookLength],
   )
 
   // ── PDF geometry-anchored creation ─────────────────────────────────────────
@@ -367,11 +392,12 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
         selected_text: text,
         color,
         rects: JSON.stringify(rects),
+        book_fraction: bookFractionFor(null, page, bookLength),
       }
       const created = await annotationsService.create(payload)
       setAnnotations((prev) => [...prev, created])
     },
-    [itemId],
+    [itemId, bookLength],
   )
 
   const createPdfNote = useCallback(
@@ -390,6 +416,7 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
         selected_text: text || null,
         note_text: noteText,
         rects: rects.length > 0 ? JSON.stringify(rects) : null,
+        book_fraction: bookFractionFor(null, page, bookLength),
       }
       const created = await annotationsService.create(payload)
       if (themes && themes.length > 0) {
@@ -401,7 +428,7 @@ export function useAnnotations(opts: UseAnnotationsOptions): UseAnnotationsRetur
       }
       setAnnotations((prev) => [...prev, created])
     },
-    [itemId],
+    [itemId, bookLength],
   )
 
   const setAnnotationThemes = useCallback(async (id: string, themes: AnnotationTheme[]) => {

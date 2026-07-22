@@ -120,8 +120,8 @@ export function registerAnnotationHandlers(): void {
     run(
       `
       INSERT INTO annotations
-        (id, item_id, type, chapter_index, position, selected_text, context_before, context_after, note_text, color, rects, created_at, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, item_id, type, chapter_index, position, selected_text, context_before, context_after, note_text, color, rects, book_fraction, created_at, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         id,
@@ -135,6 +135,7 @@ export function registerAnnotationHandlers(): void {
         payload.note_text ?? null,
         payload.color ?? null,
         payload.rects ?? null,
+        payload.book_fraction ?? null,
         now,
         sortOrder,
       ],

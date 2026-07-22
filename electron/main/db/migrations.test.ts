@@ -288,6 +288,11 @@ describe('database bring-up', () => {
     expect(colsOf(db, 'annotations')).toContain('rects')
   })
 
+  it('annotations.book_fraction exists (migration 31 — normalized location)', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'annotations')).toContain('book_fraction')
+  })
+
   it('seeds starter preset themes (migration 28) and is idempotent', () => {
     const db = openTestDb()
     const names = (

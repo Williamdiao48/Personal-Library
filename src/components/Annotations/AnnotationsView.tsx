@@ -27,10 +27,23 @@ const SORT_OPTIONS = [
   { value: 'oldest', label: 'Sort: Oldest annotated' },
 ]
 
-function chapterLabel(a: AnnotationWithSource): string | null {
-  if (a.content_type === 'pdf') return `Page ${Math.round(a.position)}`
+/** The native location within the source: a page for PDFs, a chapter for
+ *  chaptered content, or nothing for a single-page article. */
+function nativeLocation(a: AnnotationWithSource): string | null {
+  if (a.content_type === 'pdf') return `p. ${Math.round(a.position)}`
   if (a.chapter_index !== null) return `Ch. ${a.chapter_index + 1}`
   return null
+}
+
+/** Normalized location for the cross-book hub: a "% through the book" that reads
+ *  consistently across PDF / EPUB / article, with the native page/chapter appended
+ *  as detail. Falls back to the bare native label for annotations created before
+ *  book_fraction was recorded (null). */
+function locationLabel(a: AnnotationWithSource): string | null {
+  const native = nativeLocation(a)
+  if (a.book_fraction == null) return native
+  const pct = `${Math.round(a.book_fraction * 100)}%`
+  return native ? `${pct} · ${native}` : pct
 }
 
 /** Distinct swatch for standalone notes so they don't collide with the yellow
@@ -113,7 +126,7 @@ export default function AnnotationsView() {
       note: a.note_text,
       title: a.item_title,
       author: a.item_author,
-      chapterLabel: chapterLabel(a),
+      chapterLabel: locationLabel(a),
       category: labelsEnabled && a.color ? labels[a.color] : null,
       themes: a.themes.map((t) => t.name),
     }))
@@ -221,7 +234,9 @@ export default function AnnotationsView() {
                       {a.color && labelsEnabled && (
                         <span className="quote-category">{labels[a.color]}</span>
                       )}
-                      {chapterLabel(a) && <span className="quote-chapter">{chapterLabel(a)}</span>}
+                      {locationLabel(a) && (
+                        <span className="quote-chapter">{locationLabel(a)}</span>
+                      )}
                     </div>
                     <ThemeEditor
                       annotationId={a.id}

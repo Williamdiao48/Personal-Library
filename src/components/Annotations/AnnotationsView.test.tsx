@@ -56,6 +56,7 @@ function ann(over: Partial<AnnotationWithSource>): AnnotationWithSource {
     note_text: null,
     color: 'green',
     themes: [],
+    book_fraction: null,
     created_at: 0,
     sort_order: null,
     item_title: 'Gatsby',
@@ -135,6 +136,43 @@ describe('AnnotationsView', () => {
     await waitFor(() => expect(exportQuotes).toHaveBeenCalled())
     const [rows] = exportQuotes.mock.calls[0]
     expect(rows[0]).toMatchObject({ title: 'Gatsby', category: null })
+  })
+
+  it('shows a normalized "% · native" location for chaptered and PDF annotations', async () => {
+    getAll.mockResolvedValue([
+      ann({
+        id: 'e1',
+        content_type: 'epub',
+        chapter_index: 2,
+        book_fraction: 0.42,
+        selected_text: 'epub one',
+        item_title: 'Gatsby',
+      }),
+      ann({
+        id: 'p1',
+        content_type: 'pdf',
+        chapter_index: null,
+        position: 12,
+        book_fraction: 0.63,
+        selected_text: 'pdf one',
+        item_title: 'Manual',
+        item_id: 'b2',
+      }),
+    ])
+    renderView()
+    await waitFor(() => expect(screen.getByText('epub one')).toBeInTheDocument())
+    expect(screen.getByText('42% · Ch. 3')).toBeInTheDocument()
+    expect(screen.getByText('63% · p. 12')).toBeInTheDocument()
+  })
+
+  it('falls back to the native chapter/page label when book_fraction is null', async () => {
+    getAll.mockResolvedValue([
+      ann({ id: 'old', chapter_index: 4, book_fraction: null, selected_text: 'legacy' }),
+    ])
+    renderView()
+    await waitFor(() => expect(screen.getByText('legacy')).toBeInTheDocument())
+    expect(screen.getByText('Ch. 5')).toBeInTheDocument()
+    expect(screen.queryByText(/%/)).toBeNull()
   })
 
   it('filters by the search box', async () => {

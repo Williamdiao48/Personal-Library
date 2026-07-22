@@ -93,6 +93,29 @@ describe('annotations IPC', () => {
     expect(noRects.rects).toBeNull()
   })
 
+  it('round-trips book_fraction (normalized location), null when omitted', async () => {
+    const item = seedItem(db, {})
+    const withFrac = (await invoke('annotations:create', {
+      item_id: item,
+      type: 'highlight',
+      position: 0.3,
+      chapter_index: 2,
+      selected_text: 'quote',
+      book_fraction: 0.42,
+    })) as any
+    expect(withFrac.book_fraction).toBe(0.42)
+
+    const list = (await invoke('annotations:getForItem', item)) as any[]
+    expect(list[0].book_fraction).toBe(0.42)
+
+    const noFrac = (await invoke('annotations:create', {
+      item_id: item,
+      type: 'note',
+      position: 0.5,
+    })) as any
+    expect(noFrac.book_fraction).toBeNull()
+  })
+
   it('updateNote edits note text', async () => {
     const item = seedItem(db, {})
     const a = (await invoke('annotations:create', {

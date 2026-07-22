@@ -285,6 +285,9 @@ export default function HtmlReader({
     itemId: item.id,
     contentRef: scrollRef,
     chapterIndex: annotChapterIndex,
+    // Single-page articles have no chapters (totalChapters 0); treat the doc as a
+    // 1-chapter book so its whole-doc scroll fraction normalizes directly.
+    bookLength: Math.max(totalChapters, 1),
   })
 
   // Close all overlays whenever the visible chapter changes.

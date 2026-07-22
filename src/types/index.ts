@@ -193,6 +193,11 @@ export interface Annotation {
   // PDF-only: JSON array of [x, y, w, h] rects in scale-1 viewport px (page
   // top-left origin). null for HTML/EPUB (they re-anchor by selected_text).
   rects: string | null
+  // Normalized 0.0–1.0 position through the whole book, computed by the reader at
+  // creation (chaptered: (chapter + within-chapter frac)/totalChapters; PDF:
+  // page/totalPages). Lets the hub show a consistent "42%" across content types.
+  // null for annotations created before this shipped → hub falls back to Ch./Page.
+  book_fraction: number | null
   created_at: number // unix ms
   sort_order: number | null
 }
@@ -228,6 +233,7 @@ export interface CreateAnnotationPayload {
   note_text?: string | null
   color?: HighlightColor | null
   rects?: string | null // PDF-only geometry JSON; see Annotation.rects
+  book_fraction?: number | null // 0.0–1.0 book progress; see Annotation.book_fraction
 }
 
 export interface BackupExportResult {
