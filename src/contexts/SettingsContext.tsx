@@ -23,6 +23,12 @@ export type GridDensity = 'compact' | 'normal' | 'comfortable'
 export type ContentMode = 'all' | 'books' | 'fanfiction'
 export type SortBy =
   'date_saved' | 'last_read' | 'title' | 'word_count' | 'progress' | 'rating_high' | 'rating_low'
+/** Annotations hub ordering. Interpreted per grouping: with Book grouping it
+ *  orders the book sections (items stay in reading order); otherwise it orders
+ *  the annotations. `title` = alphabetical by book. */
+export type AnnotationSortBy = 'title' | 'newest' | 'oldest'
+/** Annotations hub grouping mode. */
+export type AnnotationGroupBy = 'book' | 'color' | 'type' | 'none'
 
 export interface CustomTheme {
   id: string
@@ -62,6 +68,10 @@ export interface AppSettings {
   // When false, colors are purely visual: category chips/exports drop the meaning
   // and swatch tooltips show plain color names. Custom labels are preserved.
   highlightLabelsEnabled: boolean
+  // Annotations hub sort + grouping. Persisted (like defaultSort); the in-view
+  // search/color/theme/book/date filters stay ephemeral.
+  annotationSortBy: AnnotationSortBy
+  annotationGroupBy: AnnotationGroupBy
 }
 
 const CUSTOM_THEME_VARS: Array<[keyof CustomTheme, string]> = [
@@ -90,6 +100,8 @@ const DEFAULTS: AppSettings = {
   llmBaseUrl: 'http://127.0.0.1:11434',
   highlightLabels: DEFAULT_HIGHLIGHT_LABELS,
   highlightLabelsEnabled: true,
+  annotationSortBy: 'title',
+  annotationGroupBy: 'book',
 }
 
 const STORAGE_KEY = 'app-settings'

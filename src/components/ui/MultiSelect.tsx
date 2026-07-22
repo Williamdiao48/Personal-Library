@@ -7,9 +7,17 @@ interface Props {
   options: SelectOption[]
   values: string[]
   onChange: (values: string[]) => void
+  /** Trigger text when nothing is selected. Defaults to a bare "All". */
+  emptyLabel?: string
 }
 
-export default function MultiSelect({ label, options, values, onChange }: Props) {
+export default function MultiSelect({
+  label,
+  options,
+  values,
+  onChange,
+  emptyLabel = 'All',
+}: Props) {
   const triggerRef = useRef<HTMLButtonElement>(null)
 
   function blurTrigger() {
@@ -20,9 +28,9 @@ export default function MultiSelect({ label, options, values, onChange }: Props)
     if (e.key === 'Escape') blurTrigger()
   }
 
-  let triggerText = 'All'
+  let triggerText = emptyLabel
   if (values.length === 1) {
-    triggerText = options.find((o) => o.value === values[0])?.label ?? 'All'
+    triggerText = options.find((o) => o.value === values[0])?.label ?? emptyLabel
   } else if (values.length > 1) {
     triggerText = `${values.length} selected`
   }

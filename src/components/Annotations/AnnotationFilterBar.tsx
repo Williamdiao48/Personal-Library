@@ -3,6 +3,18 @@ import CustomSelect from '../ui/CustomSelect'
 import MultiSelect from '../ui/MultiSelect'
 import { HIGHLIGHT_COLORS } from '../../constants/highlightColors'
 
+export interface BookOption {
+  id: string
+  title: string
+}
+
+const DATE_OPTIONS = [
+  { value: 'all', label: 'All time' },
+  { value: '7d', label: 'Last 7 days' },
+  { value: '30d', label: 'Last 30 days' },
+  { value: '365d', label: 'Last year' },
+]
+
 interface Props {
   query: string
   onQuery: (q: string) => void
@@ -12,6 +24,11 @@ interface Props {
   onThemeFilter: (ids: string[]) => void
   allThemes: AnnotationTheme[]
   labels: Record<HighlightColor, string>
+  bookFilter: string // 'all' | item_id
+  onBookFilter: (id: string) => void
+  books: BookOption[] // books present in the current annotation set
+  dateFilter: string // 'all' | '7d' | '30d' | '365d'
+  onDateFilter: (d: string) => void
 }
 
 /** Search + color-category + theme filters, shared by the in-reader panel and
@@ -25,6 +42,11 @@ export default function AnnotationFilterBar({
   onThemeFilter,
   allThemes,
   labels,
+  bookFilter,
+  onBookFilter,
+  books,
+  dateFilter,
+  onDateFilter,
 }: Props) {
   const colorOptions = [
     { value: 'all', label: 'All colors' },
@@ -35,6 +57,10 @@ export default function AnnotationFilterBar({
     })),
   ]
   const themeOptions = allThemes.map((t) => ({ value: t.id, label: t.name }))
+  const bookOptions = [
+    { value: 'all', label: 'All books' },
+    ...books.map((b) => ({ value: b.id, label: b.title })),
+  ]
 
   return (
     <div className="annotation-filter-bar">
@@ -45,15 +71,38 @@ export default function AnnotationFilterBar({
         placeholder="Search quotes & notes…"
         onChange={(e) => onQuery(e.target.value)}
       />
-      <CustomSelect label="" options={colorOptions} value={colorFilter} onChange={onColorFilter} />
+      <CustomSelect
+        label=""
+        includePlaceholder={false}
+        options={colorOptions}
+        value={colorFilter}
+        onChange={onColorFilter}
+      />
       {themeOptions.length > 0 && (
         <MultiSelect
           label=""
+          emptyLabel="All themes"
           options={themeOptions}
           values={themeFilter}
           onChange={onThemeFilter}
         />
       )}
+      {books.length > 1 && (
+        <CustomSelect
+          label=""
+          includePlaceholder={false}
+          options={bookOptions}
+          value={bookFilter}
+          onChange={onBookFilter}
+        />
+      )}
+      <CustomSelect
+        label=""
+        includePlaceholder={false}
+        options={DATE_OPTIONS}
+        value={dateFilter}
+        onChange={onDateFilter}
+      />
     </div>
   )
 }

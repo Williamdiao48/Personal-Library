@@ -85,6 +85,24 @@
   border-color: var(--accent);
 }
 
+/* Filters on the left (grow), Sort/Group controls pinned right. */
+.annotations-toolbar {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.annotations-toolbar .annotation-filter-bar {
+  flex: 1 1 420px;
+}
+.annotation-sort-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  -webkit-app-region: no-drag;
+}
+
 /* ── Groups + quote cards ─────────────────────────────────────────────────── */
 .annotations-groups {
   padding: 0 24px 64px;
@@ -108,6 +126,22 @@
 }
 .annotations-group-title:hover {
   color: var(--accent);
+}
+/* Non-book group headers (color/type) aren't clickable. */
+.annotations-group-static {
+  cursor: default;
+  display: flex;
+  align-items: center;
+}
+.annotations-group-static:hover {
+  color: var(--text);
+}
+.annotations-group-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin-right: 7px;
 }
 .annotations-group-author {
   font-weight: 400;
