@@ -7,11 +7,7 @@ import type {
   HighlightColor,
 } from '../../types'
 import { annotationsService, annotationThemesService } from '../../services/annotationsService'
-import {
-  useSettings,
-  type AnnotationSortBy,
-  type AnnotationGroupBy,
-} from '../../contexts/SettingsContext'
+import { useSettings, type AnnotationSortBy } from '../../contexts/SettingsContext'
 import { DEFAULT_HIGHLIGHT_COLOR, HIGHLIGHT_COLORS } from '../../constants/highlightColors'
 import AnnotationFilterBar from './AnnotationFilterBar'
 import ThemeEditor from './ThemeEditor'
@@ -23,24 +19,12 @@ import {
 import CustomSelect from '../ui/CustomSelect'
 import '../../styles/annotations.css'
 
-const GROUP_OPTIONS = [
-  { value: 'book', label: 'Group: Book' },
-  { value: 'color', label: 'Group: Color' },
-  { value: 'type', label: 'Group: Type' },
-  { value: 'none', label: 'Group: None' },
-]
-
-// Sort values are stable (title|newest|oldest); the labels reflect what the sort
-// orders at the current grouping level — book sections vs. individual annotations.
-const SORT_OPTIONS_BY_BOOK = [
+// Annotations are always grouped by book; Sort orders the book sections (items
+// inside a book stay in reading order).
+const SORT_OPTIONS = [
   { value: 'title', label: 'Sort: A–Z' },
   { value: 'newest', label: 'Sort: Recently annotated' },
   { value: 'oldest', label: 'Sort: Oldest annotated' },
-]
-const SORT_OPTIONS_FLAT = [
-  { value: 'title', label: 'Sort: Book A–Z' },
-  { value: 'newest', label: 'Sort: Newest' },
-  { value: 'oldest', label: 'Sort: Oldest' },
 ]
 
 function chapterLabel(a: AnnotationWithSource): string | null {
@@ -64,13 +48,11 @@ export default function AnnotationsView() {
   const { settings, updateSettings } = useSettings()
   const labelsEnabled = settings.highlightLabelsEnabled
   const labels = settings.highlightLabels
-  const groupBy = settings.annotationGroupBy
   // Coerce any stale/unknown persisted value (e.g. an old 'location') to 'title'.
   const sortBy: AnnotationSortBy =
     settings.annotationSortBy === 'newest' || settings.annotationSortBy === 'oldest'
       ? settings.annotationSortBy
       : 'title'
-  const sortOptions = groupBy === 'book' ? SORT_OPTIONS_BY_BOOK : SORT_OPTIONS_FLAT
   // When meanings are off, the color filter falls back to plain color names.
   const filterLabels = labelsEnabled
     ? labels
@@ -118,11 +100,8 @@ export default function AnnotationsView() {
     [annotations, query, colorFilter, themeFilter, bookFilter, dateFilter],
   )
 
-  // Sort + bucket per the persisted sort/group prefs.
-  const groups = useMemo(
-    () => groupAnnotations(filtered, groupBy, sortBy),
-    [filtered, groupBy, sortBy],
-  )
+  // Bucket by book, sections ordered per the persisted sort pref.
+  const groups = useMemo(() => groupAnnotations(filtered, sortBy), [filtered, sortBy])
 
   function patchThemes(id: string, themes: AnnotationTheme[]) {
     setAnnotations((prev) => prev.map((a) => (a.id === id ? { ...a, themes } : a)))
@@ -145,45 +124,15 @@ export default function AnnotationsView() {
     await annotationsService.exportQuotes(toExportRows(filtered), format)
   }
 
-  /** Header for a group, per the active grouping. `none` renders no header;
-   *  `book` stays clickable (opens the book), the rest are static labels. */
+  /** Book-section header — clickable, opens the book. */
   function groupHeader(g: AnnotationGroup<AnnotationWithSource>) {
-    if (groupBy === 'none') return null
-    if (groupBy === 'book') {
-      const first = g.rows[0]
-      return (
-        <h2 className="annotations-group-title" onClick={() => navigate(`/read/${first.item_id}`)}>
-          {first.item_title}
-          {first.item_author && (
-            <span className="annotations-group-author"> — {first.item_author}</span>
-          )}
-        </h2>
-      )
-    }
-    if (groupBy === 'type') {
-      return (
-        <h2 className="annotations-group-title annotations-group-static">
-          {g.key === 'highlight' ? 'Highlights' : 'Notes'}
-        </h2>
-      )
-    }
-    // color grouping
-    const isNote = g.key === 'note'
-    const def = HIGHLIGHT_COLORS.find((c) => c.key === g.key)
-    const swatch = isNote ? NOTE_SWATCH : (def?.swatch ?? NOTE_SWATCH)
-    const label = isNote
-      ? 'Notes'
-      : labelsEnabled
-        ? labels[g.key as HighlightColor]
-        : (def?.label ?? g.key)
+    const first = g.rows[0]
     return (
-      <h2 className="annotations-group-title annotations-group-static">
-        <span
-          className="annotations-group-swatch"
-          style={{ background: swatch }}
-          aria-hidden="true"
-        />
-        {label}
+      <h2 className="annotations-group-title" onClick={() => navigate(`/read/${first.item_id}`)}>
+        {first.item_title}
+        {first.item_author && (
+          <span className="annotations-group-author"> — {first.item_author}</span>
+        )}
       </h2>
     )
   }
@@ -236,14 +185,7 @@ export default function AnnotationsView() {
           <CustomSelect
             label=""
             includePlaceholder={false}
-            options={GROUP_OPTIONS}
-            value={groupBy}
-            onChange={(v) => updateSettings({ annotationGroupBy: v as AnnotationGroupBy })}
-          />
-          <CustomSelect
-            label=""
-            includePlaceholder={false}
-            options={sortOptions}
+            options={SORT_OPTIONS}
             value={sortBy}
             onChange={(v) => updateSettings({ annotationSortBy: v as AnnotationSortBy })}
           />

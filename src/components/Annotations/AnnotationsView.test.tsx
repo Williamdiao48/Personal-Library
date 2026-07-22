@@ -19,11 +19,10 @@ vi.mock('../../services/annotationsService', () => ({
   },
 }))
 
-// Mutable so individual tests can flip the color-meaning toggle + sort/group.
+// Mutable so individual tests can flip the color-meaning toggle + sort.
 const settingsState = vi.hoisted(() => ({
   labelsEnabled: true,
   sortBy: 'title' as string,
-  groupBy: 'book' as string,
 }))
 const updateSettings = vi.fn()
 vi.mock('../../contexts/SettingsContext', () => ({
@@ -38,7 +37,6 @@ vi.mock('../../contexts/SettingsContext', () => ({
       },
       highlightLabelsEnabled: settingsState.labelsEnabled,
       annotationSortBy: settingsState.sortBy,
-      annotationGroupBy: settingsState.groupBy,
     },
   }),
 }))
@@ -79,7 +77,6 @@ beforeEach(() => {
   vi.clearAllMocks()
   settingsState.labelsEnabled = true
   settingsState.sortBy = 'title'
-  settingsState.groupBy = 'book'
   getAll.mockResolvedValue([
     ann({ id: 'a1', selected_text: 'So we beat on', item_title: 'Gatsby' }),
     ann({ id: 'a2', selected_text: 'Big Brother is watching', item_title: '1984', item_id: 'b2' }),
@@ -107,42 +104,6 @@ describe('AnnotationsView', () => {
     expect(bar).toHaveStyle({ background: '#a78bfa' })
   })
 
-  it('group by None renders a flat list with no book headers', async () => {
-    settingsState.groupBy = 'none'
-    const { container } = renderView()
-    await waitFor(() => expect(screen.getByText('So we beat on')).toBeInTheDocument())
-    expect(screen.getByText('Big Brother is watching')).toBeInTheDocument()
-    expect(container.querySelectorAll('.annotations-group-title')).toHaveLength(0)
-    expect(screen.queryByText('Gatsby')).toBeNull()
-  })
-
-  it('group by Type buckets highlights and notes under labeled headers', async () => {
-    settingsState.groupBy = 'type'
-    getAll.mockResolvedValue([
-      ann({ id: 'h1', type: 'highlight', selected_text: 'a highlight' }),
-      ann({ id: 'n1', type: 'note', color: null, note_text: 'a note', selected_text: null }),
-    ])
-    renderView()
-    await waitFor(() => expect(screen.getByText('a highlight')).toBeInTheDocument())
-    expect(screen.getByText('Highlights')).toBeInTheDocument()
-    expect(screen.getByText('Notes')).toBeInTheDocument()
-  })
-
-  it('group by Color orders sections in palette order with headers', async () => {
-    settingsState.groupBy = 'color'
-    getAll.mockResolvedValue([
-      ann({ id: 'c1', color: 'blue', selected_text: 'blue one' }),
-      ann({ id: 'c2', color: 'yellow', selected_text: 'yellow one' }),
-    ])
-    const { container } = renderView()
-    await waitFor(() => expect(screen.getByText('blue one')).toBeInTheDocument())
-    const headers = [...container.querySelectorAll('.annotations-group-title')].map(
-      (h) => h.textContent,
-    )
-    // Yellow ("Key quote") before Blue ("Vocabulary") per palette order.
-    expect(headers).toEqual(['Key quote', 'Vocabulary'])
-  })
-
   it('sort Newest ranks book sections by their most-recent annotation', async () => {
     settingsState.sortBy = 'newest'
     getAll.mockResolvedValue([
@@ -157,17 +118,10 @@ describe('AnnotationsView', () => {
     expect(titles).toEqual(['1984', 'Gatsby'])
   })
 
-  it('labels the Sort control for book sections when grouped by book', async () => {
-    renderView() // default: group by book, sort 'title'
+  it('labels the Sort control for book sections', async () => {
+    renderView() // default sort 'title'
     await waitFor(() => expect(screen.getByText('So we beat on')).toBeInTheDocument())
     expect(screen.getByText('Sort: A–Z')).toBeInTheDocument()
-  })
-
-  it('labels the Sort control for annotations when not grouped by book', async () => {
-    settingsState.groupBy = 'none'
-    renderView()
-    await waitFor(() => expect(screen.getByText('So we beat on')).toBeInTheDocument())
-    expect(screen.getByText('Sort: Book A–Z')).toBeInTheDocument()
   })
 
   it('hides category chips and drops export categories when meanings are disabled', async () => {
