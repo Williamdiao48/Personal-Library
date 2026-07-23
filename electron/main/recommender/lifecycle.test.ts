@@ -4,18 +4,25 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // suite stays light + ABI-agnostic (no DB, no transformers). Proves the `armed`
 // guard, the delegation to scheduleBackfill(workerEmbedHost), and worker
 // shutdown — without spawning anything.
-const { scheduleBackfill, shutdownEmbedWorker, workerEmbedHost, schedulePrewarm } = vi.hoisted(
-  () => ({
-    scheduleBackfill: vi.fn(),
-    shutdownEmbedWorker: vi.fn(),
-    workerEmbedHost: { modelVersion: 'test-model', embed: vi.fn() },
-    schedulePrewarm: vi.fn(),
-  }),
-)
+const {
+  scheduleBackfill,
+  cancelBackfill,
+  shutdownEmbedWorker,
+  workerEmbedHost,
+  schedulePrewarm,
+  cancelPrewarm,
+} = vi.hoisted(() => ({
+  scheduleBackfill: vi.fn(),
+  cancelBackfill: vi.fn(),
+  shutdownEmbedWorker: vi.fn(),
+  workerEmbedHost: { modelVersion: 'test-model', embed: vi.fn() },
+  schedulePrewarm: vi.fn(),
+  cancelPrewarm: vi.fn(),
+}))
 
-vi.mock('./backfill', () => ({ scheduleBackfill }))
+vi.mock('./backfill', () => ({ scheduleBackfill, cancelBackfill }))
 vi.mock('../workers/embed-host', () => ({ workerEmbedHost, shutdownEmbedWorker }))
-vi.mock('./prewarm', () => ({ schedulePrewarm }))
+vi.mock('./prewarm', () => ({ schedulePrewarm, cancelPrewarm }))
 
 import {
   armBackfill,
@@ -28,8 +35,10 @@ import {
 beforeEach(() => {
   _resetLifecycle()
   scheduleBackfill.mockReset()
+  cancelBackfill.mockReset()
   shutdownEmbedWorker.mockReset()
   schedulePrewarm.mockReset()
+  cancelPrewarm.mockReset()
 })
 
 describe('backfill lifecycle', () => {
@@ -89,5 +98,34 @@ describe('backfill lifecycle', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(scheduleBackfill).toHaveBeenCalledTimes(1)
+  })
+
+  // M2: turning Discover off must cancel debounce timers scheduled just before
+  // the toggle — otherwise a pending backfill re-forks the ~800 MB worker and a
+  // pending prewarm hits OpenLibrary after "off".
+  it('disarmBackfill cancels pending backfill + prewarm debounce timers (window 1)', async () => {
+    armBackfill()
+    await vi.waitFor(() => expect(scheduleBackfill).toHaveBeenCalledTimes(1))
+
+    disarmBackfill()
+    expect(cancelBackfill).toHaveBeenCalledTimes(1)
+    expect(cancelPrewarm).toHaveBeenCalledTimes(1)
+  })
+
+  // M2 window 2: disarm lands while fire()'s dynamic imports are still in flight,
+  // so there's no timer to cancel yet — the post-await `armed` re-check in fire()
+  // must prevent it from scheduling once the imports resolve.
+  it('a trigger whose import resolves after disarm does not schedule anything', async () => {
+    armBackfill() // arms + kicks fire(); its async body is pending on dynamic import
+    disarmBackfill() // disarm before fire()'s imports resolve
+
+    // Drain the fire() microtask chain (dynamic import + Promise.all).
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // fire() saw !armed after the await and bailed → nothing scheduled.
+    expect(scheduleBackfill).not.toHaveBeenCalled()
+    expect(schedulePrewarm).not.toHaveBeenCalled()
   })
 })

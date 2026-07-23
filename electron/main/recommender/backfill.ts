@@ -126,9 +126,19 @@ export function scheduleBackfill(host: EmbedHost, delayMs = DEBOUNCE_MS): void {
   }, delayMs)
 }
 
-/** Test-only: drop the debounce timer so a pending schedule can't leak across tests. */
-export function _resetBackfillState(): void {
+/**
+ * Cancel a pending debounced backfill so it never fires. Called when Discover is
+ * turned off (lifecycle.disarmBackfill) — otherwise a timer scheduled just before
+ * the toggle would re-fork the worker the user just shut down. Does NOT touch an
+ * already-running pass (its `running` guard settles on its own).
+ */
+export function cancelBackfill(): void {
   if (timer) clearTimeout(timer)
   timer = null
+}
+
+/** Test-only: cancel the debounce timer AND drop the in-flight guard so state can't leak across tests. */
+export function _resetBackfillState(): void {
+  cancelBackfill()
   running = null
 }
