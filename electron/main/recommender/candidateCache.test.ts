@@ -58,7 +58,11 @@ describe('candidateCache', () => {
     it('deletes cache + embedding rows past the retention window, keeps fresh ones', () => {
       writeCandidateCache('fresh', [{ t: 1 }], now - 1000) // recent
       writeCandidateCache('stale', [{ t: 2 }], now - CANDIDATE_RETENTION_MS - 1) // aged out
-      saveCandidateVectors([{ sourceId: '/works/fresh', vec: new Float32Array([1]) }], 'm', now - 1000)
+      saveCandidateVectors(
+        [{ sourceId: '/works/fresh', vec: new Float32Array([1]) }],
+        'm',
+        now - 1000,
+      )
       saveCandidateVectors(
         [{ sourceId: '/works/stale', vec: new Float32Array([2]) }],
         'm',

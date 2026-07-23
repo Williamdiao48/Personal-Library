@@ -82,17 +82,7 @@ export function registerConvertHandlers(): void {
              cover_path, word_count, description, date_saved, date_modified, derived_from)
           VALUES (?, ?, ?, NULL, 'epub', ?, ?, ?, NULL, ?, ?, ?)
         `,
-        ).run(
-          newId,
-          item.title,
-          item.author,
-          epubFile,
-          coverPath,
-          wordCount,
-          now,
-          now,
-          itemId,
-        )
+        ).run(newId, item.title, item.author, epubFile, coverPath, wordCount, now, now, itemId)
 
         // Update FTS index with chapter plain text so converted EPUBs appear in search
         db.prepare(
