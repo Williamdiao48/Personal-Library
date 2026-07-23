@@ -89,7 +89,15 @@ function ensureWorker(): UtilityProcess {
 
   // Crash or clean exit: fail everything in flight and drop the ref so the next
   // request forks a fresh worker.
+  //
+  // `kill()` is async — a worker we intentionally recycled (idle/timeout/quit)
+  // emits `exit` LATER, by which point a new request may already have forked a
+  // replacement. Guard on identity so this stale exit can't null the live worker
+  // or reject its in-flight requests (the bug that orphaned an ~800 MB child and
+  // blanked a Discover refresh). If `c` is no longer current we do nothing: any
+  // requests still owned by `c` fall back to their own per-request timeout.
   c.on('exit', (code) => {
+    if (child !== c) return // superseded by a newer worker — this exit is stale
     child = null
     ready = false
     idle.cancel() // no worker left to time out
@@ -104,9 +112,12 @@ function ensureWorker(): UtilityProcess {
 function embedTexts(texts: string[]): Promise<Float32Array[]> {
   if (texts.length === 0) return Promise.resolve([])
   idle.cancel() // a request is starting — hold off the idle shutdown
-  ensureWorker()
+  const c = ensureWorker()
   const { id, promise } = registry.create<number[][]>(REQUEST_TIMEOUT_MS, () => {
-    // Wedged worker — kill it so the next call respawns.
+    // Wedged worker — kill it so the next call respawns. The timeout fires up to
+    // REQUEST_TIMEOUT_MS later, so re-check identity: if this request's worker was
+    // already recycled and replaced, we must not kill the live successor.
+    if (child !== c) return
     child?.kill()
     child = null
     ready = false
@@ -114,9 +125,15 @@ function embedTexts(texts: string[]): Promise<Float32Array[]> {
   outbox.push({ id, texts })
   flush()
   // Re-arm the idle countdown once this settles and nothing else is in flight.
-  void promise.finally(() => {
-    if (registry.size === 0) idle.schedule()
-  })
+  // This is a separate subscription from the caller-facing chain below, so it must
+  // swallow rejections itself — otherwise a request that rejects (worker crash or
+  // timeout) surfaces as an unhandled rejection here even though the caller handles
+  // its own copy of the error.
+  void promise
+    .catch(() => {})
+    .finally(() => {
+      if (registry.size === 0) idle.schedule()
+    })
   return promise.then((rows) => rows.map((r) => Float32Array.from(r)))
 }
 
