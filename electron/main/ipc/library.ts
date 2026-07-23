@@ -10,6 +10,13 @@ import { safeContentPath, safeUserDataPath } from '../security/paths'
 import type { Item, Tag, RefreshResult } from '../../../src/types'
 import { computeContentHash } from '../util/contentHash'
 import { triggerBackfill } from '../recommender/lifecycle'
+import {
+  indexFtsText,
+  readStoredFtsText,
+  removeFtsIndex,
+  ftsDeleteValuesAsync,
+  type FtsItem,
+} from '../db/ftsText'
 
 /**
  * SEC-2: bound an untrusted rating into the valid domain before it is persisted.
@@ -66,43 +73,56 @@ export function registerLibraryHandlers(): void {
     `)
   })
 
-  ipcMain.handle('library:permanentlyDelete', (_e, id: string) => {
+  ipcMain.handle('library:permanentlyDelete', async (_e, id: string) => {
     const db = getDb()
-    const row = db.prepare('SELECT file_path, cover_path FROM items WHERE id = ?').get(id) as
-      { file_path: string; cover_path: string | null } | undefined
-    // NOTE: items_fts is contentless FTS5; orphaned entries are excluded by the
-    // JOIN on items. No explicit FTS cleanup needed.
-    db.prepare('DELETE FROM items WHERE id = ?').run(id)
-    if (row) {
-      // safeContentPath/safeUserDataPath throw on traversal (F1); the throw is
-      // caught here so a malicious path is simply skipped, never escaping.
+    const item = db
+      .prepare(
+        'SELECT rowid, id, title, author, content_type, file_path, cover_path FROM items WHERE id = ?',
+      )
+      .get(id) as (FtsItem & { rowid: number; cover_path: string | null }) | undefined
+    if (!item) return
+    // Resolve the exact FTS values BEFORE the sync txn (may re-parse a legacy
+    // binary), then remove postings + item + side-table row atomically. Skipping
+    // the FTS cleanup here corrupts search once the freed rowid is reused (H1).
+    const fts = await ftsDeleteValuesAsync(db, item)
+    db.transaction(() => {
+      removeFtsIndex(db, item.rowid, id, fts)
+      db.prepare('DELETE FROM items WHERE id = ?').run(id)
+    })()
+    // safeContentPath/safeUserDataPath throw on traversal (F1); the throw is
+    // caught here so a malicious path is simply skipped, never escaping.
+    try {
+      unlinkSync(safeContentPath(item.file_path))
+    } catch {}
+    if (item.cover_path) {
       try {
-        unlinkSync(safeContentPath(row.file_path))
+        unlinkSync(safeUserDataPath(item.cover_path))
       } catch {}
-      if (row.cover_path) {
-        try {
-          unlinkSync(safeUserDataPath(row.cover_path))
-        } catch {}
-      }
     }
   })
 
-  ipcMain.handle('library:emptyTrash', () => {
+  ipcMain.handle('library:emptyTrash', async () => {
     const db = getDb()
     const rows = db
-      .prepare('SELECT id, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL')
-      .all() as { id: string; file_path: string; cover_path: string | null }[]
-    for (const row of rows) {
+      .prepare(
+        'SELECT rowid, id, title, author, content_type, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL',
+      )
+      .all() as (FtsItem & { rowid: number; cover_path: string | null })[]
+    for (const item of rows) {
+      const fts = await ftsDeleteValuesAsync(db, item)
+      db.transaction(() => {
+        removeFtsIndex(db, item.rowid, item.id, fts)
+        db.prepare('DELETE FROM items WHERE id = ?').run(item.id)
+      })()
       try {
-        unlinkSync(safeContentPath(row.file_path))
+        unlinkSync(safeContentPath(item.file_path))
       } catch {}
-      if (row.cover_path) {
+      if (item.cover_path) {
         try {
-          unlinkSync(safeUserDataPath(row.cover_path))
+          unlinkSync(safeUserDataPath(item.cover_path))
         } catch {}
       }
     }
-    db.prepare('DELETE FROM items WHERE deleted_at IS NOT NULL').run()
   })
 
   ipcMain.handle('library:updateProgress', (_e, id: string, position: number) => {
@@ -413,17 +433,22 @@ export function registerLibraryHandlers(): void {
     const now = Date.now()
     const filePath = safeContentPath(item.file_path)
 
-    // ── Step 5: Read old text for FTS5 delete ─────────────────────────────
+    // ── Step 5: Resolve old text for the FTS5 delete ──────────────────────
     // FTS5 contentless tables require the originally-indexed token values to
-    // correctly decrement the inverted index.  Read the existing file (which
-    // we are about to overwrite) to reconstruct them.
-    let oldText = ''
-    try {
-      const oldHtml = readFileSync(filePath, 'utf8')
-      oldText = new JSDOM(oldHtml).window.document.body?.textContent ?? ''
-    } catch {
-      // Unreadable file — FTS delete is a no-op; stale tokens will be cleaned
-      // up by the next FTS optimize (runs on app quit).
+    // correctly decrement the inverted index. Prefer the exact stored values
+    // (H1/M1); for a legacy item that predates the side table, fall back to
+    // reconstructing them from the existing file (which we're about to overwrite).
+    let oldValues = readStoredFtsText(db, id)
+    if (!oldValues) {
+      let oldText = ''
+      try {
+        const oldHtml = readFileSync(filePath, 'utf8')
+        oldText = new JSDOM(oldHtml).window.document.body?.textContent ?? ''
+      } catch {
+        // Unreadable file — FTS delete degrades to a no-op; stale tokens are
+        // cleaned up by the next FTS optimize (runs on app quit).
+      }
+      oldValues = { title: item.title, author: item.author ?? '', content: oldText }
     }
 
     // ── Step 6: Persist ────────────────────────────────────────────────────
@@ -437,7 +462,7 @@ export function registerLibraryHandlers(): void {
       db.prepare(
         `INSERT INTO items_fts(items_fts, rowid, title, author, content)
          VALUES('delete', ?, ?, ?, ?)`,
-      ).run(item.rowid, item.title, item.author ?? '', oldText)
+      ).run(item.rowid, oldValues.title, oldValues.author, oldValues.content)
 
       db.prepare(`INSERT INTO items_fts(rowid, title, author, content) VALUES(?, ?, ?, ?)`).run(
         item.rowid,
@@ -445,6 +470,7 @@ export function registerLibraryHandlers(): void {
         item.author ?? '',
         newText,
       )
+      indexFtsText(db, id, item.title, item.author, newText)
     })()
 
     triggerBackfill() // content changed → reconcile embedding (C2.6)

@@ -20,6 +20,7 @@ import { assertImportFile } from '../security/validation'
 import { assertHttpUrl, safeFetch } from '../security/net-guard'
 import { parseEpub } from '../workers/parse-host'
 import { extractPdfText } from './pdfText'
+import { indexFtsText, readStoredFtsText } from '../db/ftsText'
 import { computeContentHash } from '../util/contentHash'
 import { persistSourceTags, siteKeyFromUrl } from '../recommender/sourceTags'
 
@@ -175,6 +176,8 @@ async function saveToLibrary(
         SELECT rowid, title, author, ? FROM items WHERE id = ?
       `,
       ).run(textContent, id)
+      // Record the exact indexed text so a later delete/refresh is exact (H1/M1).
+      indexFtsText(db, id, title, author, textContent)
 
       // Native AO3/FFN tags + stats (F1) → recommender tables + hybrid chips (F2).
       // No-op for non-fanfic captures (content.sourceTags is undefined).
@@ -328,10 +331,17 @@ export async function appendChapters(
     newWordCount = combinedText.split(/\s+/).filter(Boolean).length
 
     const now = Date.now()
+    // Exact old-text delete: prefer the stored index row (H1/M1); fall back to the
+    // reconstructed text for a legacy item that predates the side table.
+    const oldValues = readStoredFtsText(db, itemId) ?? {
+      title: item.title,
+      author: item.author ?? '',
+      content: existingText.trim(),
+    }
     db.transaction(() => {
       db.prepare(
         `INSERT INTO items_fts(items_fts, rowid, title, author, content) VALUES('delete', ?, ?, ?, ?)`,
-      ).run(item.rowid, item.title, item.author ?? '', existingText.trim())
+      ).run(item.rowid, oldValues.title, oldValues.author, oldValues.content)
 
       db.prepare(`INSERT INTO items_fts(rowid, title, author, content) VALUES(?, ?, ?, ?)`).run(
         item.rowid,
@@ -339,6 +349,7 @@ export async function appendChapters(
         item.author ?? '',
         combinedText,
       )
+      indexFtsText(db, itemId, item.title, item.author, combinedText)
 
       db.prepare(
         'UPDATE items SET chapter_end = ?, word_count = ?, date_modified = ? WHERE id = ?',
@@ -358,10 +369,15 @@ export async function appendChapters(
   writeFileSync(safeContentPath(item.file_path), combinedHtml, 'utf8')
 
   const now = Date.now()
+  const oldValues = readStoredFtsText(db, itemId) ?? {
+    title: item.title,
+    author: item.author ?? '',
+    content: existingText,
+  }
   db.transaction(() => {
     db.prepare(
       `INSERT INTO items_fts(items_fts, rowid, title, author, content) VALUES('delete', ?, ?, ?, ?)`,
-    ).run(item.rowid, item.title, item.author ?? '', existingText)
+    ).run(item.rowid, oldValues.title, oldValues.author, oldValues.content)
 
     db.prepare(`INSERT INTO items_fts(rowid, title, author, content) VALUES(?, ?, ?, ?)`).run(
       item.rowid,
@@ -369,6 +385,7 @@ export async function appendChapters(
       item.author ?? '',
       combinedText,
     )
+    indexFtsText(db, itemId, item.title, item.author, combinedText)
 
     db.prepare(
       'UPDATE items SET chapter_end = ?, word_count = ?, date_modified = ? WHERE id = ?',
@@ -452,6 +469,7 @@ async function captureEpub(filePath: string): Promise<CaptureResult> {
         SELECT rowid, title, author, ? FROM items WHERE id = ?
       `,
       ).run(plainText, id)
+      indexFtsText(db, id, title, author, plainText) // exact-delete support (H1/M1)
     })()
   } catch (err) {
     try {
@@ -514,6 +532,7 @@ async function capturePdf(filePath: string): Promise<CaptureResult> {
         SELECT rowid, title, author, ? FROM items WHERE id = ?
       `,
       ).run(plainText, id)
+      indexFtsText(db, id, title, null, plainText) // exact-delete support (H1/M1)
     })()
   } catch (err) {
     try {

@@ -54,7 +54,8 @@ afterEach(() => {
   rmSync(userData, { recursive: true, force: true })
 })
 
-// Insert a contentless-FTS row for an item so library:search can MATCH it.
+// Index an item exactly as capture does: a contentless-FTS posting AND the
+// item_fts_index side-table row that makes a later delete exact (H1/M1).
 function indexFts(itemId: string, content: string): void {
   const { rowid, title, author } = db
     .prepare('SELECT rowid, title, author FROM items WHERE id = ?')
@@ -65,6 +66,23 @@ function indexFts(itemId: string, content: string): void {
     author ?? '',
     content,
   )
+  db.prepare('INSERT INTO item_fts_index(item_id, title, author, content) VALUES(?, ?, ?, ?)').run(
+    itemId,
+    title,
+    author ?? '',
+    content,
+  )
+}
+
+// Does a search for `term` return item `id`?
+function searchHits(term: string, id: string): boolean {
+  const rows = db
+    .prepare(
+      `SELECT i.id FROM items_fts f JOIN items i ON i.rowid = f.rowid
+       WHERE items_fts MATCH ? AND i.deleted_at IS NULL`,
+    )
+    .all(term) as { id: string }[]
+  return rows.some((r) => r.id === id)
 }
 
 describe('library IPC — read & trash lifecycle', () => {
@@ -102,6 +120,51 @@ describe('library IPC — read & trash lifecycle', () => {
     seedItem(db, { id: 'trash2', deleted_at: 2 })
     await invoke('library:emptyTrash')
     expect(db.prepare('SELECT id FROM items').all()).toEqual([{ id: 'keep' }])
+  })
+
+  // ── H1 regression: hard-delete must remove FTS postings (contentless FTS5) ──
+  it('permanentlyDelete removes the item’s FTS postings and side-table row', async () => {
+    seedItem(db, { id: 'z', title: 'Z' })
+    indexFts('z', 'zebra unicorn')
+    expect(searchHits('zebra', 'z')).toBe(true)
+
+    await invoke('library:permanentlyDelete', 'z')
+
+    expect(db.prepare('SELECT COUNT(*) n FROM items_fts').get()).toEqual({ n: 0 })
+    expect(db.prepare('SELECT COUNT(*) n FROM item_fts_index').get()).toEqual({ n: 0 })
+  })
+
+  it('search does NOT cross-match a deleted item’s text after its rowid is reused (H1)', async () => {
+    // A takes a rowid and indexes "zebra"; delete it, then B is inserted and
+    // reuses A's just-freed rowid. Without FTS cleanup, "zebra" would resolve to B.
+    const a = seedItem(db, { title: 'A', deleted_at: 1 })
+    indexFts(a, 'zebra')
+    const aRowid = (db.prepare('SELECT rowid FROM items WHERE id = ?').get(a) as { rowid: number })
+      .rowid
+
+    await invoke('library:permanentlyDelete', a)
+
+    const b = seedItem(db, { title: 'B' })
+    const bRowid = (db.prepare('SELECT rowid FROM items WHERE id = ?').get(b) as { rowid: number })
+      .rowid
+    expect(bRowid).toBe(aRowid) // precondition: SQLite reused the freed rowid
+    indexFts(b, 'giraffe')
+
+    expect(searchHits('zebra', b)).toBe(false) // A's stale term must not hit B
+    expect(searchHits('giraffe', b)).toBe(true) // B's own term still works
+    expect(((await invoke('library:search', 'zebra')) as Item[]).length).toBe(0)
+  })
+
+  it('emptyTrash removes FTS postings for every purged row (H1)', async () => {
+    const t1 = seedItem(db, { title: 'T1', deleted_at: 1 })
+    const t2 = seedItem(db, { title: 'T2', deleted_at: 2 })
+    indexFts(t1, 'aardvark')
+    indexFts(t2, 'buffalo')
+
+    await invoke('library:emptyTrash')
+
+    expect(db.prepare('SELECT COUNT(*) n FROM items_fts').get()).toEqual({ n: 0 })
+    expect(db.prepare('SELECT COUNT(*) n FROM item_fts_index').get()).toEqual({ n: 0 })
   })
 })
 
