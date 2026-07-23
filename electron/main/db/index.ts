@@ -5,12 +5,13 @@ import { unlinkSync } from 'fs'
 import { SCHEMA } from './schema'
 import { safeContentPath, safeUserDataPath } from '../security/paths'
 import { removeFtsIndex, ftsDeleteValuesSync, type FtsItem } from './ftsText'
+import { evictStaleCandidates } from '../recommender/candidateCache'
 
 let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 32
+export const CURRENT_VERSION = 33
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -304,6 +305,13 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
       content TEXT NOT NULL DEFAULT ''
     );
   `,
+  // L5 (bug overhaul 2026-07-23): candidate_embeddings had no timestamp, so the
+  // recommendation-candidate caches grew unbounded (a row per unique OL work / fic
+  // URL ever seen). Add `cached_at` so a startup TTL sweep can evict rows untouched
+  // past the retention window (see recommender/candidateCache.ts). Existing rows get
+  // NULL and are swept on first sweep — they just re-embed cheaply on next use.
+  // ALTER-ADD, MIGRATIONS only (never in SCHEMA baseline, per the fresh-install gotcha).
+  33: `ALTER TABLE candidate_embeddings ADD COLUMN cached_at INTEGER;`,
 }
 
 export function initDatabase(): void {
@@ -343,6 +351,12 @@ export function initDatabase(): void {
     }
     db.prepare('DELETE FROM items WHERE id = ?').run(item.id)
   }
+
+  // Bound the recommendation-candidate caches: evict cache/embedding rows untouched
+  // past the retention window so they don't grow unbounded over the app's life (L5).
+  try {
+    evictStaleCandidates(Date.now())
+  } catch {}
 
   // Compact FTS5 segment trees on clean shutdown rather than startup.
   // On large libraries this can take 100–500 ms; deferring it avoids blocking launch.

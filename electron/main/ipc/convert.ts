@@ -1,7 +1,8 @@
 import { ipcMain, app } from 'electron'
-import { join } from 'path'
-import { writeFileSync, unlinkSync, mkdirSync } from 'fs'
+import { join, extname } from 'path'
+import { writeFileSync, unlinkSync, mkdirSync, copyFileSync } from 'fs'
 import { randomUUID } from 'crypto'
+import { safeUserDataPath, safeContentPath } from '../security/paths'
 // epub-gen-memory's CJS build exports the generator at module.exports.default.
 // Using require() avoids Rollup's _interopNamespaceDefault wrapping, which
 // would set .default to the whole module object rather than the function.
@@ -52,6 +53,23 @@ export function registerConvertHandlers(): void {
     const epubPath = join(contentDir, epubFile)
     const now = Date.now()
 
+    // L1 — give the converted EPUB its OWN copy of the cover file. Inheriting the
+    // PDF's cover_path string verbatim shares one file between two items, so
+    // deleting either item (or re-covering one) unlinks the other's cover too. Copy
+    // it under the new id; if the source is missing/unreadable the EPUB just starts
+    // coverless (the reader can set one later).
+    let coverPath: string | null = null
+    if (item.cover_path) {
+      const ext = extname(item.cover_path).slice(1).toLowerCase() || 'jpg'
+      const coverFile = `${newId}-cover.${ext}`
+      try {
+        copyFileSync(safeUserDataPath(item.cover_path), safeContentPath(coverFile))
+        coverPath = `content/${coverFile}`
+      } catch {
+        coverPath = null
+      }
+    }
+
     // Write file + insert DB row atomically
     try {
       db.transaction(() => {
@@ -69,7 +87,7 @@ export function registerConvertHandlers(): void {
           item.title,
           item.author,
           epubFile,
-          item.cover_path,
+          coverPath,
           wordCount,
           now,
           now,
@@ -89,6 +107,10 @@ export function registerConvertHandlers(): void {
       try {
         unlinkSync(epubPath)
       } catch {}
+      if (coverPath)
+        try {
+          unlinkSync(safeContentPath(coverPath.replace(/^content\//, '')))
+        } catch {}
       throw err
     }
 

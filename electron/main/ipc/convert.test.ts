@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { existsSync, mkdtempSync, rmSync } from 'fs'
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
@@ -80,6 +80,41 @@ describe('convert:pdfToEpub', () => {
 
     const hits = db.prepare('SELECT rowid FROM items_fts WHERE items_fts MATCH ?').all('hello')
     expect(hits).toHaveLength(1)
+  })
+
+  it('gives the converted EPUB its OWN copy of the PDF cover, not a shared file (L1)', async () => {
+    const id = seedItem(db, { content_type: 'pdf', cover_path: 'content/pdf-cover.png' })
+    mkdirSync(join(userData, 'content'), { recursive: true })
+    writeFileSync(join(userData, 'content', 'pdf-cover.png'), 'coverbytes')
+
+    const result = (await invoke('convert:pdfToEpub', {
+      itemId: id,
+      chapters: [{ title: 'Ch 1', content: '<p>hi</p>' }],
+    })) as ConvertResult
+
+    const row = db.prepare('SELECT cover_path FROM items WHERE id = ?').get(result.id) as {
+      cover_path: string
+    }
+    // Distinct path under the EPUB's own id — NOT the PDF's shared cover file.
+    expect(row.cover_path).toBe(`content/${result.id}-cover.png`)
+    expect(row.cover_path).not.toBe('content/pdf-cover.png')
+    const copied = join(userData, 'content', `${result.id}-cover.png`)
+    expect(existsSync(copied)).toBe(true)
+    expect(readFileSync(copied, 'utf8')).toBe('coverbytes')
+    // The PDF's original cover is untouched (deleting one won't break the other).
+    expect(existsSync(join(userData, 'content', 'pdf-cover.png'))).toBe(true)
+  })
+
+  it('starts the converted EPUB coverless when the source cover file is missing (L1)', async () => {
+    const id = seedItem(db, { content_type: 'pdf', cover_path: 'content/gone.png' })
+    const result = (await invoke('convert:pdfToEpub', {
+      itemId: id,
+      chapters: [{ title: 'Ch 1', content: '<p>hi</p>' }],
+    })) as ConvertResult
+    const row = db.prepare('SELECT cover_path FROM items WHERE id = ?').get(result.id) as {
+      cover_path: string | null
+    }
+    expect(row.cover_path).toBeNull()
   })
 
   it('succeeds with zero word count for empty chapters', async () => {

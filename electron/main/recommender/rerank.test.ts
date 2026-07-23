@@ -249,6 +249,26 @@ describe('selectByQuota', () => {
     const out = selectByQuota(pool, 3, { book: 2, fic: 1 }, 0.7)
     expect(out.map((s) => s.score)).toEqual([0.9, 0.7, 0.5])
   })
+
+  it('keeps ≤1 book per author when the top-up fills from the book leftovers (L4)', () => {
+    // Same-author books so diversifyBookPicks keeps only one; a tiny fic pool forces
+    // the fic quota to underfill, so the top-up must reach into the remaining books —
+    // and must NOT re-admit another book by the already-picked author.
+    const sameAuthor = (id: string, s: number) =>
+      scored({ cand: cand({ sourceId: id, source: 'book', author: 'Solo Author' }), score: s })
+    const pool = [
+      sameAuthor('b1', 0.9),
+      sameAuthor('b2', 0.85),
+      sameAuthor('b3', 0.8),
+      f('f1', 0.7),
+    ]
+    // Quota wants 2 books + 2 fics, but only 1 fic exists → top-up would otherwise
+    // pull a second 'Solo Author' book to reach k=4.
+    const out = selectByQuota(pool, 4, { book: 2, fic: 2 }, 0.7)
+    const books = out.filter((s) => s.cand.source === 'book')
+    expect(books).toHaveLength(1) // never two by the same author
+    expect(books[0].cand.author).toBe('Solo Author')
+  })
 })
 
 // ── diversifyBookPicks (pure — author diversity, favor new authors) ──────────

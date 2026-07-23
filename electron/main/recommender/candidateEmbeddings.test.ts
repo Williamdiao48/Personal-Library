@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { openTestDb, closeTestDb } from '../../../test/db/harness'
+import { getDb } from '../db'
 import { loadCandidateVectors, saveCandidateVectors } from './candidateEmbeddings'
 
 // candidateEmbeddings imports the db singleton → Node ABI (openTestDb).
@@ -41,5 +42,20 @@ describe('candidateEmbeddings cache', () => {
 
   it('returns an empty map for no ids', () => {
     expect(loadCandidateVectors([], 'm1').size).toBe(0)
+  })
+
+  it('stamps cached_at on write so the TTL sweep can age rows out (L5)', () => {
+    saveCandidateVectors([{ sourceId: '/works/A', vec: new Float32Array([1]) }], 'm1', 5000)
+    const db = getDb()
+    const row = db
+      .prepare(`SELECT cached_at FROM candidate_embeddings WHERE source_id = ?`)
+      .get('/works/A') as { cached_at: number }
+    expect(row.cached_at).toBe(5000)
+    // Re-use refreshes cached_at so an actively-served vector never expires.
+    saveCandidateVectors([{ sourceId: '/works/A', vec: new Float32Array([2]) }], 'm1', 9000)
+    const row2 = db
+      .prepare(`SELECT cached_at FROM candidate_embeddings WHERE source_id = ?`)
+      .get('/works/A') as { cached_at: number }
+    expect(row2.cached_at).toBe(9000)
   })
 })
