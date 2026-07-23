@@ -29,6 +29,7 @@ import AnnotationContextMenu from './AnnotationContextMenu'
 import NotePopover from './NotePopover'
 import type { Item, ConvertChapter, Annotation, AnnotationTheme, HighlightColor } from '../../types'
 import ConvertProgress from './ConvertProgress'
+import '../../styles/reader.css' // .pdf-* layout rules + .hiddenCanvasElement neutralizer
 import '../../styles/epub-reader.css'
 
 const SAVE_DEBOUNCE_MS = 600

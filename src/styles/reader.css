@@ -112,6 +112,23 @@
 
 /* ── PDF reader ─────────────────────────────────────────────── */
 
+/* pdf.js's TextLayer appends a <canvas class="hiddenCanvasElement"> to
+   document.body for text measurement and keeps it there for reuse. A bare
+   inline <canvas> generates an ~18px line box at the end of <body>, making the
+   document 18px scrollable — enough that the scroll-mode position-restore's
+   scrollIntoView() displaces the whole reader shell up 18px on the second open,
+   exposing a band of the app-theme background beneath it. We don't import
+   pdf.js's viewer stylesheet, so we replicate its own neutralizing rule here
+   (measureText works fine on a display:none canvas). */
+.hiddenCanvasElement {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 .pdf-reader {
   flex: 1;
   display: flex;
