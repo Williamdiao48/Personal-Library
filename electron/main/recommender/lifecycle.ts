@@ -16,25 +16,33 @@
 // spawn a worker.
 
 let armed = false
-// Cached once the deps have been dynamically imported, so shutdown can reference
-// the SAME embed-host module instance (and its worker child) without a second
-// import at quit time.
+// Cached once the deps have been dynamically imported, so shutdown/disarm can
+// reference the SAME module instances (and the embed-host's worker child + the
+// backfill/prewarm debounce timers) without a second import.
 let embedHostMod: typeof import('../workers/embed-host') | null = null
+let backfillMod: typeof import('./backfill') | null = null
+let prewarmMod: typeof import('./prewarm') | null = null
 
 function fire(): void {
   void (async () => {
-    const [{ scheduleBackfill }, embedHost, { schedulePrewarm }] = await Promise.all([
+    const [backfill, embedHost, prewarm] = await Promise.all([
       import('./backfill'),
       import('../workers/embed-host'),
       import('./prewarm'),
     ])
     embedHostMod = embedHost
-    scheduleBackfill(embedHost.workerEmbedHost)
+    backfillMod = backfill
+    prewarmMod = prewarm
+    // Re-check after the async import gap: if Discover was disarmed while these
+    // dynamic imports were resolving, scheduling here would set timers *after*
+    // disarmBackfill already ran — re-forking the worker the user just disabled.
+    if (!armed) return
+    backfill.scheduleBackfill(embedHost.workerEmbedHost)
     // Same "content changed" signal warms Discover's OpenLibrary blurb cache on idle,
     // so the description N+1 never lands on a user Refresh. Debounced independently;
     // no worker, no embedding — just the network caches. Gated by `armed` (Discover
     // off ⇒ no prewarm), same as backfill.
-    schedulePrewarm()
+    prewarm.schedulePrewarm()
   })().catch((err) => console.error('[backfill] trigger failed:', err))
 }
 
@@ -61,6 +69,12 @@ export function armBackfill(): void {
  */
 export function disarmBackfill(): void {
   armed = false
+  // Cancel any debounce timers scheduled just before the toggle, so nothing
+  // re-forks the worker (backfill) or hits OpenLibrary (prewarm) after "off".
+  // The post-await `armed` guard in fire() covers the case where an import is
+  // still in flight; these cover the case where the timer is already set.
+  backfillMod?.cancelBackfill()
+  prewarmMod?.cancelPrewarm()
   embedHostMod?.shutdownEmbedWorker()
 }
 
@@ -76,4 +90,6 @@ export function shutdownBackfill(): void {
 export function _resetLifecycle(): void {
   armed = false
   embedHostMod = null
+  backfillMod = null
+  prewarmMod = null
 }

@@ -65,9 +65,19 @@ export function schedulePrewarm(delayMs = PREWARM_DEBOUNCE_MS): void {
   }, delayMs)
 }
 
-/** Test-only: drop the debounce timer + in-flight guard so state can't leak across tests. */
-export function _resetPrewarmState(): void {
+/**
+ * Cancel a pending debounced prewarm so it never fires. Called when Discover is
+ * turned off (lifecycle.disarmBackfill) — otherwise a timer scheduled just before
+ * the toggle would issue OpenLibrary fetches after the user disabled the feature.
+ * Does NOT touch an already-running pass (its `running` guard settles on its own).
+ */
+export function cancelPrewarm(): void {
   if (timer) clearTimeout(timer)
   timer = null
+}
+
+/** Test-only: cancel the debounce timer AND drop the in-flight guard so state can't leak across tests. */
+export function _resetPrewarmState(): void {
+  cancelPrewarm()
   running = null
 }

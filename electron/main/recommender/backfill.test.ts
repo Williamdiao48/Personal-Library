@@ -7,7 +7,7 @@ import {
   tagItem,
   type TestDb,
 } from '../../../test/db/harness'
-import { runBackfill, scheduleBackfill, _resetBackfillState } from './backfill'
+import { runBackfill, scheduleBackfill, cancelBackfill, _resetBackfillState } from './backfill'
 import { getEmbedding, getAllEmbeddingMeta, upsertEmbedding } from './store'
 import { itemMetadataText } from './embeddingText'
 import { embeddingContentHash } from './embeddingCodec'
@@ -215,5 +215,21 @@ describe('scheduleBackfill', () => {
 
     expect(host.calls.sort()).toEqual(['A', 'B'])
     expect(getAllEmbeddingMeta()).toHaveLength(2)
+  })
+
+  // M2: cancelBackfill (called on Discover-off) drops a pending debounce so the
+  // worker is never re-forked after the feature was disabled.
+  it('cancelBackfill stops a pending scheduled backfill from running', async () => {
+    const db = openTestDb()
+    seedItem(db, { title: 'A' })
+    const host = stubHost()
+
+    vi.useFakeTimers()
+    scheduleBackfill(host, 1000)
+    cancelBackfill()
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(host.calls).toEqual([]) // debounce was cancelled → no embed pass
+    expect(getAllEmbeddingMeta()).toHaveLength(0)
   })
 })

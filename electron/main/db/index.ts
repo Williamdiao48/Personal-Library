@@ -4,12 +4,13 @@ import { join } from 'path'
 import { unlinkSync } from 'fs'
 import { SCHEMA } from './schema'
 import { safeContentPath, safeUserDataPath } from '../security/paths'
+import { removeFtsIndex, ftsDeleteValuesSync, type FtsItem } from './ftsText'
 
 let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 31
+export const CURRENT_VERSION = 32
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -288,6 +289,21 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   // NULL for annotations created before this migration (the hub falls back to the
   // native chapter/page label). Added via MIGRATIONS only, never in SCHEMA.
   31: `ALTER TABLE annotations ADD COLUMN book_fraction REAL DEFAULT NULL;`,
+  // H1/M1 (bug overhaul 2026-07-23): items_fts is a CONTENTLESS FTS5 table, so
+  // removing a row's postings needs the EXACT indexed (title, author, content) —
+  // there's no delete-by-rowid. item_fts_index mirrors exactly what was written to
+  // items_fts at each insert, so hard-deletes/refreshes can issue an exact 'delete'
+  // (previously deletes skipped FTS cleanup → rowid reuse returned wrong search
+  // hits). Legacy items have no row and are reconstructed on demand (see
+  // db/ftsText.ts). New table — MIGRATIONS only, never in SCHEMA.
+  32: `
+    CREATE TABLE IF NOT EXISTS item_fts_index (
+      item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+      title   TEXT NOT NULL DEFAULT '',
+      author  TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL DEFAULT ''
+    );
+  `,
 }
 
 export function initDatabase(): void {
@@ -309,19 +325,23 @@ export function initDatabase(): void {
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
   const stale = db
     .prepare(
-      `SELECT id, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL AND deleted_at < ?`,
+      `SELECT rowid, id, title, author, content_type, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL AND deleted_at < ?`,
     )
-    .all(cutoff) as { id: string; file_path: string; cover_path: string | null }[]
-  for (const row of stale) {
+    .all(cutoff) as (FtsItem & { rowid: number; cover_path: string | null })[]
+  for (const item of stale) {
+    // Remove FTS postings too (H1) — else the freed rowid is reused with stale
+    // search terms. Sync resolver: exact for stored/HTML rows; a legacy EPUB/PDF
+    // that sat in trash 30 days degrades to a title/author-only delete (rare).
+    removeFtsIndex(db, item.rowid, item.id, ftsDeleteValuesSync(db, item))
     try {
-      unlinkSync(safeContentPath(row.file_path))
+      unlinkSync(safeContentPath(item.file_path))
     } catch {}
-    if (row.cover_path) {
+    if (item.cover_path) {
       try {
-        unlinkSync(safeUserDataPath(row.cover_path))
+        unlinkSync(safeUserDataPath(item.cover_path))
       } catch {}
     }
-    db.prepare('DELETE FROM items WHERE id = ?').run(row.id)
+    db.prepare('DELETE FROM items WHERE id = ?').run(item.id)
   }
 
   // Compact FTS5 segment trees on clean shutdown rather than startup.

@@ -9,6 +9,7 @@ type EpubGen = (opts: object, chapters: object[]) => Promise<Buffer>
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const epub = (require('epub-gen-memory') as { default: EpubGen }).default
 import { get, getDb } from '../db'
+import { indexFtsText } from '../db/ftsText'
 import type { Item, ConvertPayload, ConvertResult } from '../../../src/types'
 
 export function registerConvertHandlers(): void {
@@ -82,6 +83,7 @@ export function registerConvertHandlers(): void {
           SELECT rowid, title, author, ? FROM items WHERE id = ?
         `,
         ).run(plainText, newId)
+        indexFtsText(db, newId, item.title, item.author, plainText) // exact-delete support (H1/M1)
       })()
     } catch (err) {
       try {

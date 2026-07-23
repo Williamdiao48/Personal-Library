@@ -12,7 +12,7 @@ const { buildTaste, prewarmBooks } = vi.hoisted(() => ({
 vi.mock('./taste', () => ({ buildTaste }))
 vi.mock('./sources/openLibrary', () => ({ prewarmBooks }))
 
-import { runPrewarm, schedulePrewarm, _resetPrewarmState } from './prewarm'
+import { runPrewarm, schedulePrewarm, cancelPrewarm, _resetPrewarmState } from './prewarm'
 
 const liked = [{ id: 'a', weight: 1 }]
 
@@ -73,6 +73,20 @@ describe('discover blurb prewarm', () => {
       expect(prewarmBooks).not.toHaveBeenCalled() // still waiting out the debounce
       await vi.advanceTimersByTimeAsync(1000)
       expect(prewarmBooks).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // M2: cancelPrewarm (called on Discover-off) drops a pending debounce so the
+  // scheduled fetch never fires after the feature was disabled.
+  it('cancelPrewarm stops a pending scheduled prewarm from firing', async () => {
+    vi.useFakeTimers()
+    try {
+      schedulePrewarm(1000)
+      cancelPrewarm()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(prewarmBooks).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
