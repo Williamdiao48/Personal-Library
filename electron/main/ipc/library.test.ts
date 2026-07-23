@@ -535,6 +535,50 @@ describe('library IPC — refresh', () => {
     expect(triggerBackfill).toHaveBeenCalled()
   })
 
+  // ── M1 regression: refresh must delete the OLD postings exactly (from the
+  // stored index values, not text re-derived from sanitized HTML), so old-only
+  // tokens stop matching and search accuracy doesn't drift across refreshes. ──
+  it('full re-scrape removes old-only FTS tokens and does not drift over repeated refreshes', async () => {
+    ;(globalThis.fetch as Mock).mockRejectedValue(new Error('HEAD failed')) // headChanged → proceed
+    seedItem(db, {
+      id: 'drift',
+      source_url: 'https://x',
+      file_path: 'drift.html',
+      content_hash: 'stale',
+      word_count: 2,
+    })
+    // Divergence is the whole point of M1: the tokens ORIGINALLY indexed
+    // (article.textContent) differ from what re-parsing the sanitized HTML file
+    // yields. So the stored index text is the real tokens, but the on-disk file
+    // reconstructs to something else — only the stored-value delete path removes
+    // the real postings. If refresh ever regresses to reconstructing from the
+    // file, `wolverine` survives and the first assertion below fails.
+    writeFileSync(join(CONTENT_DIR, 'drift.html'), '<p>sanitized divergent markup</p>')
+    indexFts('drift', 'wolverine badger') // the real originally-indexed tokens
+    expect(searchHits('wolverine', 'drift')).toBe(true)
+
+    // Refresh 1: wolverine/badger → penguin dolphin.
+    mockRefreshContent.mockResolvedValue({
+      html: '<p>penguin dolphin</p>',
+      textContent: 'penguin dolphin',
+    })
+    expect((await invoke('library:refresh', 'drift')).changed).toBe(true)
+    expect(searchHits('wolverine', 'drift')).toBe(false) // old posting exactly removed
+    expect(searchHits('badger', 'drift')).toBe(false)
+    expect(searchHits('penguin', 'drift')).toBe(true) // new posting present
+
+    // Refresh 2: penguin/dolphin → aardvark. The old-text delete must use the
+    // values stored by refresh 1 (not a reconstruction), or penguin lingers.
+    mockRefreshContent.mockResolvedValue({
+      html: '<p>aardvark</p>',
+      textContent: 'aardvark',
+    })
+    expect((await invoke('library:refresh', 'drift')).changed).toBe(true)
+    expect(searchHits('penguin', 'drift')).toBe(false) // no residual from refresh 1
+    expect(searchHits('dolphin', 'drift')).toBe(false)
+    expect(searchHits('aardvark', 'drift')).toBe(true)
+  })
+
   it('falls through to a full re-scrape when getChapterCount is null (unsupported parser)', async () => {
     seedItem(db, {
       id: 'null-cc',
