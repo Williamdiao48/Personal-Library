@@ -1,5 +1,5 @@
-import { ipcMain, app, dialog } from 'electron'
-import { join, extname } from 'path'
+import { ipcMain, dialog } from 'electron'
+import { extname } from 'path'
 import { unlinkSync, writeFileSync, copyFileSync, readFileSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { JSDOM } from 'jsdom'
@@ -268,7 +268,6 @@ export function registerLibraryHandlers(): void {
   // Save raw image bytes as cover (called by PdfReader after rendering page 1).
   ipcMain.handle('library:setCover', async (_e, id: string, data: ArrayBuffer, ext: string) => {
     if (!['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) return null
-    const userData = app.getPath('userData')
     const db = getDb()
 
     // Remove any existing cover file first
@@ -281,7 +280,9 @@ export function registerLibraryHandlers(): void {
 
     const buf = Buffer.from(data)
     const coverFile = `${id}-cover.${ext}`
-    writeFileSync(join(userData, 'content', coverFile), buf)
+    // Route through safeContentPath so a crafted `id` can't escape content/ (L2 —
+    // every other file op already uses this guard; the write path was the gap).
+    writeFileSync(safeContentPath(coverFile), buf)
     const coverPath = `content/${coverFile}`
 
     db.prepare('UPDATE items SET cover_path = ?, date_modified = ? WHERE id = ?').run(
@@ -297,7 +298,7 @@ export function registerLibraryHandlers(): void {
       .all(id) as { id: string }[]
     for (const { id: derivedId } of derived) {
       const derivedFile = `${derivedId}-cover.${ext}`
-      writeFileSync(join(userData, 'content', derivedFile), buf)
+      writeFileSync(safeContentPath(derivedFile), buf)
       db.prepare('UPDATE items SET cover_path = ?, date_modified = ? WHERE id = ?').run(
         `content/${derivedFile}`,
         Date.now(),
@@ -491,7 +492,6 @@ export function registerLibraryHandlers(): void {
     const ext = extname(src).slice(1).toLowerCase()
     if (!['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) return null
 
-    const userData = app.getPath('userData')
     const db = getDb()
 
     const row = db.prepare('SELECT cover_path FROM items WHERE id = ?').get(id) as
@@ -502,7 +502,7 @@ export function registerLibraryHandlers(): void {
       } catch {}
 
     const coverFile = `${id}-cover.${ext}`
-    copyFileSync(src, join(userData, 'content', coverFile))
+    copyFileSync(src, safeContentPath(coverFile)) // guard a crafted id (L2)
     const coverPath = `content/${coverFile}`
 
     db.prepare('UPDATE items SET cover_path = ?, date_modified = ? WHERE id = ?').run(

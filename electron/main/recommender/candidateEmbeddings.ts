@@ -28,19 +28,23 @@ export function loadCandidateVectors(
   return map
 }
 
-/** Upsert a batch of candidate vectors under the current model. */
+/** Upsert a batch of candidate vectors under the current model. `cached_at` stamps
+ *  each write so the startup TTL sweep (evictStaleCandidates, L5) can age rows out;
+ *  a re-use refreshes it so an actively-served vector never expires. */
 export function saveCandidateVectors(
   entries: { sourceId: string; vec: Float32Array }[],
   modelVersion: string,
+  now: number = Date.now(),
 ): void {
   for (const e of entries) {
     run(
-      `INSERT INTO candidate_embeddings (source_id, embedding, model_version)
-       VALUES (?, ?, ?)
+      `INSERT INTO candidate_embeddings (source_id, embedding, model_version, cached_at)
+       VALUES (?, ?, ?, ?)
        ON CONFLICT(source_id) DO UPDATE SET
          embedding     = excluded.embedding,
-         model_version = excluded.model_version`,
-      [e.sourceId, encodeVector(e.vec), modelVersion],
+         model_version = excluded.model_version,
+         cached_at     = excluded.cached_at`,
+      [e.sourceId, encodeVector(e.vec), modelVersion, now],
     )
   }
 }

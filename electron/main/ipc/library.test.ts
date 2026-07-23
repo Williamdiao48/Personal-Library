@@ -414,6 +414,13 @@ describe('library IPC — cover images', () => {
     expect(existsSync(join(CONTENT_DIR, 'derived-cover.png'))).toBe(true)
   })
 
+  it('setCover refuses a crafted id that would escape the content dir (L2)', async () => {
+    seedItem(db, { id: '../../evil' })
+    await expect(
+      invoke('library:setCover', '../../evil', new Uint8Array([1]).buffer, 'png'),
+    ).rejects.toThrow(/invalid content path/i)
+  })
+
   it('setCover removes a pre-existing cover file before writing the new one', async () => {
     seedItem(db, { id: 'c2', cover_path: 'content/c2-cover.png' })
     writeFileSync(join(CONTENT_DIR, 'c2-cover.png'), 'old')

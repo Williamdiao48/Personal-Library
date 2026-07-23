@@ -33,3 +33,25 @@ export function writeCandidateCache(key: string, payload: unknown, now: number):
     [key, JSON.stringify(payload), now],
   )
 }
+
+// Retention window for the recommendation-candidate caches (L5). Both tables hold
+// re-derivable data — a cache miss just re-scrapes (candidate_cache) or re-embeds
+// (candidate_embeddings) — so a row untouched for this long is almost certainly a
+// query/candidate the reader no longer surfaces; evicting it bounds slow growth.
+export const CANDIDATE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+
+/**
+ * Delete candidate_cache + candidate_embeddings rows older than the retention
+ * window (called once at startup, alongside the trash purge). candidate_embeddings
+ * rows written before migration 33 have a NULL `cached_at` and are swept too — they
+ * re-embed cheaply on next use. Returns the total rows removed.
+ */
+export function evictStaleCandidates(now: number, ttlMs = CANDIDATE_RETENTION_MS): number {
+  const cutoff = now - ttlMs
+  const cache = run(`DELETE FROM candidate_cache WHERE fetched_at < ?`, [cutoff])
+  const embeddings = run(
+    `DELETE FROM candidate_embeddings WHERE cached_at IS NULL OR cached_at < ?`,
+    [cutoff],
+  )
+  return cache.changes + embeddings.changes
+}

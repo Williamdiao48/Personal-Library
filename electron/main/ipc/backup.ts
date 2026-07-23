@@ -104,25 +104,44 @@ export function registerBackupHandlers(): void {
       testDb?.close()
     }
 
-    // Close the live DB before overwriting
+    // Close the live DB before overwriting. Everything below runs with NO open DB
+    // connection, so a throw here would previously strand the app on a dead/half-
+    // swapped DB with no in-process recovery (L3). Two guards fix that: (1) copy the
+    // current DB aside first so a mid-swap failure can roll it back, and (2) ALWAYS
+    // relaunch in `finally` — a relaunch re-opens a fresh connection from whatever
+    // ended up on disk, so the user restarts into a working library (rolled-back on
+    // failure, imported on success) instead of a hung app.
     closeDb()
 
-    // Overwrite current data
-    cpSync(tmpDbPath, dbPath, { force: true })
+    const dbBackup = `${dbPath}.pre-import`
+    try {
+      if (existsSync(dbPath)) cpSync(dbPath, dbBackup, { force: true })
 
-    if (existsSync(contentDir)) rmSync(contentDir, { recursive: true, force: true })
+      // Overwrite current data
+      cpSync(tmpDbPath, dbPath, { force: true })
 
-    const tmpContentDir = join(tmpDir, 'content')
-    if (existsSync(tmpContentDir)) {
-      renameSync(tmpContentDir, contentDir)
-    } else {
-      mkdirSync(contentDir, { recursive: true })
+      if (existsSync(contentDir)) rmSync(contentDir, { recursive: true, force: true })
+
+      const tmpContentDir = join(tmpDir, 'content')
+      if (existsSync(tmpContentDir)) {
+        renameSync(tmpContentDir, contentDir)
+      } else {
+        mkdirSync(contentDir, { recursive: true })
+      }
+
+      rmSync(dbBackup, { force: true })
+      rmSync(tmpDir, { recursive: true, force: true })
+    } catch (err) {
+      // Roll the DB back to the pre-import copy if it survived. Content may be
+      // partial, but the relaunch below re-opens a valid DB rather than a dead one.
+      console.error('[backup:import] import failed after DB close; rolling back DB', err)
+      try {
+        if (existsSync(dbBackup)) cpSync(dbBackup, dbPath, { force: true })
+      } catch {}
+    } finally {
+      // Relaunch so the app reinitialises the DB connection and React state.
+      app.relaunch()
+      app.exit(0)
     }
-
-    rmSync(tmpDir, { recursive: true, force: true })
-
-    // Relaunch so the app reinitialises the DB connection and React state
-    app.relaunch()
-    app.exit(0)
   })
 }

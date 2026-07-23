@@ -315,7 +315,24 @@ export function selectByQuota(
 
   if (picked.length < k) {
     const takenIds = new Set(picked.map((s) => s.cand.sourceId))
-    const rest = scored.filter((s) => !takenIds.has(s.cand.sourceId))
+    // Preserve the ≤1-book-per-author invariant THROUGH the top-up (L4). The book
+    // bucket enforces it in diversifyBookPicks, but a plain mmrSelect over the raw
+    // leftovers can re-introduce a second book by an author already picked (or two
+    // brand-new books by the same author). Walk the leftovers score-first, dropping
+    // any book whose author is already represented. Fics are unconstrained.
+    const seenAuthors = new Set(
+      picked.filter((s) => bucketOf(s.cand.source) === 'book').map((s) => authorKey(s.cand.author)),
+    )
+    const rest: ScoredCandidate[] = []
+    for (const s of [...scored].sort((a, b) => b.score - a.score)) {
+      if (takenIds.has(s.cand.sourceId)) continue
+      if (bucketOf(s.cand.source) === 'book') {
+        const ak = authorKey(s.cand.author)
+        if (seenAuthors.has(ak)) continue
+        seenAuthors.add(ak)
+      }
+      rest.push(s)
+    }
     picked.push(...mmrSelect(rest, k - picked.length, lambda))
   }
   return picked.sort((a, b) => b.score - a.score)
