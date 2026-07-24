@@ -51,7 +51,14 @@ function ensureWorker(): UtilityProcess {
 
   // Crash or clean exit: fail everything in flight and drop the ref so the next
   // request forks a fresh worker.
+  //
+  // `kill()` is async — a worker we intentionally recycled (request timeout or
+  // quit) emits `exit` LATER, by which point a new request may already have
+  // forked a replacement. Guard on identity so this stale exit can't null the
+  // live worker or reject its in-flight parse (mirrors embed-host's H2 fix). A
+  // current worker's real crash still runs the full cleanup below.
   c.on('exit', (code) => {
+    if (child !== c) return // superseded by a newer worker — this exit is stale
     child = null
     ready = false
     registry.rejectAll(new Error(`Parse worker exited (code ${code})`))
@@ -62,9 +69,12 @@ function ensureWorker(): UtilityProcess {
 }
 
 export function parseEpub(filePath: string): Promise<EpubParseResult> {
-  ensureWorker()
+  const c = ensureWorker()
   const { id, promise } = registry.create<EpubParseResult>(REQUEST_TIMEOUT_MS, () => {
-    // Wedged worker — kill it so the next call respawns.
+    // Wedged worker — kill it so the next call respawns. The timeout fires up to
+    // REQUEST_TIMEOUT_MS later, so re-check identity: if this request's worker was
+    // already recycled and replaced, we must not kill the live successor.
+    if (child !== c) return
     child?.kill()
     child = null
     ready = false
