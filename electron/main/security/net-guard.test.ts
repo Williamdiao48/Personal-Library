@@ -25,8 +25,15 @@ describe('isPrivateAddress', () => {
     'fc00::1',
     'fd12:3456::1',
     'fe80::1',
+    'fea0::1', // fe80::/10 link-local (upper half — missed by the old startsWith('fe80:'))
     'ff02::1', // multicast
-    '::ffff:127.0.0.1', // IPv4-mapped loopback
+    '::ffff:127.0.0.1', // IPv4-mapped loopback (dotted)
+    // Hex-serialized IPv4-mapped forms — exactly what `new URL().hostname` emits,
+    // which the previous dotted-only regex silently classified as PUBLIC (T1-2).
+    '::ffff:7f00:1', // 127.0.0.1
+    '::ffff:a9fe:a9fe', // 169.254.169.254 (cloud metadata)
+    '::ffff:a00:5', // 10.0.0.5
+    '::ffff:c0a8:101', // 192.168.1.1
   ]
   const PUBLIC = [
     '8.8.8.8',
@@ -77,6 +84,22 @@ describe('assertPublicHttpUrl (IP-literal hosts, no DNS)', () => {
   })
   it('accepts a public IP literal', async () => {
     await expect(assertPublicHttpUrl('http://8.8.8.8/')).resolves.toBeUndefined()
+  })
+
+  // T1-2 regression: `new URL()` re-serializes an IPv4-mapped literal to its hex
+  // tail (`[::ffff:127.0.0.1]` → hostname `::ffff:7f00:1`), so a dotted-only
+  // classifier let `http://[::ffff:169.254.169.254]/` reach cloud metadata. These
+  // exercise the real end-to-end path (URL parse → classify), not just the helper.
+  it('rejects IPv4-mapped IPv6 literals that wrap a private/internal address', async () => {
+    await expect(assertPublicHttpUrl('http://[::ffff:127.0.0.1]/')).rejects.toThrow(/private/)
+    await expect(
+      assertPublicHttpUrl('http://[::ffff:169.254.169.254]/latest/meta-data'),
+    ).rejects.toThrow(/private/)
+    await expect(assertPublicHttpUrl('http://[::ffff:10.0.0.5]/')).rejects.toThrow(/private/)
+    await expect(assertPublicHttpUrl('http://[::ffff:192.168.1.1]/')).rejects.toThrow(/private/)
+  })
+  it('still accepts an IPv4-mapped IPv6 literal wrapping a public address', async () => {
+    await expect(assertPublicHttpUrl('http://[::ffff:8.8.8.8]/')).resolves.toBeUndefined()
   })
 })
 

@@ -49,6 +49,7 @@ import { captureUniversal } from './sites/universal'
 import { fetchPage } from './fetch'
 import { safeFetch } from '../security/net-guard'
 import { parseEpub } from '../workers/parse-host'
+import * as ftsText from '../db/ftsText'
 import { openTestDb, closeTestDb, seedItem, type TestDb } from '../../../test/db/harness'
 
 const USERDATA = '/tmp/pl-test-userdata' // matches test/stubs/electron.ts app.getPath('userData')
@@ -413,6 +414,51 @@ describe('appendChapters — per-chapter file format', () => {
 
     const hit = db.prepare('SELECT rowid FROM items_fts WHERE items_fts MATCH ?').get('three')
     expect(hit).toBeTruthy()
+  })
+
+  // T1-3 regression: the new chapter files are written before the DB transaction,
+  // so a txn failure must roll them back — otherwise orphaned -chN.html files
+  // inflate the next append's chapter count and duplicate chapters. Force the txn
+  // to throw (via indexFtsText) after the files are written.
+  it('rolls back newly written chapter files when the append transaction fails', async () => {
+    const id = seedItem(db, {
+      title: 'Serial',
+      source_url: 'https://www.royalroad.com/fiction/1',
+      file_path: 'rbbase-ch0.html',
+    })
+    db.prepare('UPDATE items SET chapter_start = 1, chapter_end = 2 WHERE id = ?').run(id)
+    writeFileSync(
+      join(CONTENT, 'rbbase-ch0.html'),
+      '<div class="chapter"><p>zero</p></div>',
+      'utf8',
+    )
+    writeFileSync(join(CONTENT, 'rbbase-ch1.html'), '<div class="chapter"><p>one</p></div>', 'utf8')
+    db.prepare(
+      'INSERT INTO items_fts (rowid, title, author, content) SELECT rowid, title, author, ? FROM items WHERE id = ?',
+    ).run('zero one', id)
+
+    vi.mocked(captureRoyalRoad).mockResolvedValue(
+      siteContent({
+        html: '<div class="chapter"><p>two</p></div>',
+        textContent: 'two',
+      }),
+    )
+
+    // Make the transaction throw AFTER the -ch2 file is written.
+    const spy = vi.spyOn(ftsText, 'indexFtsText').mockImplementation(() => {
+      throw new Error('boom')
+    })
+    await expect(appendChapters(id, 3)).rejects.toThrow('boom')
+    spy.mockRestore()
+
+    // The newly written chapter file was rolled back…
+    expect(existsSync(join(CONTENT, 'rbbase-ch2.html'))).toBe(false)
+    // …the pre-existing chapter files are untouched…
+    expect(existsSync(join(CONTENT, 'rbbase-ch0.html'))).toBe(true)
+    expect(existsSync(join(CONTENT, 'rbbase-ch1.html'))).toBe(true)
+    // …and the DB rolled back (chapter_end unchanged), so a retry starts clean.
+    const row = db.prepare('SELECT chapter_end FROM items WHERE id = ?').get(id) as any
+    expect(row.chapter_end).toBe(2)
   })
 })
 

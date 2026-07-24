@@ -300,31 +300,31 @@ export async function appendChapters(
       }
     }
 
-    // Read existing text from all chapter files for FTS update
+    // Read existing text from all chapter files (in order) for the FTS update.
     for (let i = 0; i < chCount; i++) {
       try {
-        const chHtml = readFileSync(
-          safeContentPath(`${uuidBase}-ch${chCount - 1 - i}.html`),
-          'utf8',
-        )
+        const chHtml = readFileSync(safeContentPath(`${uuidBase}-ch${i}.html`), 'utf8')
         existingText += new JSDOM(chHtml).window.document.body?.textContent ?? ''
         existingText += ' '
       } catch {}
     }
 
-    // Write new chapters as additional files
+    // Write new chapters as additional files. Track them so a failed DB
+    // transaction below can roll the files back — otherwise orphaned -chN.html
+    // files inflate the next append's chapter count and duplicate chapters (T1-3).
+    const writtenFiles: string[] = []
     const newChapterDivs = extractChapterDivs(newContent.html)
     if (newChapterDivs.length > 0) {
       for (let i = 0; i < newChapterDivs.length; i++) {
-        writeFileSync(
-          safeContentPath(`${uuidBase}-ch${chCount + i}.html`),
-          newChapterDivs[i],
-          'utf8',
-        )
+        const p = safeContentPath(`${uuidBase}-ch${chCount + i}.html`)
+        writeFileSync(p, newChapterDivs[i], 'utf8')
+        writtenFiles.push(p)
       }
     } else {
       // Fallback: treat entire new HTML as a single additional chapter
-      writeFileSync(safeContentPath(`${uuidBase}-ch${chCount}.html`), newContent.html, 'utf8')
+      const p = safeContentPath(`${uuidBase}-ch${chCount}.html`)
+      writeFileSync(p, newContent.html, 'utf8')
+      writtenFiles.push(p)
     }
 
     const combinedText = existingText + ' ' + newContent.textContent
@@ -338,23 +338,33 @@ export async function appendChapters(
       author: item.author ?? '',
       content: existingText.trim(),
     }
-    db.transaction(() => {
-      db.prepare(
-        `INSERT INTO items_fts(items_fts, rowid, title, author, content) VALUES('delete', ?, ?, ?, ?)`,
-      ).run(item.rowid, oldValues.title, oldValues.author, oldValues.content)
+    try {
+      db.transaction(() => {
+        db.prepare(
+          `INSERT INTO items_fts(items_fts, rowid, title, author, content) VALUES('delete', ?, ?, ?, ?)`,
+        ).run(item.rowid, oldValues.title, oldValues.author, oldValues.content)
 
-      db.prepare(`INSERT INTO items_fts(rowid, title, author, content) VALUES(?, ?, ?, ?)`).run(
-        item.rowid,
-        item.title,
-        item.author ?? '',
-        combinedText,
-      )
-      indexFtsText(db, itemId, item.title, item.author, combinedText)
+        db.prepare(`INSERT INTO items_fts(rowid, title, author, content) VALUES(?, ?, ?, ?)`).run(
+          item.rowid,
+          item.title,
+          item.author ?? '',
+          combinedText,
+        )
+        indexFtsText(db, itemId, item.title, item.author, combinedText)
 
-      db.prepare(
-        'UPDATE items SET chapter_end = ?, word_count = ?, date_modified = ? WHERE id = ?',
-      ).run(newEnd, newWordCount, now, itemId)
-    })()
+        db.prepare(
+          'UPDATE items SET chapter_end = ?, word_count = ?, date_modified = ? WHERE id = ?',
+        ).run(newEnd, newWordCount, now, itemId)
+      })()
+    } catch (err) {
+      // Roll back the newly written chapter files so a retry starts clean.
+      for (const f of writtenFiles) {
+        try {
+          unlinkSync(f)
+        } catch {}
+      }
+      throw err
+    }
 
     return { id: itemId, title: item.title, author: item.author, wordCount: newWordCount }
   }
