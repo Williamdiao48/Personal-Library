@@ -47,6 +47,16 @@ The installer is unsigned, so SmartScreen may show a warning:
 
 ---
 
+## Updating
+
+**Windows & Linux** — the app checks for new releases on launch; download and install from the in-app notification.
+
+**macOS** — because these builds are unsigned, the auto-updater can't run, so updating is manual: download the latest `.dmg` from the [Releases page](https://github.com/Williamdiao48/Personal-Library/releases/latest), then either drag the new app over the old one in Applications (**Replace** when prompted) or drag the old app to the Trash and install the new one. You'll need to repeat the [First Launch — macOS](#first-launch--macos) Gatekeeper step afterward.
+
+**Your library is preserved either way** — all data lives in `~/Library/Application Support/Personal Library/` (see [Your Data](#your-data)), which a reinstall never touches. If you want a safety net first, use Settings → Data → Export Library.
+
+---
+
 ## Features
 
 - **Capture anything** — paste a URL and the app fetches, parses, and stores the content locally. Works offline after capture.
@@ -61,7 +71,7 @@ The installer is unsigned, so SmartScreen may show a warning:
 - **Full-text search** — FTS5 with partial-word matching as you type; indexes HTML, EPUB, and PDF content
 - **Reading stats** — 1-year activity heatmap, streaks, time/count/reading-list goals with progress rings, per-item breakdown with avg WPM and word count
 - **Export & import** — `.plbackup` ZIP contains the full database + all content files; import relaunches cleanly
-- **Auto-updater** — checks for new releases on launch; download and install from the in-app notification
+- **Auto-updater** — on Windows & Linux, checks for new releases on launch; download and install from the in-app notification (macOS updates are manual — see [Updating](#updating))
 
 ---
 
@@ -78,6 +88,8 @@ All data is stored locally in your system's app data folder — no cloud, no acc
 Inside that folder: `library.db` (SQLite database) and `content/` (all captured files as HTML/EPUB/PDF).
 
 **Backup:** Settings → Data → Export Library creates a `.plbackup` file you can import on any machine.
+
+**Uninstalling:** removing the app never deletes this data folder — that's what lets a reinstall keep your library. How you remove the app differs per platform: **macOS** drag the app to the Trash; **Windows** uninstall via *Settings → Apps*; **Linux** delete the `.AppImage` file. In every case the data folder above is left behind, so for a fully clean removal delete it too — but export first (Settings → Data → Export Library) if there's any chance you'll want your library back, since deleting the folder is permanent.
 
 ---
 
