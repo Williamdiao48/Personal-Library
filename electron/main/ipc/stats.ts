@@ -81,8 +81,14 @@ function computeSummary(): StatsSummary {
   const itemsStarted =
     get<{ v: number }>(`SELECT COUNT(DISTINCT item_id) AS v FROM reading_sessions`)?.v ?? 0
 
+  // "Finished" = scrolled to the end OR explicitly marked finished. library:setStatus
+  // sets `status` WITHOUT touching scroll_position, so a book the reader marks finished
+  // (e.g. one imported already-read) has scroll_position < 1. Match the definition Goals
+  // uses (goals.ts) so the two surfaces agree — scroll-only undercounts those books.
   const itemsFinished =
-    get<{ v: number }>(`SELECT COUNT(*) AS v FROM progress WHERE scroll_position >= 1`)?.v ?? 0
+    get<{ v: number }>(
+      `SELECT COUNT(*) AS v FROM progress WHERE scroll_position >= 1 OR status = 'finished'`,
+    )?.v ?? 0
 
   // Estimated words read: word_count × high-water scroll position per item.
   // max_scroll_position is the furthest point ever reached, so rewinding

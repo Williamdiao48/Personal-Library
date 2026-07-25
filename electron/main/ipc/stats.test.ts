@@ -68,6 +68,25 @@ describe('stats:getSummary', () => {
     expect(s.itemsFinished).toBe(1) // scroll_position >= 1
     expect(s.wordsRead).toBe(1000 + 250) // 1000*1 + 500*0.5
   })
+
+  // T2-1 (phase2 correctness sweep): a book marked finished via library:setStatus
+  // (status='finished') has scroll_position < 1, because setStatus never touches
+  // scroll_position. Stats must count it — matching the definition Goals uses — so the
+  // two surfaces don't disagree on the same book.
+  it('counts a status-finished book with scroll_position < 1 as finished', async () => {
+    const a = seedItem(db, { word_count: 1000 })
+    const b = seedItem(db, { word_count: 500 })
+    setProgress(a, { scroll: 1, maxScroll: 1 }) // finished by scrolling to the end
+    // b: marked finished via setStatus — no scroll recorded (the setStatus path).
+    db.prepare(`INSERT INTO progress (item_id, scroll_position, status) VALUES (?, ?, ?)`).run(
+      b,
+      0,
+      'finished',
+    )
+
+    const s = (await invoke('stats:getSummary')) as any
+    expect(s.itemsFinished).toBe(2) // both: one scroll-finished, one status-finished
+  })
 })
 
 describe('stats:getByItem', () => {
