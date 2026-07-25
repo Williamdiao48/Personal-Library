@@ -62,10 +62,13 @@ The installer is unsigned, so SmartScreen may show a warning:
 - **Capture anything** — paste a URL and the app fetches, parses, and stores the content locally. Works offline after capture.
 - **Dedicated parsers** for Archive of Our Own, FanFiction.net, Royal Road, Wattpad, Scribble Hub, Spacebattles, Sufficient Velocity — plus a universal parser for everything else
 - **Multi-chapter serials** — fetches all chapters in one go with a live progress bar; lazy-loads in the reader
-- **Three readers** — HTML (articles + serials), EPUB, PDF; all with keyboard navigation and Cmd+F search
+- **Three readers** — HTML (articles + serials), EPUB, PDF; all with keyboard navigation and Cmd+F search. PDF adds continuous pinch/wheel zoom (0.5–3×) with cursor anchoring
 - **Typography controls** — font, size, line height, max width, theme per reader; continuous or paged scroll
 - **15 built-in themes** + unlimited custom themes (pick two seed colors, the rest is derived)
-- **Annotations** — highlight any text, attach notes, and drop bookmarks in all three readers. Highlights and notes live in a dedicated Annotations panel; bookmarks in a separate Bookmarks panel. Right-click any mark to delete, copy, or edit inline. Manual reordering via up/down buttons. Clicking a note mark opens a popover with the note and quoted passage.
+- **Annotations** — highlight any text (multiple colors), attach notes, and drop bookmarks in all three readers, PDF included. Highlights and notes live in a dedicated Annotations panel; bookmarks in a separate Bookmarks panel. Right-click any mark to delete, copy, or edit inline. Manual reordering via up/down buttons. Clicking a note mark opens a popover with the note and quoted passage.
+- **Annotation organization** — group highlights into color categories and named themes, browse every mark across your whole library in a cross-book Annotations hub, and export selected quotes to Markdown or plain text
+- **Dictionary lookup** — select or double-click a word in any reader to see its definition in an inline popover; fully offline (bundled WordNet)
+- **Discover** — on-device recommendations: a local embedding model matches your library's taste against fresh works pulled from AO3, FanFiction.net, and Open Library. No accounts, no tracking; embeddings are computed on your machine and cards you dismiss or already own don't come back
 - **Library management** — tags (with rename, recolor, delete, item counts), collections (dedicated shelf with drag-to-reorder), reading status (Unread / Reading / Finished / On Hold / Dropped), bulk operations, author view, inline title editing
 - **Trash & recovery** — deleted items move to Trash and can be restored within 30 days; auto-purged on next launch after that
 - **Full-text search** — FTS5 with partial-word matching as you type; indexes HTML, EPUB, and PDF content
@@ -93,22 +96,28 @@ Inside that folder: `library.db` (SQLite database) and `content/` (all captured 
 
 ---
 
----
-
 ## Building from Source
 
 **Prerequisites:** Node.js 20+, npm
 
 ```bash
-npm install        # Also runs electron-rebuild for better-sqlite3
-npm run dev        # Dev server with hot reload
-npm run build      # Production build → out/
-npm run package    # Full build + installer → dist/
-npm run typecheck  # Type-check without emitting
+npm install          # postinstall runs electron-rebuild for better-sqlite3
+npm run fetch:model  # Download the local embedding model (for Discover) → resources/models
+npm run build:dict   # Build the offline dictionary → resources/dictionary
+npm run dev          # Dev server with hot reload
+npm run build        # Production build → out/
+npm run package      # Full build + installer → dist/
+npm run typecheck    # Type-check without emitting
+npm run lint         # ESLint
+npm test             # Vitest (unit + integration)
 ```
 
-> If you switch Node or Electron versions, re-run native module rebuild manually:
-> `npx electron-rebuild -f -w better-sqlite3`
+> **Native-module ABI toggle for tests.** `better-sqlite3` is compiled against
+> Electron's ABI by default (for `dev`/`build`). Vitest runs under plain Node, so
+> the DB/IPC test suites need `npm run rebuild:node` first; switch back with
+> `npm run rebuild:electron` before `npm run dev` or a build. Renderer-only tests
+> are ABI-agnostic and need no toggle. If you switch Node or Electron versions,
+> re-run the matching rebuild script.
 
 ---
 
@@ -130,10 +139,15 @@ npm run typecheck  # Type-check without emitting
 │   electron/main/ipc/   ←→   electron/main/db/       │
 │   (IPC handlers)              (SQLite + migrations) │
 │                                                     │
-│   electron/main/capture/                            │
-│   (URL fetch → parse → sanitize → store)            │
+│   electron/main/capture/     (fetch → parse → store)│
+│   electron/main/recommender/ (Discover engine)      │
+│   electron/main/workers/     (embed / parse procs)  │
 └─────────────────────────────────────────────────────┘
 ```
+
+Heavy or untrusted work (HTML parsing, on-device embedding) runs in Electron
+`utilityProcess` workers spun up on demand and idle-shut-down, so a hostile page
+or a slow model never blocks the main process.
 
 The renderer never touches the filesystem or database directly. All data access goes through the `window.api` surface defined in `electron/preload/index.ts` and exposed via Electron's contextBridge.
 
@@ -146,47 +160,75 @@ electron/
   main/
     index.ts          App entry, window creation, IPC registration
     db/
-      schema.ts       DDL — all CREATE TABLE / FTS5 / index statements
-      index.ts        DB init, versioned migrations (v1–v16), query helpers
+      schema.ts       v1-baseline DDL — CREATE TABLE / FTS5 / index statements
+      index.ts        DB init, versioned migrations (v1–v33), query helpers
+      ftsText.ts      FTS5 mirror table + index/query helpers
     ipc/
       library.ts      Item CRUD, progress, cover, status, refresh, soft-delete, trash
       capture.ts      URL/file ingestion (fire-and-forget, streams progress)
       reader.ts       Load HTML/EPUB/PDF content to renderer
       collections.ts  Collection CRUD, item assignments, per-collection item ordering
-      annotations.ts  Highlights, notes, bookmarks CRUD + reorder
+      annotations.ts  Highlights, notes, bookmarks CRUD + reorder + themes
       convert.ts      PDF → EPUB conversion
       stats.ts        Reading sessions, summaries, streaks
       goals.ts        Time/count/reading-list goals
       backup.ts       Export/import .plbackup ZIP
+      discover.ts     Discover recommendations (candidate → embed → rerank)
+      dictionary.ts   Offline word definitions (WordNet)
+      llm.ts          Optional local LLM rerank (Ollama, if present)
+      updater.ts      Auto-update checks (electron-updater)
       log.ts          Crash log writes (error boundary → userData/logs/)
     capture/
       index.ts        Orchestrates fetch → parse → sanitize → save → FTS index
       fetch.ts        HTTP fetch with site-specific headers
       sanitizer.ts    sanitize-html rules (NOT dompurify — see Gotchas)
-      sites/          Per-site chapter parsers (AO3, FFnet, Royal Road, etc.)
+      sites/          Per-site chapter parsers (ao3, ffnet, royalroad, scribblehub,
+                      wattpad, forums, universal)
+    recommender/      Discover engine — candidate sources, on-device embeddings,
+                      taste modeling, rerank, candidate cache; sources/ (ao3, ffn,
+                      openLibrary) + llm/ (llmRerank, ollamaClient)
+    workers/          utilityProcess workers + host/protocol wiring:
+                      embed-worker (embeddings), parse-worker (HTML parsing)
   preload/
     index.ts          contextBridge — the only surface the renderer can touch
 
 src/
-  App.tsx             Routes: / | /read/:id | /stats | /settings | /trash | /tags | /collection/:id
+  App.tsx             Routes: / | /read/:id | /stats | /settings | /trash |
+                      /tags | /collection/:id | /authors | /discover | /annotations
   types/index.ts      Shared TS types + full window.api interface declaration
   services/           One module per IPC namespace; components import these only
   components/
-    Library/          LibraryView, ItemCard, Sidebar, TagsModal, CollectionsModal, TrashView, TagsView, CollectionView
-    Reader/           ReaderView, HtmlReader, EpubReader, PdfReader, SearchBar, AnnotationsPanel, BookmarksPanel, AnnotationContextMenu, NotePopover
+    Library/          LibraryView, ItemCard, Sidebar, TagsModal/View, CollectionsModal,
+                      CollectionView, AddToCollectionModal, TrashView, AuthorsView, ReviewModal
+    Reader/           ReaderView, HtmlReader, EpubReader, PdfReader, SearchBar,
+                      AnnotationsPanel, BookmarksPanel, AnnotationContextMenu, NotePopover,
+                      TextSelectionPopup, DefinitionPopover, ConvertProgress
+    Discover/         DiscoverView, RecommendationCard
+    Annotations/      AnnotationsView (cross-book hub), AnnotationFilterBar,
+                      ThemePicker, ThemeEditor
     Stats/            StatsView (heatmap, streaks, goals, per-item table)
     Settings/         SettingsView, SettingsModal (floating Aa reader panel)
     Capture/          AddItemModal, AppendModal
     Toast/            ToastContainer
+    ui/               ColorInput, CustomSelect, MultiSelect, StarRating
+    ErrorBoundary.tsx App-level crash boundary (logs to userData/logs/)
   contexts/
     SettingsContext   App-level settings (theme, grid density, sort, custom themes)
     ToastContext      Global toast notifications
+    UpdaterContext    Auto-update state + prompts
+    CaptureJobsContext  App-level capture-job state + capture:* listeners
   hooks/
     useReadingSession Track reading time per session for stats
+    useAnnotations    Annotation CRUD + apply highlights to the DOM
+    useTextHighlight  In-reader find/highlight (Cmd+F)
+    usePdfSearch      PDF text search
+    useGridColumns    Responsive library grid column count
+  utils/
+    themeDerive.ts    Derive full CSS-var palette from two seed colors
   styles/
     globals.css       Design tokens, themes, app-wide layout
     reader.css        HTML reader typography
-    stats.css         Stats page charts and goal cards
+    (+ epub-reader.css, stats.css, etc.)
 ```
 
 ---
@@ -207,7 +249,7 @@ LibraryView → libraryService.getAll()
 
 This keeps the IPC surface minimal and makes it easy to see exactly what the renderer can and cannot do.
 
-**API namespaces:** `library`, `tags`, `capture`, `reader`, `collections`, `annotations`, `convert`, `stats`, `goals`, `backup`, `log`
+**API namespaces:** `library`, `tags`, `capture`, `reader`, `collections`, `annotations`, `annotationThemes`, `convert`, `stats`, `goals`, `backup`, `discover`, `dictionary`, `llm`, `updater`, `log`
 
 Capture is the only async-streamed namespace: `capture:start` returns a `jobId` immediately, then the main process emits `capture:progress`, `capture:complete`, or `capture:error` events as it fetches and parses content.
 
@@ -228,10 +270,22 @@ Two pragmas are set on every open: `PRAGMA foreign_keys = ON` (enforces all FK c
 | `reading_sessions` | Individual reading sessions for stats (start/end/duration) |
 | `goals` | Reading goals (type: `time` \| `count` \| `list`) |
 | `goal_items` | Items assigned to reading-list goals (M:N) |
-| `annotations` | Highlights, notes, and bookmarks per item (type, range, text, note, sort_order) |
+| `annotations` | Highlights, notes, and bookmarks per item (type, range, text, note, color, sort_order) |
+| `annotation_themes` / `annotation_theme_links` | Named annotation themes and their membership (M:N) |
+| `tag_alias` | Canonicalization map for tag/source-tag names |
 | `items_fts` | FTS5 virtual table for full-text search (porter + unicode61 tokenizer) |
+| `item_fts_index` | Plain mirror of what was indexed into `items_fts` (contentless FTS5 has no delete-by-rowid — see Gotchas) |
+| `item_embeddings` | On-device embedding vectors for owned items (taste modeling) |
+| `item_source_meta` / `item_source_tags` / `taste_seeds` | Source metadata, source-derived tags, and taste seeds feeding Discover |
+| `candidate_cache` / `candidate_embeddings` | Fetched Discover candidate works + their embeddings |
+| `discover_cache` / `dismissed_recommendations` | Rendered recommendation feed + per-user dismissals |
 
-**Migrations** are versioned integers in `electron/main/db/index.ts`. Bump `CURRENT_VERSION` and add a SQL string to `MIGRATIONS` to add a new migration. Runs automatically on startup inside a transaction. Current version: **v16**.
+**Migrations** are versioned integers in `electron/main/db/index.ts`. Bump `CURRENT_VERSION` and add a SQL string to `MIGRATIONS` to add a new migration. Runs automatically on startup inside a transaction (via `execMigration()`, which tolerates re-applied `ADD COLUMN`s so already-shipped DBs self-heal). Current version: **v33**.
+
+> **`schema.ts` must stay the v1 baseline.** A column a later migration adds via
+> `ALTER TABLE ADD COLUMN` must *not* also appear in `schema.ts`, or a fresh install
+> crashes with `duplicate column name` (`CREATE TABLE IF NOT EXISTS` never alters an
+> existing table). Guarded by `migrations.test.ts`.
 
 **Content files** live in `{userData}/content/` as `{uuid}.html`, `{uuid}.epub`, `{uuid}.pdf`, or `{uuid}-ch0.html … {uuid}-chN.html` for multi-chapter captures.
 
@@ -271,11 +325,11 @@ Multi-chapter works are saved as individual chapter files and lazy-loaded in the
 |---|---|---|
 | HTML (articles) | `HtmlReader` | Single file or multi-chapter; scroll tracking; keyboard nav; Cmd+F search |
 | EPUB | `EpubReader` | epub.js; chapter nav; font/spacing controls |
-| PDF | `PdfReader` | pdf.js; zoom; page nav; Cmd+F search |
+| PDF | `PdfReader` | pdf.js; continuous zoom 0.5–3× (pinch/ctrl-wheel, cursor-anchored); page nav; Cmd+F search |
 
 `ReaderView` is the route wrapper that dispatches to the right reader based on `item.content_type`.
 
-Reading sessions are recorded via `useReadingSession` hook — idle detection trims time away from the keyboard, and sessions shorter than 5 s are discarded.
+All three readers support highlights (multiple colors), notes, and bookmarks, plus inline dictionary lookup on any selected word. Reading sessions are recorded via the `useReadingSession` hook — idle detection trims time away from the keyboard, and sessions shorter than 5 s are discarded.
 
 ---
 
@@ -295,6 +349,28 @@ Reading statistics are computed entirely from the `reading_sessions` table (no s
 - **Per-item table** — time, sessions, avg WPM, last read, progress bar
 
 Streaks count only days with at least one recorded reading session. Words read is estimated as `word_count × max_scroll_position` per item.
+
+---
+
+## Discover (Recommendations)
+
+The Discover view (`electron/main/recommender/`) suggests new works based on what's
+already in your library — entirely on-device.
+
+1. **Taste model** — owned items are embedded with a local sentence-embedding model
+   (`@huggingface/transformers` + onnxruntime, bundled under `resources/models/`),
+   summarized into a taste vector plus source-derived tags/seeds.
+2. **Candidates** — fresh works are fetched from public sources (`sources/`: AO3,
+   FanFiction.net, Open Library), cached, and embedded (`candidate_cache` /
+   `candidate_embeddings`).
+3. **Rerank** — candidates are scored against your taste (cosine similarity + signal
+   boosts); an optional local LLM rerank via Ollama is used only if it's running.
+4. **Feed** — the ranked feed is cached (`discover_cache`); works you already own or
+   have dismissed (`dismissed_recommendations`) are filtered out and don't reappear.
+
+Embedding and HTML parsing run in `utilityProcess` workers (`electron/main/workers/`)
+that idle-shut-down after a few minutes. Nothing about your library leaves the machine —
+the only outbound requests are the same kind of public page fetches capture already makes.
 
 ---
 
