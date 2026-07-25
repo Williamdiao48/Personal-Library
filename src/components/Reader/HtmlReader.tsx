@@ -63,6 +63,21 @@ export function parseChapters(html: string): Chapter[] | null {
   }))
 }
 
+/** Decide what the paged scroll-restore effect should do this run.
+ *  A pending restore (resumed reading position) must NOT be consumed until the
+ *  target chapter's content is actually in the DOM — for a lazily-loaded chapter
+ *  the effect first runs against a "Loading…" placeholder (scrollHeight ≈ 0), so
+ *  consuming there would clamp the offset to 0 and then reset to top when the real
+ *  content arrives, silently discarding the saved within-chapter position.
+ *  `'wait'` leaves the pending offset intact for the re-run after the chapter loads. */
+export function resolvePagedScrollRestore(
+  pending: { y: number; isLegacyFrac: boolean } | null,
+  chapterLoaded: boolean,
+): 'restore' | 'wait' | 'top' {
+  if (pending) return chapterLoaded ? 'restore' : 'wait'
+  return 'top'
+}
+
 /** Extract title + body from a single per-chapter file (one .chapter div per file). */
 export function parseSingleChapter(html: string, index: number): Chapter {
   const doc = new DOMParser().parseFromString(html, 'text/html')
@@ -558,8 +573,14 @@ export default function HtmlReader({
         if (cancelled) return
         const el = scrollRef.current
         if (!el) return
-        if (pendingScrollRef.current !== null) {
-          const { y, isLegacyFrac } = pendingScrollRef.current
+        // A lazily-loaded target chapter renders a placeholder (empty html) until
+        // its file arrives; don't consume the pending offset against it, or the
+        // saved within-chapter position is lost. Wait for the content-driven re-run.
+        const chLoaded = !!chapters[currentChapter]?.html
+        const decision = resolvePagedScrollRestore(pendingScrollRef.current, chLoaded)
+        if (decision === 'wait') return
+        if (decision === 'restore') {
+          const { y, isLegacyFrac } = pendingScrollRef.current!
           pendingScrollRef.current = null
           el.scrollTop = isLegacyFrac ? y * (el.scrollHeight - el.clientHeight) : y
         } else {
