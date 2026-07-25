@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
-import HtmlReader, { parseChapters, parseSingleChapter } from './HtmlReader'
+import HtmlReader, {
+  parseChapters,
+  parseSingleChapter,
+  resolvePagedScrollRestore,
+} from './HtmlReader'
 import type { Item } from '../../types'
 
 // HtmlReader is pure DOM (no canvas/pdfjs). We mock the two services it calls and
@@ -118,6 +122,28 @@ describe('parseSingleChapter', () => {
     const ch = parseSingleChapter('<p>raw</p>', 2)
     expect(ch.title).toBe('Chapter 3')
     expect(ch.html).toBe('<p>raw</p>')
+  })
+})
+
+// T3-1 (phase2 correctness sweep): resuming a lazy multi-chapter article into a
+// chapter that hasn't been fetched yet must NOT consume the saved within-chapter
+// scroll offset against the "Loading…" placeholder (scrollHeight ≈ 0) — doing so
+// clamps it to 0 and the content-load re-run then resets to top, losing the
+// position. The restore must wait until the target chapter's content is present.
+describe('resolvePagedScrollRestore', () => {
+  const pending = { y: 500, isLegacyFrac: false }
+
+  it('waits (does not consume) while the target chapter is still a placeholder', () => {
+    expect(resolvePagedScrollRestore(pending, false)).toBe('wait')
+  })
+
+  it('restores once the target chapter content has loaded', () => {
+    expect(resolvePagedScrollRestore(pending, true)).toBe('restore')
+  })
+
+  it('scrolls to top when there is no pending restore (plain chapter navigation)', () => {
+    expect(resolvePagedScrollRestore(null, true)).toBe('top')
+    expect(resolvePagedScrollRestore(null, false)).toBe('top')
   })
 })
 
