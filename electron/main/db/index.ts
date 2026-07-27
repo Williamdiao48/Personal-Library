@@ -11,7 +11,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 33
+export const CURRENT_VERSION = 34
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -312,6 +312,31 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   // NULL and are swept on first sweep — they just re-embed cheaply on next use.
   // ALTER-ADD, MIGRATIONS only (never in SCHEMA baseline, per the fresh-install gotcha).
   33: `ALTER TABLE candidate_embeddings ADD COLUMN cached_at INTEGER;`,
+  // Cloud Phase 2 — blob backup foundation. Per-item cloud opt-in + blob sync
+  // state, both DEVICE-LOCAL (never synced to Postgres in Phase 3).
+  //   • items.cloud_backup — the privacy gate (Decision 8): 0 = local-only (the
+  //     default; every existing row backfills to 0), 1 = eligible for R2 upload.
+  //     The uploader only ever enqueues rows where cloud_backup = 1.
+  //   • items.cover_hash — sha256 of the cover bytes, for the covers R2 key
+  //     (content is keyed by the existing content_hash from migration 9).
+  //   • blob_sync — this device's view of which blobs it has uploaded. Keyed by
+  //     content_hash (identical bytes = one key = one row → dedupe). Not item- or
+  //     user-scoped; it's a local outbox/ledger, not synced data.
+  // ALTER-ADD + new table, MIGRATIONS only (never in SCHEMA baseline, per the
+  // fresh-install duplicate-column gotcha).
+  34: `
+    ALTER TABLE items ADD COLUMN cloud_backup INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE items ADD COLUMN cover_hash TEXT;
+    CREATE TABLE IF NOT EXISTS blob_sync (
+      content_hash    TEXT PRIMARY KEY,
+      kind            TEXT NOT NULL DEFAULT 'content',  -- 'content' | 'cover'
+      state           TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'synced' | 'error'
+      last_attempt_at INTEGER,
+      error           TEXT,
+      updated_at      INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_blob_sync_state ON blob_sync (state);
+  `,
 }
 
 export function initDatabase(): void {
