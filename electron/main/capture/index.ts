@@ -102,18 +102,23 @@ export async function captureUrl(
   url: string,
   onProgress?: (msg: string) => void,
   range?: ChapterRange,
+  cloudBackup = false,
 ): Promise<CaptureResult> {
   const content = await dispatchCapture(url, onProgress, range)
-  return saveToLibrary(url, content, content.coverUrl ?? null, onProgress, range)
+  return saveToLibrary(url, content, content.coverUrl ?? null, onProgress, range, cloudBackup)
 }
 
-// Persists assembled content + metadata to disk and the database.
+// Persists assembled content + metadata to disk and the database. `cloudBackup`
+// is the per-item opt-in (Phase 2 Decision 8): it only sets the local
+// items.cloud_backup flag — the uploader is what later acts on it. Defaults to
+// false so every non-cloud path (protocol capture, tests) stays local-only.
 async function saveToLibrary(
   sourceUrl: string,
   content: SiteContent,
   ogImageUrl: string | null = null,
   onProgress?: (msg: string) => void,
   range?: ChapterRange,
+  cloudBackup = false,
 ): Promise<CaptureResult> {
   const { title, author, html, textContent } = content
 
@@ -152,8 +157,8 @@ async function saveToLibrary(
 
       db.prepare(
         `
-        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, content_hash, date_saved, date_modified, chapter_start, chapter_end)
-        VALUES (?, ?, ?, ?, 'article', ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, content_hash, date_saved, date_modified, chapter_start, chapter_end, cloud_backup)
+        VALUES (?, ?, ?, ?, 'article', ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       ).run(
         id,
@@ -168,6 +173,7 @@ async function saveToLibrary(
         now,
         range?.start ?? null,
         range?.end ?? null,
+        cloudBackup ? 1 : 0,
       )
 
       db.prepare(
@@ -407,14 +413,14 @@ export async function appendChapters(
 
 // ── File import ────────────────────────────────────────────────────────────
 
-export async function captureFile(filePath: string): Promise<CaptureResult> {
+export async function captureFile(filePath: string, cloudBackup = false): Promise<CaptureResult> {
   const ext = extname(filePath).slice(1).toLowerCase()
-  if (ext === 'epub') return captureEpub(filePath)
-  if (ext === 'pdf') return capturePdf(filePath)
+  if (ext === 'epub') return captureEpub(filePath, cloudBackup)
+  if (ext === 'pdf') return capturePdf(filePath, cloudBackup)
   throw new Error(`Unsupported file type: .${ext}`)
 }
 
-async function captureEpub(filePath: string): Promise<CaptureResult> {
+async function captureEpub(filePath: string, cloudBackup = false): Promise<CaptureResult> {
   // Import-time gate: size cap + ZIP magic before any parse or copy (F2).
   await assertImportFile(filePath, 'epub')
 
@@ -468,10 +474,10 @@ async function captureEpub(filePath: string): Promise<CaptureResult> {
     db.transaction(() => {
       db.prepare(
         `
-        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, date_saved, date_modified)
-        VALUES (?, ?, ?, NULL, 'epub', ?, ?, ?, ?, ?)
+        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, date_saved, date_modified, cloud_backup)
+        VALUES (?, ?, ?, NULL, 'epub', ?, ?, ?, ?, ?, ?)
       `,
-      ).run(id, title, author, destFileName, coverPath, wordCount, now, now)
+      ).run(id, title, author, destFileName, coverPath, wordCount, now, now, cloudBackup ? 1 : 0)
 
       db.prepare(
         `
@@ -496,7 +502,7 @@ async function captureEpub(filePath: string): Promise<CaptureResult> {
   return { id, title, author, wordCount }
 }
 
-async function capturePdf(filePath: string): Promise<CaptureResult> {
+async function capturePdf(filePath: string, cloudBackup = false): Promise<CaptureResult> {
   // Import-time gate: size cap + %PDF- magic before any parse or copy (F2).
   await assertImportFile(filePath, 'pdf')
 
@@ -531,10 +537,10 @@ async function capturePdf(filePath: string): Promise<CaptureResult> {
     db.transaction(() => {
       db.prepare(
         `
-        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, date_saved, date_modified)
-        VALUES (?, ?, NULL, NULL, 'pdf', ?, NULL, ?, ?, ?)
+        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, date_saved, date_modified, cloud_backup)
+        VALUES (?, ?, NULL, NULL, 'pdf', ?, NULL, ?, ?, ?, ?)
       `,
-      ).run(id, title, destFileName, wordCount, now, now)
+      ).run(id, title, destFileName, wordCount, now, now, cloudBackup ? 1 : 0)
 
       db.prepare(
         `

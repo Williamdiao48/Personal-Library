@@ -69,6 +69,19 @@ describe('capture:start — SEC-3 scheme guard', () => {
     expect((captureUrl as Mock).mock.calls[0][0]).toBe('https://example.com/story')
   })
 
+  it('threads the cloudBackup opt-in through to captureUrl (Phase 2)', async () => {
+    ;(captureUrl as Mock).mockReturnValue(new Promise(() => {}))
+
+    // Explicit opt-in → true reaches captureUrl's 4th arg.
+    await invoke('capture:start', 'https://example.com/story', undefined, undefined, true)
+    expect((captureUrl as Mock).mock.calls[0][3]).toBe(true)
+    ;(captureUrl as Mock).mockClear()
+
+    // Omitted → defaults to false (local-only), never undefined.
+    await invoke('capture:start', 'https://example.com/story')
+    expect((captureUrl as Mock).mock.calls[0][3]).toBe(false)
+  })
+
   it('emits progress then triggers a backfill on successful capture', async () => {
     ;(captureUrl as Mock).mockImplementation((_url, onProgress) => {
       onProgress('fetching chapter 1') // exercises the progress-forwarding callback
@@ -128,9 +141,20 @@ describe('capture:fromFile', () => {
 
     const result = await invoke('capture:fromFile')
 
-    expect(captureFile).toHaveBeenCalledWith('/books/novel.epub')
+    // cloudBackup defaults to false when the renderer omits it (local-only).
+    expect(captureFile).toHaveBeenCalledWith('/books/novel.epub', false)
     expect(triggerBackfill).toHaveBeenCalledOnce()
     expect(result).toEqual({ id: 'item-1' })
+  })
+
+  it('threads the cloudBackup opt-in through to captureFile (Phase 2)', async () => {
+    vi.spyOn(dialog, 'showOpenDialog').mockResolvedValue({
+      canceled: false,
+      filePaths: ['/books/novel.epub'],
+    })
+
+    await invoke('capture:fromFile', true)
+    expect(captureFile).toHaveBeenCalledWith('/books/novel.epub', true)
   })
 
   it('returns null and imports nothing when the dialog is canceled', async () => {

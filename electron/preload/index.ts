@@ -51,9 +51,9 @@ contextBridge.exposeInMainWorld('api', {
   capture: {
     // Fire-and-forget: returns a jobId immediately. Progress/completion/errors
     // are delivered asynchronously via onCaptureProgress/Complete/Error.
-    start: (url: string, start?: number, end?: number) =>
-      ipcRenderer.invoke('capture:start', url, start, end),
-    fromFile: () => ipcRenderer.invoke('capture:fromFile'),
+    start: (url: string, start?: number, end?: number, cloudBackup?: boolean) =>
+      ipcRenderer.invoke('capture:start', url, start, end, cloudBackup),
+    fromFile: (cloudBackup?: boolean) => ipcRenderer.invoke('capture:fromFile', cloudBackup),
     append: (itemId: string, end: number) => ipcRenderer.invoke('capture:append', itemId, end),
   },
 

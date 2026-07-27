@@ -26,6 +26,8 @@ export interface Item {
   derived_from?: string | null // UUID of source PDF if this is a converted EPUB
   chapter_start?: number | null
   chapter_end?: number | null
+  cloud_backup?: number // Phase 2 opt-in: 0 = local-only (default), 1 = eligible for cloud backup
+  cover_hash?: string | null // sha256 of cover bytes, for the R2 covers key
   // joined from progress
   scroll_position?: number
   last_read_at?: number
@@ -360,8 +362,11 @@ export interface Api {
     getItemCounts: () => Promise<{ tag_id: string; count: number }[]>
   }
   capture: {
-    start: (url: string, start?: number, end?: number) => Promise<string> // returns jobId immediately
-    fromFile: () => Promise<CaptureResult | null>
+    // cloudBackup (Phase 2 opt-in): sets the item's local cloud_backup flag; the
+    // uploader is what later acts on it. Renderer only passes true when signed in
+    // with the cloud-backup master switch on.
+    start: (url: string, start?: number, end?: number, cloudBackup?: boolean) => Promise<string> // returns jobId immediately
+    fromFile: (cloudBackup?: boolean) => Promise<CaptureResult | null>
     append: (itemId: string, end: number) => Promise<string>
   }
   reader: {
