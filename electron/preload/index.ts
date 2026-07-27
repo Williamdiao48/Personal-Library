@@ -239,6 +239,26 @@ contextBridge.exposeInMainWorld('api', {
     lookup: (word: string) => ipcRenderer.invoke('dictionary:lookup', word),
   },
 
+  // Cloud auth (opt-in; no-ops gracefully when the build isn't cloud-configured).
+  // Tokens live only in main — the renderer only ever sees { id, email }.
+  auth: {
+    isConfigured: () => ipcRenderer.invoke('auth:isConfigured'),
+    getSession: () => ipcRenderer.invoke('auth:getSession'),
+    signUp: (email: string, password: string) => ipcRenderer.invoke('auth:signUp', email, password),
+    signIn: (email: string, password: string) => ipcRenderer.invoke('auth:signIn', email, password),
+    signOut: () => ipcRenderer.invoke('auth:signOut'),
+    onStateChange: (
+      callback: (state: { user: { id: string; email: string | null } | null }) => void,
+    ) => {
+      const handler = (
+        _e: Electron.IpcRendererEvent,
+        state: { user: { id: string; email: string | null } | null },
+      ) => callback(state)
+      ipcRenderer.on('auth:stateChange', handler)
+      return () => ipcRenderer.removeListener('auth:stateChange', handler)
+    },
+  },
+
   // Local LLM (Ollama) book reranker — opt-in refinement of book recommendations.
   llm: {
     setConfig: (cfg: { enabled: boolean; model: string; baseUrl: string }) =>

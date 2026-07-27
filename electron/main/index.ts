@@ -18,6 +18,7 @@ import { registerLogHandlers } from './ipc/log'
 import { registerDiscoverHandlers } from './ipc/discover'
 import { registerDictionaryHandlers } from './ipc/dictionary'
 import { registerLlmHandlers } from './ipc/llm'
+import { registerAuthHandlers } from './ipc/auth'
 import { shutdownParseWorker } from './workers/parse-host'
 import { shutdownBackfill } from './recommender/lifecycle'
 
@@ -183,6 +184,7 @@ app.whenReady().then(() => {
     registerDiscoverHandlers()
     registerDictionaryHandlers()
     registerLlmHandlers()
+    registerAuthHandlers()
   } catch (err) {
     dialog.showErrorBox(
       'Personal Library failed to start',

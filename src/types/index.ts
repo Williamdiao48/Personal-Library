@@ -303,6 +303,26 @@ export interface DictionaryResult {
   entries: DictionaryEntry[]
 }
 
+// ── Cloud auth (Phase 1) ─────────────────────────────────────────────────────
+// The token-free user shape the renderer sees; access/refresh tokens never leave
+// the main process.
+export interface AuthUser {
+  id: string
+  email: string | null
+}
+
+export interface AuthState {
+  user: AuthUser | null
+}
+
+export interface AuthResult {
+  ok: boolean
+  user?: AuthUser | null
+  error?: string
+  /** signUp only: email confirmation required (no session issued yet). */
+  needsConfirmation?: boolean
+}
+
 // Type the window.api surface so the renderer gets full type-safety
 export interface Api {
   library: {
@@ -474,6 +494,20 @@ export interface Api {
   dictionary: {
     /** Look up a single word in the bundled WordNet dictionary (offline). */
     lookup: (word: string) => Promise<DictionaryResult>
+  }
+  auth: {
+    /** Whether this build carries Supabase creds (else every call no-ops). */
+    isConfigured: () => Promise<boolean>
+    /** The current session's user, or null when signed out. */
+    getSession: () => Promise<AuthState>
+    /** Create an account. `needsConfirmation` when email confirm is required. */
+    signUp: (email: string, password: string) => Promise<AuthResult>
+    /** Sign in with email + password. */
+    signIn: (email: string, password: string) => Promise<AuthResult>
+    /** Sign out and clear the persisted session. */
+    signOut: () => Promise<void>
+    /** Subscribe to auth state changes (sign-in/out/refresh); returns unsubscribe. */
+    onStateChange: (callback: (state: AuthState) => void) => () => void
   }
   llm: {
     /** Sync the local-LLM reranker setting to the main process (mirrors discover.setEnabled). */

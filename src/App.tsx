@@ -6,6 +6,7 @@ import { llmService } from './services/llm'
 import { ToastProvider, useToast } from './contexts/ToastContext'
 import { UpdaterProvider, useUpdater } from './contexts/UpdaterContext'
 import { CaptureJobsProvider } from './contexts/CaptureJobsContext'
+import { AuthProvider } from './contexts/AuthContext'
 import LibraryView from './components/Library/LibraryView'
 import ReaderView from './components/Reader/ReaderView'
 import StatsView from './components/Stats/StatsView'
@@ -105,20 +106,22 @@ export default function App() {
         <UpdaterProvider>
           <ToastProvider>
             <UpdaterListener />
-            <CaptureJobsProvider>
-              <Routes>
-                <Route path="/" element={<LibraryView />} />
-                <Route path="/read/:id" element={<ReaderView />} />
-                <Route path="/stats" element={<StatsView />} />
-                <Route path="/settings" element={<SettingsView />} />
-                <Route path="/trash" element={<TrashView />} />
-                <Route path="/collection/:id" element={<CollectionView />} />
-                <Route path="/tags" element={<TagsView />} />
-                <Route path="/authors" element={<AuthorsView />} />
-                <Route path="/discover" element={<DiscoverView />} />
-                <Route path="/annotations" element={<AnnotationsView />} />
-              </Routes>
-            </CaptureJobsProvider>
+            <AuthProvider>
+              <CaptureJobsProvider>
+                <Routes>
+                  <Route path="/" element={<LibraryView />} />
+                  <Route path="/read/:id" element={<ReaderView />} />
+                  <Route path="/stats" element={<StatsView />} />
+                  <Route path="/settings" element={<SettingsView />} />
+                  <Route path="/trash" element={<TrashView />} />
+                  <Route path="/collection/:id" element={<CollectionView />} />
+                  <Route path="/tags" element={<TagsView />} />
+                  <Route path="/authors" element={<AuthorsView />} />
+                  <Route path="/discover" element={<DiscoverView />} />
+                  <Route path="/annotations" element={<AnnotationsView />} />
+                </Routes>
+              </CaptureJobsProvider>
+            </AuthProvider>
           </ToastProvider>
         </UpdaterProvider>
       </SettingsProvider>

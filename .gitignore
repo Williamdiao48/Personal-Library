@@ -24,10 +24,10 @@ playwright-report/
 # (see scripts/dictionary/build.mjs).
 !resources/dictionary/dictionary.db
 
-# Environment / secrets
+# Environment / secrets — never commit ANY env file, including .env.example
+# templates (user rule 2026-07-27). Scaffold example files locally; don't track.
 .env
 .env.*
-!.env.example
 
 # Logs
 *.log
