@@ -5,25 +5,43 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import SettingsView from './SettingsView'
 import { SettingsProvider } from '../../contexts/SettingsContext'
 import { UpdaterProvider } from '../../contexts/UpdaterContext'
+import { AuthProvider } from '../../contexts/AuthContext'
 
 vi.mock('../../services/backup', () => ({
   backupService: { export: vi.fn(), import: vi.fn() },
+}))
+
+// Account section: keep it in its unconfigured (offline) state for these tests —
+// they cover appearance/data, not auth. The auth flow has its own suite.
+vi.mock('../../services/auth', () => ({
+  authService: {
+    isConfigured: vi.fn().mockResolvedValue(false),
+    getSession: vi.fn().mockResolvedValue({ user: null }),
+    signUp: vi.fn(),
+    signIn: vi.fn(),
+    signOut: vi.fn(),
+    onStateChange: vi.fn(() => () => {}),
+  },
 }))
 import { backupService } from '../../services/backup'
 const backup = backupService as unknown as {
   export: ReturnType<typeof vi.fn>
   import: ReturnType<typeof vi.fn>
 }
+import { authService } from '../../services/auth'
+const auth = authService as unknown as Record<string, ReturnType<typeof vi.fn>>
 
 function renderView() {
   return render(
     <MemoryRouter initialEntries={['/settings']}>
       <UpdaterProvider>
         <SettingsProvider>
-          <Routes>
-            <Route path="/settings" element={<SettingsView />} />
-            <Route path="/" element={<div>LIBRARY HOME</div>} />
-          </Routes>
+          <AuthProvider>
+            <Routes>
+              <Route path="/settings" element={<SettingsView />} />
+              <Route path="/" element={<div>LIBRARY HOME</div>} />
+            </Routes>
+          </AuthProvider>
         </SettingsProvider>
       </UpdaterProvider>
     </MemoryRouter>,
@@ -230,5 +248,71 @@ describe('SettingsView — developer tools', () => {
     expect(clear).toBeInTheDocument()
     fireEvent.click(clear)
     expect(screen.getByRole('button', { name: 'Simulate' })).toBeInTheDocument()
+  })
+})
+
+describe('SettingsView — Account section', () => {
+  // The mode toggle and the submit button can share a label ("Sign in"). The
+  // toggles live inside the role="group"; the submit is the last such button.
+  const modeGroup = () => screen.getByRole('group', { name: 'Account action' })
+  const toggle = (name: string) => within(modeGroup()).getByRole('button', { name })
+  const submit = (name: string) => {
+    const all = screen.getAllByRole('button', { name })
+    return all[all.length - 1]
+  }
+
+  it('unconfigured build shows the offline note, no form', async () => {
+    // Default mock: isConfigured resolves false.
+    renderView()
+    expect(await screen.findByText(/Cloud sync isn’t configured/)).toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Account action' })).toBeNull()
+  })
+
+  it('configured + signed out renders the sign-in form', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: null })
+    renderView()
+    expect(await screen.findByPlaceholderText('you@example.com')).toBeInTheDocument()
+    expect(modeGroup()).toBeInTheDocument()
+    expect(toggle('Sign in')).toBeInTheDocument()
+    expect(toggle('Create account')).toBeInTheDocument()
+  })
+
+  it('gates Create account on the 8-char minimum', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: null })
+    renderView()
+    await screen.findByPlaceholderText('you@example.com')
+    fireEvent.click(toggle('Create account'))
+    fireEvent.change(screen.getByPlaceholderText('you@example.com'), {
+      target: { value: 'c@d.com' },
+    })
+    const pw = screen.getByPlaceholderText(/At least 8 characters/)
+    fireEvent.change(pw, { target: { value: 'short' } })
+    expect(submit('Create account')).toBeDisabled()
+    fireEvent.change(pw, { target: { value: 'longenough' } })
+    expect(submit('Create account')).toBeEnabled()
+  })
+
+  it('surfaces a sign-in error', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: null })
+    auth.signIn.mockResolvedValueOnce({ ok: false, error: 'Invalid login credentials' })
+    renderView()
+    await screen.findByPlaceholderText('you@example.com')
+    fireEvent.change(screen.getByPlaceholderText('you@example.com'), {
+      target: { value: 'a@b.com' },
+    })
+    fireEvent.change(screen.getByPlaceholderText('••••••••'), { target: { value: 'pw' } })
+    fireEvent.click(submit('Sign in'))
+    expect(await screen.findByText('Invalid login credentials')).toBeInTheDocument()
+  })
+
+  it('signed-in shows the email + Sign out', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })
+    renderView()
+    expect(await screen.findByText('me@x.com')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
   })
 })

@@ -2,6 +2,7 @@ import { useState, useId } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSettings } from '../../contexts/SettingsContext'
 import { useUpdater } from '../../contexts/UpdaterContext'
+import { useAuth } from '../../contexts/AuthContext'
 import type { Theme, GridDensity, SortBy, CustomTheme } from '../../contexts/SettingsContext'
 import CustomSelect from '../ui/CustomSelect'
 import { HIGHLIGHT_COLORS } from '../../constants/highlightColors'
@@ -392,6 +393,168 @@ function LlmRerankSettings() {
   )
 }
 
+// ── Account (opt-in cloud) ───────────────────────────────────────────────────
+// Phase 1: sign in / create account / sign out. Nothing syncs yet — this only
+// establishes identity. When the build has no Supabase creds, the section shows
+// a short note instead of a form.
+
+const MIN_PASSWORD_LENGTH = 8
+
+function AccountSettings() {
+  const { user, configured, loading, signIn, signUp, signOut } = useAuth()
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const emailId = useId()
+  const pwId = useId()
+
+  if (loading) return null
+
+  if (!configured) {
+    return (
+      <span className="settings-row-hint">
+        Cloud sync isn’t configured in this build. The app runs fully offline; an account is
+        optional and only enables backup and multi-device sync (coming soon).
+      </span>
+    )
+  }
+
+  if (user) {
+    return (
+      <div className="settings-row settings-row--top">
+        <div className="settings-row-stack">
+          <span className="settings-row-label">Signed in</span>
+          <span className="settings-row-hint">{user.email ?? user.id}</span>
+        </div>
+        <button
+          className="settings-action-btn settings-action-btn--ghost"
+          onClick={() => void signOut()}
+        >
+          Sign out
+        </button>
+      </div>
+    )
+  }
+
+  const canSubmit =
+    email.trim().length > 0 &&
+    password.length >= (mode === 'signup' ? MIN_PASSWORD_LENGTH : 1) &&
+    !busy
+
+  async function handleSubmit() {
+    if (!canSubmit) return
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const res =
+        mode === 'signup'
+          ? await signUp(email.trim(), password)
+          : await signIn(email.trim(), password)
+      if (!res.ok) {
+        setError(res.error ?? 'Something went wrong. Please try again.')
+      } else if (res.needsConfirmation) {
+        setNotice('Account created. Check your email to confirm, then sign in.')
+        setMode('signin')
+        setPassword('')
+      }
+      // On success the AuthContext flips to the signed-in view automatically.
+    } catch (err: any) {
+      setError(err?.message ?? 'Something went wrong. Please try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="settings-row">
+        <div className="settings-segment" role="group" aria-label="Account action">
+          <button
+            className={`settings-segment-btn${mode === 'signin' ? ' selected' : ''}`}
+            onClick={() => {
+              setMode('signin')
+              setError('')
+            }}
+            aria-pressed={mode === 'signin'}
+          >
+            Sign in
+          </button>
+          <button
+            className={`settings-segment-btn${mode === 'signup' ? ' selected' : ''}`}
+            onClick={() => {
+              setMode('signup')
+              setError('')
+            }}
+            aria-pressed={mode === 'signup'}
+          >
+            Create account
+          </button>
+        </div>
+      </div>
+
+      <div className="settings-row">
+        <label className="settings-row-label" htmlFor={emailId}>
+          Email
+        </label>
+        <input
+          id={emailId}
+          type="email"
+          autoComplete="email"
+          className="settings-color-label-input"
+          value={email}
+          placeholder="you@example.com"
+          onChange={(e) => setEmail(e.target.value)}
+        />
+      </div>
+
+      <div className="settings-row">
+        <label className="settings-row-label" htmlFor={pwId}>
+          Password
+        </label>
+        <input
+          id={pwId}
+          type="password"
+          autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+          className="settings-color-label-input"
+          value={password}
+          placeholder={
+            mode === 'signup' ? `At least ${MIN_PASSWORD_LENGTH} characters` : '••••••••'
+          }
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void handleSubmit()
+          }}
+        />
+      </div>
+
+      <div className="settings-row settings-row--top">
+        <div className="settings-row-stack">
+          {mode === 'signup' && (
+            <span className="settings-row-hint">
+              Passwords must be at least {MIN_PASSWORD_LENGTH} characters.
+            </span>
+          )}
+          {error && <span className="settings-feedback settings-feedback--err">{error}</span>}
+          {notice && <span className="settings-feedback settings-feedback--ok">{notice}</span>}
+        </div>
+        <button className="settings-action-btn" onClick={handleSubmit} disabled={!canSubmit}>
+          {busy
+            ? mode === 'signup'
+              ? 'Creating…'
+              : 'Signing in…'
+            : mode === 'signup'
+              ? 'Create account'
+              : 'Sign in'}
+        </button>
+      </div>
+    </>
+  )
+}
+
 export default function SettingsView() {
   const navigate = useNavigate()
   const { settings, updateSettings } = useSettings()
@@ -776,6 +939,12 @@ export default function SettingsView() {
               </button>
             )}
           </div>
+        </section>
+
+        {/* ── Account (opt-in cloud) ── */}
+        <section className="settings-section">
+          <h3 className="settings-section-title">Account</h3>
+          <AccountSettings />
         </section>
 
         {import.meta.env.DEV && (
