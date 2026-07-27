@@ -22,9 +22,11 @@ beforeEach(() => {
 })
 
 describe('captureService delegation', () => {
-  it('start forwards url + optional range', () => {
+  it('start forwards url + optional range + cloudBackup', () => {
     captureService.start('https://x', 1, 3)
-    expect(api.capture.start).toHaveBeenCalledWith('https://x', 1, 3)
+    expect(api.capture.start).toHaveBeenCalledWith('https://x', 1, 3, undefined)
+    captureService.start('https://x', 1, 3, true)
+    expect(api.capture.start).toHaveBeenCalledWith('https://x', 1, 3, true)
   })
   it('fromFile → api.capture.fromFile', () => {
     captureService.fromFile()

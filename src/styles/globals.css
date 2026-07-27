@@ -3087,6 +3087,29 @@ html[data-theme='sepia'] .item-card-refresh-status--error {
   color: var(--text-muted);
   font-size: 14px;
 }
+.modal-cloud-backup {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 4px 0 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+}
+.modal-cloud-backup input[type='checkbox'] {
+  margin-top: 2px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+.modal-cloud-backup-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.modal-cloud-backup-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
 .modal-hint {
   font-size: 13px;
   color: var(--text-muted);

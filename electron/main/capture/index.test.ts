@@ -187,7 +187,12 @@ describe('captureUrl — single-article persistence', () => {
     ).toBe(0)
 
     vi.mocked(captureRoyalRoad).mockResolvedValue(siteContent())
-    const cloud = await captureUrl('https://www.royalroad.com/fiction/1', undefined, undefined, true)
+    const cloud = await captureUrl(
+      'https://www.royalroad.com/fiction/1',
+      undefined,
+      undefined,
+      true,
+    )
     expect(
       (db.prepare('SELECT cloud_backup FROM items WHERE id = ?').get(cloud.id) as any).cloud_backup,
     ).toBe(1)

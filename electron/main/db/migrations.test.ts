@@ -367,7 +367,14 @@ describe('database bring-up', () => {
   it('blob_sync has the expected columns and content_hash is the primary key', () => {
     const db = openTestDb()
     expect(colsOf(db, 'blob_sync')).toEqual(
-      expect.arrayContaining(['content_hash', 'kind', 'state', 'last_attempt_at', 'error', 'updated_at']),
+      expect.arrayContaining([
+        'content_hash',
+        'kind',
+        'state',
+        'last_attempt_at',
+        'error',
+        'updated_at',
+      ]),
     )
     const pk = (
       db.prepare(`PRAGMA table_info(blob_sync)`).all() as { name: string; pk: number }[]
@@ -378,9 +385,9 @@ describe('database bring-up', () => {
   it('blob_sync defaults a new row to kind=content / state=pending', () => {
     const db = openTestDb()
     db.prepare(`INSERT INTO blob_sync (content_hash) VALUES ('h1')`).run()
-    expect(db.prepare(`SELECT kind, state FROM blob_sync WHERE content_hash = 'h1'`).get()).toMatchObject(
-      { kind: 'content', state: 'pending' },
-    )
+    expect(
+      db.prepare(`SELECT kind, state FROM blob_sync WHERE content_hash = 'h1'`).get(),
+    ).toMatchObject({ kind: 'content', state: 'pending' })
   })
 
   it('creates idx_blob_sync_state (outbox drain query)', () => {

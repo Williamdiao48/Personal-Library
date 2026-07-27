@@ -9,6 +9,20 @@ vi.mock('../../services/capture', () => ({
 vi.mock('../../services/library', () => ({
   libraryService: { findBySourceUrl: vi.fn(), getById: vi.fn() },
 }))
+
+// The cloud opt-in reads auth + settings. Mock both with mutable state so the
+// default is "signed out / cloud off" (toggle hidden — matches every existing
+// test), and the cloud-path tests can flip it on.
+const mocks = vi.hoisted(() => ({
+  auth: { user: null as { id: string; email: string | null } | null, configured: false },
+  settings: { cloudBackupEnabled: false, cloudBackupDefault: false },
+  updateSettings: vi.fn(),
+}))
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => mocks.auth }))
+vi.mock('../../contexts/SettingsContext', () => ({
+  useSettings: () => ({ settings: mocks.settings, updateSettings: mocks.updateSettings }),
+}))
+
 import { captureService } from '../../services/capture'
 import { libraryService } from '../../services/library'
 const cap = captureService as unknown as Record<string, ReturnType<typeof vi.fn>>
@@ -28,6 +42,9 @@ function renderModal(over: Partial<React.ComponentProps<typeof AddItemModal>> = 
 beforeEach(() => {
   vi.clearAllMocks()
   lib.findBySourceUrl.mockResolvedValue(undefined)
+  // Reset the cloud opt-in to "signed out / off" before each test.
+  mocks.auth = { user: null, configured: false }
+  mocks.settings = { cloudBackupEnabled: false, cloudBackupDefault: false }
 })
 
 describe('AddItemModal — URL capture', () => {
@@ -40,7 +57,7 @@ describe('AddItemModal — URL capture', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     })
-    expect(cap.start).toHaveBeenCalledWith('https://a.com/x', undefined, undefined)
+    expect(cap.start).toHaveBeenCalledWith('https://a.com/x', undefined, undefined, false)
     expect(props.onJobStarted).toHaveBeenCalledWith('job-1', 'https://a.com/x')
     expect(props.onClose).toHaveBeenCalled()
   })
@@ -57,7 +74,7 @@ describe('AddItemModal — URL capture', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     })
-    expect(cap.start).toHaveBeenCalledWith('https://a.com/x', 3, 8)
+    expect(cap.start).toHaveBeenCalledWith('https://a.com/x', 3, 8, false)
   })
 
   it('ignores an empty URL submission', async () => {
@@ -85,7 +102,7 @@ describe('AddItemModal — URL capture', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Add anyway' }))
     })
-    expect(cap.start).toHaveBeenCalledWith('https://a.com/x', undefined, undefined)
+    expect(cap.start).toHaveBeenCalledWith('https://a.com/x', undefined, undefined, false)
     expect(props.onJobStarted).toHaveBeenCalled()
   })
 
@@ -140,6 +157,72 @@ describe('AddItemModal — file import', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Browse files...' }))
     })
     expect(screen.getByText('bad file')).toBeInTheDocument()
+  })
+})
+
+describe('AddItemModal — cloud backup opt-in', () => {
+  const signedInWithCloud = () => {
+    mocks.auth = { user: { id: 'u1', email: 'a@b.com' }, configured: true }
+    mocks.settings = { cloudBackupEnabled: true, cloudBackupDefault: false }
+  }
+
+  it('hides the toggle when signed out (nothing can be uploaded)', () => {
+    renderModal()
+    expect(screen.queryByText('Back up to cloud')).not.toBeInTheDocument()
+  })
+
+  it('hides the toggle when signed in but the master switch is off', () => {
+    mocks.auth = { user: { id: 'u1', email: 'a@b.com' }, configured: true }
+    mocks.settings = { cloudBackupEnabled: false, cloudBackupDefault: true }
+    renderModal()
+    expect(screen.queryByText('Back up to cloud')).not.toBeInTheDocument()
+  })
+
+  it('shows the toggle and captures local-only when its remembered default is off', async () => {
+    signedInWithCloud()
+    cap.start.mockResolvedValue('job-1')
+    renderModal()
+    expect(screen.getByText('Back up to cloud')).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText('https://...'), {
+      target: { value: 'https://a.com/x' },
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    expect(cap.start).toHaveBeenCalledWith('https://a.com/x', undefined, undefined, false)
+  })
+
+  it('captures with cloud backup when the remembered default is on', async () => {
+    signedInWithCloud()
+    mocks.settings.cloudBackupDefault = true
+    cap.start.mockResolvedValue('job-1')
+    renderModal()
+    fireEvent.change(screen.getByPlaceholderText('https://...'), {
+      target: { value: 'https://a.com/x' },
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    expect(cap.start).toHaveBeenCalledWith('https://a.com/x', undefined, undefined, true)
+  })
+
+  it('remembers the choice by persisting it to settings', () => {
+    signedInWithCloud()
+    renderModal()
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(mocks.updateSettings).toHaveBeenCalledWith({ cloudBackupDefault: true })
+  })
+
+  it('passes the opt-in to file imports too', async () => {
+    signedInWithCloud()
+    mocks.settings.cloudBackupDefault = true
+    cap.fromFile.mockResolvedValue({ id: 'f1', title: 'Book' })
+    lib.getById.mockResolvedValue({ id: 'f1', title: 'Book' } as Item)
+    renderModal()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Browse files...' }))
+    })
+    expect(cap.fromFile).toHaveBeenCalledWith(true)
   })
 })
 
