@@ -27,6 +27,7 @@ export interface Item {
   chapter_start?: number | null
   chapter_end?: number | null
   cloud_backup?: number // Phase 2 opt-in: 0 = local-only (default), 1 = eligible for cloud backup
+  blob_hash?: string | null // sha256 of the packed content archive, the R2 content key
   cover_hash?: string | null // sha256 of cover bytes, for the R2 covers key
   // joined from progress
   scroll_position?: number
@@ -513,6 +514,10 @@ export interface Api {
     signOut: () => Promise<void>
     /** Subscribe to auth state changes (sign-in/out/refresh); returns unsubscribe. */
     onStateChange: (callback: (state: AuthState) => void) => () => void
+  }
+  cloud: {
+    /** Opt an existing item into cloud backup: flip its gate + enqueue its blobs. */
+    backupItem: (id: string) => Promise<{ ok: boolean; error?: string }>
   }
   llm: {
     /** Sync the local-LLM reranker setting to the main process (mirrors discover.setEnabled). */

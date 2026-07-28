@@ -259,6 +259,12 @@ contextBridge.exposeInMainWorld('api', {
     },
   },
 
+  // Cloud actions (Phase 2). backupItem opts an existing library item into cloud
+  // backup — flips its gate and enqueues its blobs for the uploader to drain.
+  cloud: {
+    backupItem: (id: string) => ipcRenderer.invoke('cloud:backupItem', id),
+  },
+
   // Local LLM (Ollama) book reranker — opt-in refinement of book recommendations.
   llm: {
     setConfig: (cfg: { enabled: boolean; model: string; baseUrl: string }) =>

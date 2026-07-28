@@ -1061,6 +1061,14 @@ body,
 .item-card-dropdown-item:hover {
   background: var(--bg-hover);
 }
+/* Non-interactive status label inside the dropdown (e.g. "✓ Backed up to cloud"). */
+.item-card-dropdown-item--static {
+  color: var(--text-muted);
+  cursor: default;
+}
+.item-card-dropdown-item--static:hover {
+  background: none;
+}
 .item-card-dropdown-item--danger {
   color: var(--danger);
 }

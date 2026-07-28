@@ -69,6 +69,10 @@ interface Props {
   onRatingChange: (rating: number | null) => void
   onWriteReview: () => void
   onRemoveFromCollection?: () => void
+  // Present only when cloud backup is eligible (signed in + master switch on).
+  // Undefined hides the action entirely; the item's cloud_backup flag decides
+  // whether it reads "Back up to cloud" or the already-backed-up indicator.
+  onBackupToCloud?: () => Promise<void>
 }
 
 function ItemCard({
@@ -93,11 +97,13 @@ function ItemCard({
   onRatingChange,
   onWriteReview,
   onRemoveFromCollection,
+  onBackupToCloud,
 }: Props) {
   const [confirming, setConfirming] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [backingUp, setBackingUp] = useState(false)
   const [statusMenuOpen, setStatusMenuOpen] = useState(false)
   const [authorEditing, setAuthorEditing] = useState(false)
   const [authorDraft, setAuthorDraft] = useState('')
@@ -212,6 +218,17 @@ function ItemCard({
       await onRefresh!()
     } finally {
       setRefreshing(false)
+    }
+  }
+
+  async function handleBackupToCloud(e: React.MouseEvent) {
+    e.stopPropagation()
+    setMenuOpen(false)
+    setBackingUp(true)
+    try {
+      await onBackupToCloud!()
+    } finally {
+      setBackingUp(false)
     }
   }
 
@@ -604,6 +621,20 @@ function ItemCard({
                   {refreshing ? 'Refreshing…' : 'Refresh from source'}
                 </button>
               )}
+              {onBackupToCloud &&
+                (item.cloud_backup === 1 ? (
+                  <span className="item-card-dropdown-item item-card-dropdown-item--static">
+                    ✓ Backed up to cloud
+                  </span>
+                ) : (
+                  <button
+                    className="item-card-dropdown-item"
+                    onClick={handleBackupToCloud}
+                    disabled={backingUp}
+                  >
+                    {backingUp ? 'Backing up…' : 'Back up to cloud'}
+                  </button>
+                ))}
               <button
                 className="item-card-dropdown-item item-card-dropdown-item--danger"
                 onClick={handleDeleteClick}
@@ -661,6 +692,7 @@ export default memo(ItemCard, (prev, next) => {
     pi.status === ni.status &&
     pi.rating === ni.rating &&
     pi.review === ni.review &&
+    pi.cloud_backup === ni.cloud_backup &&
     pi.date_modified === ni.date_modified &&
     prev.tags === next.tags &&
     prev.isSelected === next.isSelected &&

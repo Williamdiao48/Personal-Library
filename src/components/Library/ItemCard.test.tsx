@@ -384,6 +384,33 @@ describe('ItemCard — author editing, rating & review', () => {
   })
 })
 
+describe('ItemCard — cloud backup action', () => {
+  it('hides the action entirely when onBackupToCloud is not provided', () => {
+    renderCard()
+    fireEvent.click(screen.getByRole('button', { name: 'More options' }))
+    expect(screen.queryByRole('button', { name: 'Back up to cloud' })).toBeNull()
+    expect(screen.queryByText('✓ Backed up to cloud')).toBeNull()
+  })
+
+  it('offers "Back up to cloud" and calls the handler when the item is not yet backed up', async () => {
+    const onBackupToCloud = vi.fn().mockResolvedValue(undefined)
+    renderCard({ item: makeItem({ cloud_backup: 0 }), onBackupToCloud })
+    fireEvent.click(screen.getByRole('button', { name: 'More options' }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Back up to cloud' }))
+    })
+    expect(onBackupToCloud).toHaveBeenCalled()
+  })
+
+  it('shows a non-interactive "Backed up" label instead of the button once backed up', () => {
+    const onBackupToCloud = vi.fn()
+    renderCard({ item: makeItem({ cloud_backup: 1 }), onBackupToCloud })
+    fireEvent.click(screen.getByRole('button', { name: 'More options' }))
+    expect(screen.getByText('✓ Backed up to cloud')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Back up to cloud' })).toBeNull()
+  })
+})
+
 describe('ItemCard — memoization', () => {
   it('skips re-render on equal item data but updates when a tracked field changes', () => {
     const { props, rerender } = renderCard({ item: makeItem({ title: 'Stable' }) })
