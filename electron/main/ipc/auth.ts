@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import type { User } from '@supabase/supabase-js'
 import { getSupabase, isConfigured } from '../auth/client'
 import { clearSessionStore } from '../auth/sessionStore'
+import { drainOutbox } from '../cloud/uploader'
 
 // The renderer-facing auth seam. Mirrors the app's IPC convention (renderer →
 // window.api → ipcMain) and the updater's event-forwarding pattern for pushing
@@ -56,6 +57,10 @@ export function registerAuthHandlers(): void {
     const supabase = getSupabase()
     supabase?.auth.onAuthStateChange((_event, session) => {
       broadcast({ user: toAuthUser(session?.user) })
+      // A session is now available (fresh sign-in, token refresh, or the
+      // INITIAL_SESSION restored on launch) → drain any pending Phase 2 blob
+      // uploads. No-ops when signed out or nothing is queued.
+      if (session) void drainOutbox().catch(() => {})
     })
   }
 

@@ -2,6 +2,7 @@ import { ipcMain, dialog } from 'electron'
 import { randomUUID } from 'crypto'
 import { captureUrl, captureFile, appendChapters } from '../capture'
 import { triggerBackfill } from '../recommender/lifecycle'
+import { enqueueItemBackup } from '../cloud/uploader'
 
 /**
  * True only for parseable http(s) URLs. `capture:start` is a trust boundary —
@@ -47,6 +48,9 @@ export function registerCaptureHandlers(): void {
         .then((result) => {
           // New item persisted — reconcile its embedding in the background (C2.6).
           triggerBackfill()
+          // Cloud opt-in (Phase 2): back the bytes up to R2 in the background.
+          // Best-effort — never blocks capture completion or fails the job.
+          if (cloudBackup === true) void enqueueItemBackup(result.id).catch(() => {})
           if (!event.sender.isDestroyed()) {
             event.sender.send('capture:complete', { jobId, result })
           }
@@ -102,6 +106,8 @@ export function registerCaptureHandlers(): void {
     const result = await captureFile(filePaths[0], cloudBackup === true)
     // Imported EPUB/PDF persisted — reconcile its embedding in the background.
     triggerBackfill()
+    // Cloud opt-in (Phase 2): back the bytes up to R2 in the background.
+    if (cloudBackup === true) void enqueueItemBackup(result.id).catch(() => {})
     return result
   })
 }

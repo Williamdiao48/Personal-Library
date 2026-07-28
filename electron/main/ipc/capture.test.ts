@@ -13,10 +13,14 @@ vi.mock('../capture', () => ({
 // triggerBackfill is fired after a successful capture — stub it so the async
 // completion path runs without loading the recommender/DB.
 vi.mock('../recommender/lifecycle', () => ({ triggerBackfill: vi.fn() }))
+// The Phase 2 cloud uploader (enqueued on opted-in capture) pulls in the DB +
+// Supabase client — stub it so this suite stays DB-free and we just assert wiring.
+vi.mock('../cloud/uploader', () => ({ enqueueItemBackup: vi.fn(() => Promise.resolve()) }))
 
 import { registerCaptureHandlers, isHttpUrl } from './capture'
 import { captureUrl, captureFile, appendChapters } from '../capture'
 import { triggerBackfill } from '../recommender/lifecycle'
+import { enqueueItemBackup } from '../cloud/uploader'
 
 type Mock = ReturnType<typeof vi.fn>
 /** Let the handler's fire-and-forget .then/.catch microtasks settle. */
@@ -80,6 +84,20 @@ describe('capture:start — SEC-3 scheme guard', () => {
     // Omitted → defaults to false (local-only), never undefined.
     await invoke('capture:start', 'https://example.com/story')
     expect((captureUrl as Mock).mock.calls[0][3]).toBe(false)
+  })
+
+  it('enqueues a cloud backup after an opted-in URL capture (Phase 2)', async () => {
+    ;(captureUrl as Mock).mockResolvedValue({ id: 'item-1' })
+    await invoke('capture:start', 'https://example.com/story', undefined, undefined, true)
+    await flush()
+    expect(enqueueItemBackup).toHaveBeenCalledWith('item-1')
+  })
+
+  it('does NOT enqueue a backup for a local-only URL capture', async () => {
+    ;(captureUrl as Mock).mockResolvedValue({ id: 'item-1' })
+    await invoke('capture:start', 'https://example.com/story')
+    await flush()
+    expect(enqueueItemBackup).not.toHaveBeenCalled()
   })
 
   it('emits progress then triggers a backfill on successful capture', async () => {
@@ -155,6 +173,7 @@ describe('capture:fromFile', () => {
 
     await invoke('capture:fromFile', true)
     expect(captureFile).toHaveBeenCalledWith('/books/novel.epub', true)
+    expect(enqueueItemBackup).toHaveBeenCalledWith('item-1')
   })
 
   it('returns null and imports nothing when the dialog is canceled', async () => {

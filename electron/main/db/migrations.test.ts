@@ -92,6 +92,7 @@ describe('database bring-up', () => {
         'review',
         'cloud_backup',
         'cover_hash',
+        'blob_hash',
       ]),
     )
   })
@@ -393,6 +394,19 @@ describe('database bring-up', () => {
   it('creates idx_blob_sync_state (outbox drain query)', () => {
     const db = openTestDb()
     expect(indexesOf(db)).toContain('idx_blob_sync_state')
+  })
+
+  // Migration 35 — the real R2 content-address (sha256 of packed bytes), distinct
+  // from the fast text fingerprint in content_hash.
+  it('items.blob_hash exists and defaults to NULL (set later by the uploader)', () => {
+    const db = openTestDb()
+    db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified)
+       VALUES ('b1', 'T', NULL, NULL, 'article', 'b1.html', 1, NULL, NULL, 0, 0)`,
+    ).run()
+    expect(db.prepare(`SELECT blob_hash FROM items WHERE id = 'b1'`).get()).toMatchObject({
+      blob_hash: null,
+    })
   })
 
   it('applies migrations incrementally from an empty (pre-schema) database', () => {

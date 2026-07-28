@@ -15,6 +15,7 @@ const h = vi.hoisted(() => {
     isConfigured: vi.fn(() => true),
     getSupabase: vi.fn(),
     clearSessionStore: vi.fn(),
+    drainOutbox: vi.fn(() => Promise.resolve()),
   }
 })
 
@@ -23,6 +24,9 @@ vi.mock('../auth/client', () => ({
   getSupabase: h.getSupabase,
 }))
 vi.mock('../auth/sessionStore', () => ({ clearSessionStore: h.clearSessionStore }))
+// The auth state-change hook kicks the Phase 2 blob uploader when a session
+// appears — stub it so this suite doesn't load the DB, and assert the trigger.
+vi.mock('../cloud/uploader', () => ({ drainOutbox: h.drainOutbox }))
 
 import { registerAuthHandlers } from './auth'
 
@@ -116,6 +120,15 @@ describe('auth IPC — configured', () => {
     vi.spyOn(BrowserWindow, 'getAllWindows').mockReturnValue([{ webContents: { send } }] as any)
     stateCb('SIGNED_IN', { user: { id: 'u1', email: 'a@b.com' } })
     expect(send).toHaveBeenCalledWith('auth:stateChange', { user: { id: 'u1', email: 'a@b.com' } })
+  })
+
+  it('drains the blob outbox when a session appears, not when signed out (Phase 2)', () => {
+    vi.spyOn(BrowserWindow, 'getAllWindows').mockReturnValue([])
+    stateCb('SIGNED_IN', { user: { id: 'u1', email: 'a@b.com' } })
+    expect(h.drainOutbox).toHaveBeenCalledTimes(1)
+    h.drainOutbox.mockClear()
+    stateCb('SIGNED_OUT', null)
+    expect(h.drainOutbox).not.toHaveBeenCalled()
   })
 })
 
