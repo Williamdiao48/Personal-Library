@@ -105,9 +105,7 @@ export default function LibraryView() {
   // content blob's hash — which drives the card's cloud_state.
   useEffect(() => {
     return cloudService.onBlobState(({ hash, state }) => {
-      setItems((prev) =>
-        prev.map((i) => (i.blob_hash === hash ? { ...i, cloud_state: state } : i)),
-      )
+      setItems((prev) => prev.map((i) => (i.blob_hash === hash ? { ...i, cloud_state: state } : i)))
     })
   }, [])
 
@@ -965,12 +963,20 @@ export default function LibraryView() {
                                     setItems((prev) =>
                                       prev.map((i) =>
                                         i.id === editableItem.id
-                                          ? { ...i, cloud_backup: 1, cloud_state: res.state ?? null }
+                                          ? {
+                                              ...i,
+                                              cloud_backup: 1,
+                                              cloud_state: res.state ?? null,
+                                            }
                                           : i,
                                       ),
                                     )
                                     if (res.ok) {
-                                      updateToast(toastId, `"${title}" backed up to cloud`, 'success')
+                                      updateToast(
+                                        toastId,
+                                        `"${title}" backed up to cloud`,
+                                        'success',
+                                      )
                                     } else {
                                       updateToast(
                                         toastId,

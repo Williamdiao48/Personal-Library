@@ -8,6 +8,7 @@ export const cloudService = {
 
   // Live blob sync-state updates (content_hash → synced/error) for cards driven
   // by the fire-and-forget capture path / background drains. Returns unsubscribe.
-  onBlobState: (callback: (ev: { hash: string; state: 'synced' | 'error' }) => void): (() => void) =>
-    window.api.cloud.onBlobState(callback),
+  onBlobState: (
+    callback: (ev: { hash: string; state: 'synced' | 'error' }) => void,
+  ): (() => void) => window.api.cloud.onBlobState(callback),
 }

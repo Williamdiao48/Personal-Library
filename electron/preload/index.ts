@@ -264,8 +264,10 @@ contextBridge.exposeInMainWorld('api', {
   cloud: {
     backupItem: (id: string) => ipcRenderer.invoke('cloud:backupItem', id),
     onBlobState: (callback: (ev: { hash: string; state: 'synced' | 'error' }) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, ev: { hash: string; state: 'synced' | 'error' }) =>
-        callback(ev)
+      const handler = (
+        _e: Electron.IpcRendererEvent,
+        ev: { hash: string; state: 'synced' | 'error' },
+      ) => callback(ev)
       ipcRenderer.on('cloud:blobState', handler)
       return () => ipcRenderer.removeListener('cloud:blobState', handler)
     },

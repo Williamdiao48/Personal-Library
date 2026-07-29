@@ -526,9 +526,7 @@ export interface Api {
     ) => Promise<{ ok: boolean; state?: 'pending' | 'synced' | 'error'; error?: string }>
     /** Subscribe to blob sync-state changes (content_hash → synced/error) so cards
      *  update live for the fire-and-forget capture path; returns unsubscribe. */
-    onBlobState: (
-      callback: (ev: { hash: string; state: 'synced' | 'error' }) => void,
-    ) => () => void
+    onBlobState: (callback: (ev: { hash: string; state: 'synced' | 'error' }) => void) => () => void
   }
   llm: {
     /** Sync the local-LLM reranker setting to the main process (mirrors discover.setEnabled). */
