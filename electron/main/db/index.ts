@@ -11,7 +11,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 33
+export const CURRENT_VERSION = 35
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -312,6 +312,42 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   // NULL and are swept on first sweep — they just re-embed cheaply on next use.
   // ALTER-ADD, MIGRATIONS only (never in SCHEMA baseline, per the fresh-install gotcha).
   33: `ALTER TABLE candidate_embeddings ADD COLUMN cached_at INTEGER;`,
+  // Cloud Phase 2 — blob backup foundation. Per-item cloud opt-in + blob sync
+  // state, both DEVICE-LOCAL (never synced to Postgres in Phase 3).
+  //   • items.cloud_backup — the privacy gate (Decision 8): 0 = local-only (the
+  //     default; every existing row backfills to 0), 1 = eligible for R2 upload.
+  //     The uploader only ever enqueues rows where cloud_backup = 1.
+  //   • items.cover_hash — sha256 of the cover bytes, for the covers R2 key.
+  //   • blob_sync — this device's view of which blobs it has uploaded. Keyed by
+  //     the R2 object hash (identical bytes = one key = one row → dedupe). Not
+  //     item- or user-scoped; it's a local outbox/ledger, not synced data.
+  // NOTE: the R2 content key is items.blob_hash (migration 35, a real sha256 of
+  // the packed content bytes) — NOT items.content_hash, which is a fast 32-bit
+  // TEXT fingerprint (util/contentHash.ts) used for refresh/embedding staleness,
+  // is HTML-only, and is unsuitable as an object key.
+  // ALTER-ADD + new table, MIGRATIONS only (never in SCHEMA baseline, per the
+  // fresh-install duplicate-column gotcha).
+  34: `
+    ALTER TABLE items ADD COLUMN cloud_backup INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE items ADD COLUMN cover_hash TEXT;
+    CREATE TABLE IF NOT EXISTS blob_sync (
+      content_hash    TEXT PRIMARY KEY,
+      kind            TEXT NOT NULL DEFAULT 'content',  -- 'content' | 'cover'
+      state           TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'synced' | 'error'
+      last_attempt_at INTEGER,
+      error           TEXT,
+      updated_at      INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_blob_sync_state ON blob_sync (state);
+  `,
+  // Cloud Phase 2 — the real R2 content-address. items.content_hash is a fast
+  // 32-bit text fingerprint (HTML-only, for refresh/embedding staleness), NOT a
+  // byte hash, so it can't key an object store. blob_hash is sha256 of the item's
+  // PACKED content bytes (one archive per item — single-file items are a 1-entry
+  // archive), computed by the uploader for cloud-opted items. Device-local; the
+  // synced items row (Phase 3) carries it so another device resolves bytes.
+  // ALTER-ADD, MIGRATIONS only (never in SCHEMA baseline, per the fresh-install gotcha).
+  35: `ALTER TABLE items ADD COLUMN blob_hash TEXT;`,
 }
 
 export function initDatabase(): void {

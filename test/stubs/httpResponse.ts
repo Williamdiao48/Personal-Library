@@ -9,6 +9,7 @@ export interface FakeResponse {
   statusText: string
   text: () => Promise<string>
   json: () => Promise<unknown>
+  arrayBuffer?: () => Promise<ArrayBuffer>
 }
 
 /** A 200 response whose body is `html` (both text() and a JSON.parse of it). */
@@ -30,6 +31,20 @@ export function okJson(obj: unknown): FakeResponse {
     statusText: 'OK',
     text: async () => JSON.stringify(obj),
     json: async () => obj,
+  }
+}
+
+/** A 200 response whose body is raw `bytes` (for blob GETs that read
+ *  arrayBuffer()). Pair with `vi.stubGlobal('fetch', …)`. */
+export function okBytes(bytes: Buffer): FakeResponse {
+  const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    text: async () => bytes.toString('utf8'),
+    json: async () => JSON.parse(bytes.toString('utf8')),
+    arrayBuffer: async () => ab,
   }
 }
 

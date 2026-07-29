@@ -156,6 +156,13 @@ vi.mock('../ui/MultiSelect', () => ({
   ),
 }))
 
+// LibraryView reads useAuth to gate the "Back up to cloud" action. This suite
+// exercises the local library, so stub a signed-out/unconfigured state (cloud
+// action stays hidden) — no AuthProvider/window.api plumbing needed here.
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ user: null, configured: false }),
+}))
+
 vi.mock('../../services/library', () => ({
   libraryService: {
     getAll: vi.fn(),
@@ -259,6 +266,11 @@ beforeEach(() => {
       return () => {}
     }),
     onCaptureError: vi.fn(() => () => {}),
+    // LibraryView subscribes to live backup-status broadcasts on mount.
+    cloud: {
+      onBlobState: vi.fn(() => () => {}),
+      backupItem: vi.fn(async () => ({ ok: true, state: 'synced' })),
+    },
   }
   lib.getAll.mockResolvedValue([])
 })

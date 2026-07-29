@@ -47,6 +47,7 @@ describe('database bring-up', () => {
       'candidate_embeddings',
       'annotation_themes',
       'annotation_theme_links',
+      'blob_sync',
     ]) {
       expect(tables).toContain(t)
     }
@@ -89,6 +90,9 @@ describe('database bring-up', () => {
         'deleted_at',
         'rating',
         'review',
+        'cloud_backup',
+        'cover_hash',
+        'blob_hash',
       ]),
     )
   })
@@ -345,6 +349,63 @@ describe('database bring-up', () => {
     db.prepare(`DELETE FROM annotations WHERE id = 'an'`).run()
     expect(db.prepare(`SELECT COUNT(*) c FROM annotation_theme_links`).get()).toMatchObject({
       c: 0,
+    })
+  })
+
+  // Migration 34 — Cloud Phase 2 blob-backup foundation (per-item opt-in + ledger).
+  it('items.cloud_backup defaults to 0 (local-only, the privacy-safe default)', () => {
+    const db = openTestDb()
+    db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified)
+       VALUES ('c1', 'T', NULL, NULL, 'article', 'c1.html', 1, NULL, NULL, 0, 0)`,
+    ).run()
+    // A row inserted without naming cloud_backup must land local-only.
+    expect(db.prepare(`SELECT cloud_backup FROM items WHERE id = 'c1'`).get()).toMatchObject({
+      cloud_backup: 0,
+    })
+  })
+
+  it('blob_sync has the expected columns and content_hash is the primary key', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'blob_sync')).toEqual(
+      expect.arrayContaining([
+        'content_hash',
+        'kind',
+        'state',
+        'last_attempt_at',
+        'error',
+        'updated_at',
+      ]),
+    )
+    const pk = (
+      db.prepare(`PRAGMA table_info(blob_sync)`).all() as { name: string; pk: number }[]
+    ).filter((c) => c.pk > 0)
+    expect(pk.map((c) => c.name)).toEqual(['content_hash'])
+  })
+
+  it('blob_sync defaults a new row to kind=content / state=pending', () => {
+    const db = openTestDb()
+    db.prepare(`INSERT INTO blob_sync (content_hash) VALUES ('h1')`).run()
+    expect(
+      db.prepare(`SELECT kind, state FROM blob_sync WHERE content_hash = 'h1'`).get(),
+    ).toMatchObject({ kind: 'content', state: 'pending' })
+  })
+
+  it('creates idx_blob_sync_state (outbox drain query)', () => {
+    const db = openTestDb()
+    expect(indexesOf(db)).toContain('idx_blob_sync_state')
+  })
+
+  // Migration 35 — the real R2 content-address (sha256 of packed bytes), distinct
+  // from the fast text fingerprint in content_hash.
+  it('items.blob_hash exists and defaults to NULL (set later by the uploader)', () => {
+    const db = openTestDb()
+    db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified)
+       VALUES ('b1', 'T', NULL, NULL, 'article', 'b1.html', 1, NULL, NULL, 0, 0)`,
+    ).run()
+    expect(db.prepare(`SELECT blob_hash FROM items WHERE id = 'b1'`).get()).toMatchObject({
+      blob_hash: null,
     })
   })
 

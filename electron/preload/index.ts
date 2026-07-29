@@ -51,9 +51,9 @@ contextBridge.exposeInMainWorld('api', {
   capture: {
     // Fire-and-forget: returns a jobId immediately. Progress/completion/errors
     // are delivered asynchronously via onCaptureProgress/Complete/Error.
-    start: (url: string, start?: number, end?: number) =>
-      ipcRenderer.invoke('capture:start', url, start, end),
-    fromFile: () => ipcRenderer.invoke('capture:fromFile'),
+    start: (url: string, start?: number, end?: number, cloudBackup?: boolean) =>
+      ipcRenderer.invoke('capture:start', url, start, end, cloudBackup),
+    fromFile: (cloudBackup?: boolean) => ipcRenderer.invoke('capture:fromFile', cloudBackup),
     append: (itemId: string, end: number) => ipcRenderer.invoke('capture:append', itemId, end),
   },
 
@@ -256,6 +256,20 @@ contextBridge.exposeInMainWorld('api', {
       ) => callback(state)
       ipcRenderer.on('auth:stateChange', handler)
       return () => ipcRenderer.removeListener('auth:stateChange', handler)
+    },
+  },
+
+  // Cloud actions (Phase 2). backupItem opts an existing library item into cloud
+  // backup — flips its gate and enqueues its blobs for the uploader to drain.
+  cloud: {
+    backupItem: (id: string) => ipcRenderer.invoke('cloud:backupItem', id),
+    onBlobState: (callback: (ev: { hash: string; state: 'synced' | 'error' }) => void) => {
+      const handler = (
+        _e: Electron.IpcRendererEvent,
+        ev: { hash: string; state: 'synced' | 'error' },
+      ) => callback(ev)
+      ipcRenderer.on('cloud:blobState', handler)
+      return () => ipcRenderer.removeListener('cloud:blobState', handler)
     },
   },
 

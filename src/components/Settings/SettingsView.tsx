@@ -402,6 +402,7 @@ const MIN_PASSWORD_LENGTH = 8
 
 function AccountSettings() {
   const { user, configured, loading, signIn, signUp, signOut } = useAuth()
+  const { settings, updateSettings } = useSettings()
   const [mode, setMode] = useState<'signin' | 'signup'>('signin')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -424,18 +425,37 @@ function AccountSettings() {
 
   if (user) {
     return (
-      <div className="settings-row settings-row--top">
-        <div className="settings-row-stack">
-          <span className="settings-row-label">Signed in</span>
-          <span className="settings-row-hint">{user.email ?? user.id}</span>
+      <>
+        <div className="settings-row settings-row--top">
+          <div className="settings-row-stack">
+            <span className="settings-row-label">Signed in</span>
+            <span className="settings-row-hint">{user.email ?? user.id}</span>
+          </div>
+          <button
+            className="settings-action-btn settings-action-btn--ghost"
+            onClick={() => void signOut()}
+          >
+            Sign out
+          </button>
         </div>
-        <button
-          className="settings-action-btn settings-action-btn--ghost"
-          onClick={() => void signOut()}
-        >
-          Sign out
-        </button>
-      </div>
+
+        <div className="settings-row settings-row--top">
+          <div className="settings-row-stack">
+            <label className="settings-row-label" htmlFor="toggle-cloud-backup">
+              Back up books to the cloud
+            </label>
+            <span className="settings-row-hint">
+              When on, you choose per book (at capture) whether its file is backed up. Off keeps
+              everything on this device — nothing is ever uploaded.
+            </span>
+          </div>
+          <Toggle
+            id="toggle-cloud-backup"
+            checked={settings.cloudBackupEnabled}
+            onChange={(v) => updateSettings({ cloudBackupEnabled: v })}
+          />
+        </div>
+      </>
     )
   }
 

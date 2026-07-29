@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { captureService } from '../../services/capture'
 import { libraryService } from '../../services/library'
+import { useAuth } from '../../contexts/AuthContext'
+import { useSettings } from '../../contexts/SettingsContext'
 import type { CaptureResult, Item } from '../../types'
 
 interface Props {
@@ -20,6 +22,13 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
   const [rangeStart, setRangeStart] = useState('')
   const [rangeEnd, setRangeEnd] = useState('')
   const [duplicate, setDuplicate] = useState<{ id: string; title: string } | null>(null)
+
+  const { user, configured } = useAuth()
+  const { settings, updateSettings } = useSettings()
+  // The per-capture cloud opt-in only exists when the user is signed in AND has
+  // turned the master switch on (Phase 2 Decision 8). Otherwise nothing uploads.
+  const cloudEligible = configured && !!user && settings.cloudBackupEnabled
+  const cloudBackup = cloudEligible && settings.cloudBackupDefault
 
   // URL capture: fire-and-forget — modal closes immediately, job tracked in sidebar
   async function handleSubmit(e: React.FormEvent) {
@@ -43,7 +52,7 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
   async function startCapture(trimmed: string) {
     const start = showRange && rangeStart ? parseInt(rangeStart) : undefined
     const end = showRange && rangeEnd ? parseInt(rangeEnd) : undefined
-    const jobId = await captureService.start(trimmed, start, end)
+    const jobId = await captureService.start(trimmed, start, end, cloudBackup)
     onJobStarted(jobId, trimmed)
     onClose()
   }
@@ -53,7 +62,7 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
     setImporting(true)
     setError(null)
     try {
-      const result: CaptureResult | null = await captureService.fromFile()
+      const result: CaptureResult | null = await captureService.fromFile(cloudBackup)
       if (!result) {
         setImporting(false)
         return
@@ -113,6 +122,23 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
                 />
               </label>
             </div>
+          )}
+          {cloudEligible && (
+            <label className="modal-cloud-backup">
+              <input
+                type="checkbox"
+                checked={settings.cloudBackupDefault}
+                onChange={(e) => updateSettings({ cloudBackupDefault: e.target.checked })}
+              />
+              <span className="modal-cloud-backup-text">
+                Back up to cloud
+                <span className="modal-cloud-backup-hint">
+                  {settings.cloudBackupDefault
+                    ? 'This item’s file is uploaded to your account.'
+                    : 'This item stays on this device only.'}
+                </span>
+              </span>
+            </label>
           )}
           {error && <p className="modal-error">{error}</p>}
           {duplicate && (

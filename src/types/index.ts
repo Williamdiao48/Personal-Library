@@ -26,6 +26,12 @@ export interface Item {
   derived_from?: string | null // UUID of source PDF if this is a converted EPUB
   chapter_start?: number | null
   chapter_end?: number | null
+  cloud_backup?: number // Phase 2 opt-in: 0 = local-only (default), 1 = eligible for cloud backup
+  blob_hash?: string | null // sha256 of the packed content archive, the R2 content key
+  cover_hash?: string | null // sha256 of cover bytes, for the R2 covers key
+  // joined from blob_sync (real backup status of the content blob, not just the
+  // cloud_backup intent flag): 'pending' | 'synced' | 'error', or null if never enqueued
+  cloud_state?: 'pending' | 'synced' | 'error' | null
   // joined from progress
   scroll_position?: number
   last_read_at?: number
@@ -360,8 +366,11 @@ export interface Api {
     getItemCounts: () => Promise<{ tag_id: string; count: number }[]>
   }
   capture: {
-    start: (url: string, start?: number, end?: number) => Promise<string> // returns jobId immediately
-    fromFile: () => Promise<CaptureResult | null>
+    // cloudBackup (Phase 2 opt-in): sets the item's local cloud_backup flag; the
+    // uploader is what later acts on it. Renderer only passes true when signed in
+    // with the cloud-backup master switch on.
+    start: (url: string, start?: number, end?: number, cloudBackup?: boolean) => Promise<string> // returns jobId immediately
+    fromFile: (cloudBackup?: boolean) => Promise<CaptureResult | null>
     append: (itemId: string, end: number) => Promise<string>
   }
   reader: {
@@ -508,6 +517,16 @@ export interface Api {
     signOut: () => Promise<void>
     /** Subscribe to auth state changes (sign-in/out/refresh); returns unsubscribe. */
     onStateChange: (callback: (state: AuthState) => void) => () => void
+  }
+  cloud: {
+    /** Opt an existing item into cloud backup: flip its gate + enqueue its blobs.
+     *  Resolves once the upload attempt finishes, reporting the real outcome. */
+    backupItem: (
+      id: string,
+    ) => Promise<{ ok: boolean; state?: 'pending' | 'synced' | 'error'; error?: string }>
+    /** Subscribe to blob sync-state changes (content_hash → synced/error) so cards
+     *  update live for the fire-and-forget capture path; returns unsubscribe. */
+    onBlobState: (callback: (ev: { hash: string; state: 'synced' | 'error' }) => void) => () => void
   }
   llm: {
     /** Sync the local-LLM reranker setting to the main process (mirrors discover.setEnabled). */

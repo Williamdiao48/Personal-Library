@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { readFile, stat } from 'fs/promises'
 import { extractEpubContent } from '../capture/parsers/epub-content'
 import { safeContentPath } from '../security/paths'
+import { ensureLocalContent } from '../cloud/downloader'
 // Magic-byte + size caps are defined once in security/validation.ts and shared
 // with the import path (capture/index.ts) so both gates agree.
 import {
@@ -15,15 +16,19 @@ export function registerReaderHandlers(): void {
   // Path-traversal guard lives in security/paths.ts (safeContentPath).
 
   // Returns HTML/text content as a UTF-8 string (articles).
-  ipcMain.handle('reader:loadContent', (_e, relativePath: string) =>
-    readFile(safeContentPath(relativePath), 'utf8'),
-  )
+  ipcMain.handle('reader:loadContent', async (_e, relativePath: string) => {
+    await ensureLocalContent(relativePath) // pull-on-open if this device lacks the bytes
+    return readFile(safeContentPath(relativePath), 'utf8')
+  })
 
   // Returns the number of chapter files for a multi-chapter item.
   // relativePath must be the first chapter file, e.g. "{uuid}-ch0.html".
   // Returns 1 for single-chapter (legacy) items.
   ipcMain.handle('reader:getChapterCount', async (_e, relativePath: string): Promise<number> => {
     if (!relativePath.match(/-ch\d+\.html$/)) return 1
+    // Pull the whole item first — one archive restores every chapter file, so the
+    // stat loop below sees the full set (not a truncated count) on a fresh device.
+    await ensureLocalContent(relativePath)
     const base = relativePath.replace(/-ch\d+\.html$/, '')
     let count = 0
     while (true) {
@@ -44,6 +49,7 @@ export function registerReaderHandlers(): void {
   ipcMain.handle(
     'reader:loadChapter',
     async (_e, relativePath: string, index: number): Promise<string> => {
+      await ensureLocalContent(relativePath)
       if (!relativePath.match(/-ch\d+\.html$/)) {
         return readFile(safeContentPath(relativePath), 'utf8')
       }
@@ -56,6 +62,7 @@ export function registerReaderHandlers(): void {
   // Validation runs in the main process so the renderer never receives bytes
   // from a file that fails the checks.
   ipcMain.handle('reader:loadBinaryContent', async (_e, relativePath: string) => {
+    await ensureLocalContent(relativePath) // pull-on-open if this device lacks the bytes
     const fullPath = safeContentPath(relativePath)
 
     // 1. Stat first — avoids allocating a huge buffer for oversized files.
@@ -81,6 +88,7 @@ export function registerReaderHandlers(): void {
   // All file I/O and parsing happens here in the main process; the renderer
   // receives only sanitized HTML strings — no file system access needed.
   ipcMain.handle('reader:loadEpub', async (_e, relativePath: string) => {
+    await ensureLocalContent(relativePath) // pull-on-open if this device lacks the bytes
     const fullPath = safeContentPath(relativePath)
 
     // 1. Size check before reading the file into memory.

@@ -2,9 +2,11 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { libraryService, tagService, collectionService } from '../../services/library'
+import { cloudService } from '../../services/cloud'
 import type { Item, Tag, Collection, RefreshResult, ReadingStatus } from '../../types'
 import { getEffectiveStatus } from '../../types'
 import { useSettings } from '../../contexts/SettingsContext'
+import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { useCaptureJobs } from '../../contexts/CaptureJobsContext'
 import type { SortBy } from '../../contexts/SettingsContext'
@@ -23,8 +25,13 @@ import { buildTagsMap, buildCollectionsMap } from './itemGrid'
 
 export default function LibraryView() {
   const { settings, updateSettings } = useSettings()
+  const { user, configured } = useAuth()
   const { addToast, updateToast } = useToast()
   const { captureJobs, startJob, dismissJob } = useCaptureJobs()
+
+  // "Back up to cloud" is offered only when the user is signed in and the master
+  // switch is on (mirrors the capture-time gate in AddItemModal, Decision 8).
+  const cloudEligible = configured && !!user && settings.cloudBackupEnabled
 
   const [items, setItems] = useState<Item[]>([])
   const [trashedCount, setTrashedCount] = useState(0)
@@ -89,6 +96,16 @@ export default function LibraryView() {
     return window.api.onRequestCapture((url) => {
       setPendingUrl(url)
       setShowAddModal(true)
+    })
+  }, [])
+
+  // Live backup-status updates: the uploader broadcasts when a blob's sync state
+  // flips (synced/error), so cards on the fire-and-forget capture path and
+  // background drains update without a library refetch. Match on blob_hash — the
+  // content blob's hash — which drives the card's cloud_state.
+  useEffect(() => {
+    return cloudService.onBlobState(({ hash, state }) => {
+      setItems((prev) => prev.map((i) => (i.blob_hash === hash ? { ...i, cloud_state: state } : i)))
     })
   }, [])
 
@@ -933,6 +950,46 @@ export default function LibraryView() {
                             )
                           }}
                           onWriteReview={() => setReviewModalItem(editableItem)}
+                          onBackupToCloud={
+                            cloudEligible
+                              ? async () => {
+                                  const title = editableItem.title
+                                  const toastId = addToast(`Backing up "${title}"…`, 'info')
+                                  try {
+                                    const res = await cloudService.backupItem(editableItem.id)
+                                    // Reflect the REAL outcome: cloud_backup stays set
+                                    // (intent), cloud_state carries synced/error so the
+                                    // card shows the truth (incl. a Retry on failure).
+                                    setItems((prev) =>
+                                      prev.map((i) =>
+                                        i.id === editableItem.id
+                                          ? {
+                                              ...i,
+                                              cloud_backup: 1,
+                                              cloud_state: res.state ?? null,
+                                            }
+                                          : i,
+                                      ),
+                                    )
+                                    if (res.ok) {
+                                      updateToast(
+                                        toastId,
+                                        `"${title}" backed up to cloud`,
+                                        'success',
+                                      )
+                                    } else {
+                                      updateToast(
+                                        toastId,
+                                        res.error ?? `Couldn't back up "${title}"`,
+                                        'error',
+                                      )
+                                    }
+                                  } catch {
+                                    updateToast(toastId, `Couldn't back up "${title}"`, 'error')
+                                  }
+                                }
+                              : undefined
+                          }
                           onRefresh={
                             displayItem.source_url
                               ? async (): Promise<RefreshResult> => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { installMockApi } from '../../test/renderer/mockWindowApi'
 import { captureService } from './capture'
 import { readerService } from './reader'
@@ -8,6 +8,7 @@ import { convertService } from './convert'
 import { backupService } from './backup'
 import { annotationsService, annotationThemesService } from './annotationsService'
 import { discoverService } from './discover'
+import { cloudService } from './cloud'
 
 // The service layer is a thin pass-through to window.api. These tests lock the
 // wiring for every non-library service — right namespace, right method, right
@@ -22,9 +23,11 @@ beforeEach(() => {
 })
 
 describe('captureService delegation', () => {
-  it('start forwards url + optional range', () => {
+  it('start forwards url + optional range + cloudBackup', () => {
     captureService.start('https://x', 1, 3)
-    expect(api.capture.start).toHaveBeenCalledWith('https://x', 1, 3)
+    expect(api.capture.start).toHaveBeenCalledWith('https://x', 1, 3, undefined)
+    captureService.start('https://x', 1, 3, true)
+    expect(api.capture.start).toHaveBeenCalledWith('https://x', 1, 3, true)
   })
   it('fromFile → api.capture.fromFile', () => {
     captureService.fromFile()
@@ -33,6 +36,18 @@ describe('captureService delegation', () => {
   it('append forwards itemId + end', () => {
     captureService.append('i1', 5)
     expect(api.capture.append).toHaveBeenCalledWith('i1', 5)
+  })
+})
+
+describe('cloudService delegation', () => {
+  it('backupItem → api.cloud.backupItem', () => {
+    cloudService.backupItem('i1')
+    expect(api.cloud.backupItem).toHaveBeenCalledWith('i1')
+  })
+  it('onBlobState → api.cloud.onBlobState', () => {
+    const cb = vi.fn()
+    cloudService.onBlobState(cb)
+    expect(api.cloud.onBlobState).toHaveBeenCalledWith(cb)
   })
 })
 

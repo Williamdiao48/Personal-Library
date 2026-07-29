@@ -178,6 +178,25 @@ describe('captureUrl — single-article persistence', () => {
     expect(row.chapter_start).toBe(2)
     expect(row.chapter_end).toBe(5)
   })
+
+  it('defaults cloud_backup to 0 (local-only) and honors the opt-in flag (Phase 2)', async () => {
+    vi.mocked(captureRoyalRoad).mockResolvedValue(siteContent())
+    const local = await captureUrl('https://www.royalroad.com/fiction/1')
+    expect(
+      (db.prepare('SELECT cloud_backup FROM items WHERE id = ?').get(local.id) as any).cloud_backup,
+    ).toBe(0)
+
+    vi.mocked(captureRoyalRoad).mockResolvedValue(siteContent())
+    const cloud = await captureUrl(
+      'https://www.royalroad.com/fiction/1',
+      undefined,
+      undefined,
+      true,
+    )
+    expect(
+      (db.prepare('SELECT cloud_backup FROM items WHERE id = ?').get(cloud.id) as any).cloud_backup,
+    ).toBe(1)
+  })
 })
 
 // ── saveToLibrary: multi-chapter split (Headline) ────────────────────────────
