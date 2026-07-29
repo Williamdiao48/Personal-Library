@@ -99,6 +99,18 @@ export default function LibraryView() {
     })
   }, [])
 
+  // Live backup-status updates: the uploader broadcasts when a blob's sync state
+  // flips (synced/error), so cards on the fire-and-forget capture path and
+  // background drains update without a library refetch. Match on blob_hash — the
+  // content blob's hash — which drives the card's cloud_state.
+  useEffect(() => {
+    return cloudService.onBlobState(({ hash, state }) => {
+      setItems((prev) =>
+        prev.map((i) => (i.blob_hash === hash ? { ...i, cloud_state: state } : i)),
+      )
+    })
+  }, [])
+
   // Debounce search so every keystroke doesn't trigger a full filter+sort pass
   useEffect(() => {
     const id = setTimeout(() => setDebouncedQuery(searchQuery), 300)
@@ -947,17 +959,18 @@ export default function LibraryView() {
                                   const toastId = addToast(`Backing up "${title}"…`, 'info')
                                   try {
                                     const res = await cloudService.backupItem(editableItem.id)
+                                    // Reflect the REAL outcome: cloud_backup stays set
+                                    // (intent), cloud_state carries synced/error so the
+                                    // card shows the truth (incl. a Retry on failure).
+                                    setItems((prev) =>
+                                      prev.map((i) =>
+                                        i.id === editableItem.id
+                                          ? { ...i, cloud_backup: 1, cloud_state: res.state ?? null }
+                                          : i,
+                                      ),
+                                    )
                                     if (res.ok) {
-                                      setItems((prev) =>
-                                        prev.map((i) =>
-                                          i.id === editableItem.id ? { ...i, cloud_backup: 1 } : i,
-                                        ),
-                                      )
-                                      updateToast(
-                                        toastId,
-                                        `"${title}" backing up to cloud`,
-                                        'success',
-                                      )
+                                      updateToast(toastId, `"${title}" backed up to cloud`, 'success')
                                     } else {
                                       updateToast(
                                         toastId,

@@ -266,6 +266,11 @@ beforeEach(() => {
       return () => {}
     }),
     onCaptureError: vi.fn(() => () => {}),
+    // LibraryView subscribes to live backup-status broadcasts on mount.
+    cloud: {
+      onBlobState: vi.fn(() => () => {}),
+      backupItem: vi.fn(async () => ({ ok: true, state: 'synced' })),
+    },
   }
   lib.getAll.mockResolvedValue([])
 })

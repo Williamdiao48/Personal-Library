@@ -1,3 +1,4 @@
+import { BrowserWindow } from 'electron'
 import { getDb } from '../db'
 import { getSupabase, isConfigured } from '../auth/client'
 import { buildContentBlob, buildCoverBlob, type ItemBlobRow } from './itemBlob'
@@ -24,16 +25,28 @@ interface BlobSyncRow {
 
 // ── blob_sync ledger ─────────────────────────────────────────────────────────
 
-/** Insert a pending ledger row if absent. Never downgrades an already-'synced'
- *  row — identical bytes across items share one hash → one row → dedupe. */
+/** Insert a pending ledger row if absent. Never re-uploads an already-'synced'
+ *  row — identical bytes across items share one hash → one row → dedupe — but
+ *  DOES revive an 'error' row back to 'pending' so a re-enqueue (e.g. a manual
+ *  Retry) uploads immediately instead of waiting out the retry backoff. */
 function enqueueBlob(hash: string, kind: BlobKind): void {
   getDb()
     .prepare(
       `INSERT INTO blob_sync (content_hash, kind, state, updated_at)
        VALUES (?, ?, 'pending', ?)
-       ON CONFLICT(content_hash) DO NOTHING`,
+       ON CONFLICT(content_hash) DO UPDATE SET state = 'pending', updated_at = excluded.updated_at
+         WHERE blob_sync.state = 'error'`,
     )
     .run(hash, kind, Date.now())
+}
+
+/** Notify the renderer a blob's sync state changed so cards driven by
+ *  `blob_sync.state` (via items.blob_hash) update live — covers the fire-and-forget
+ *  capture path and background drains, which don't await an IPC round-trip. */
+function broadcastBlobState(hash: string, state: 'synced' | 'error'): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('cloud:blobState', { hash, state })
+  }
 }
 
 function markState(hash: string, state: 'synced' | 'error', error: string | null = null): void {
@@ -44,6 +57,7 @@ function markState(hash: string, state: 'synced' | 'error', error: string | null
        WHERE content_hash = ?`,
     )
     .run(state, error, now, now, hash)
+  broadcastBlobState(hash, state)
 }
 
 // ── enqueue on capture ───────────────────────────────────────────────────────
@@ -94,7 +108,15 @@ async function uploadBlob(hash: string, kind: BlobKind): Promise<void> {
   if (!data) throw new Error(`no local source for ${kind} blob ${hash.slice(0, 12)}`)
   const url = await presignBlobUrl('put', kind, hash)
   const res = await fetch(url, { method: 'PUT', body: data })
-  if (!res.ok) throw new Error(`R2 PUT failed (${res.status})`)
+  if (!res.ok) {
+    // R2/S3 returns an XML body (<Code>…</Code>) explaining a 4xx; surface a
+    // slice of it so failures are diagnosable instead of an opaque status. Guard
+    // the body read (via a then-chain, so even a synchronous throw is caught).
+    const detail = await Promise.resolve()
+      .then(() => res.text())
+      .catch(() => '')
+    throw new Error(`R2 PUT failed (${res.status})${detail ? `: ${detail.slice(0, 300)}` : ''}`)
+  }
 }
 
 /**

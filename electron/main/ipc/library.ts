@@ -35,9 +35,11 @@ export function clampRating(rating: unknown): number | null {
 export function registerLibraryHandlers(): void {
   ipcMain.handle('library:getAll', () => {
     return all<Item>(`
-      SELECT i.*, p.scroll_position, p.last_read_at, p.scroll_chapter, p.scroll_y, p.status
+      SELECT i.*, p.scroll_position, p.last_read_at, p.scroll_chapter, p.scroll_y, p.status,
+             bs.state AS cloud_state
       FROM items i
       LEFT JOIN progress p ON p.item_id = i.id
+      LEFT JOIN blob_sync bs ON bs.content_hash = i.blob_hash
       WHERE i.deleted_at IS NULL
       ORDER BY i.date_saved DESC
     `)
@@ -46,9 +48,11 @@ export function registerLibraryHandlers(): void {
   ipcMain.handle('library:getById', (_e, id: string) => {
     return get<Item>(
       `
-      SELECT i.*, p.scroll_position, p.last_read_at, p.scroll_chapter, p.scroll_y, p.status
+      SELECT i.*, p.scroll_position, p.last_read_at, p.scroll_chapter, p.scroll_y, p.status,
+             bs.state AS cloud_state
       FROM items i
       LEFT JOIN progress p ON p.item_id = i.id
+      LEFT JOIN blob_sync bs ON bs.content_hash = i.blob_hash
       WHERE i.id = ?
     `,
       [id],

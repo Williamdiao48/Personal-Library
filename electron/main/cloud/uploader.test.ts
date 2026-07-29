@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { BrowserWindow } from '../../../test/stubs/electron'
 import { openTestDb, closeTestDb, seedItem, type TestDb } from '../../../test/db/harness'
 
 // Mock the seams so the uploader test is about the LEDGER + DRAIN logic, not file
@@ -83,10 +84,31 @@ describe('enqueueItemBackup', () => {
     const a = seedItem(db, { id: 'a', file_path: 'a.epub' })
     const b = seedItem(db, { id: 'b', file_path: 'b.epub' })
     await enqueueItemBackup(a) // uploads contenthash
-    await enqueueItemBackup(b) // same hash → ON CONFLICT DO NOTHING, already synced
+    await enqueueItemBackup(b) // same hash → already synced, upsert leaves it be
 
     expect(db.prepare(`SELECT COUNT(*) n FROM blob_sync`).get()).toMatchObject({ n: 1 })
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('revives an errored row on re-enqueue so a manual retry uploads immediately', async () => {
+    const id = seedItem(db, { file_path: 'a.epub' })
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 400 } as unknown as Response)
+    await enqueueItemBackup(id) // first attempt fails → errored
+    expect(blobRow('contenthash')?.state).toBe('error')
+
+    // Re-enqueue: upsert revives error→pending, drain picks it up now (no backoff).
+    await enqueueItemBackup(id)
+    expect(blobRow('contenthash')).toMatchObject({ state: 'synced' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('broadcasts a cloud:blobState event to the renderer when a blob syncs', async () => {
+    const send = vi.fn()
+    vi.spyOn(BrowserWindow, 'getAllWindows').mockReturnValue([{ webContents: { send } }] as never)
+    const id = seedItem(db, { file_path: 'a.epub' })
+    await enqueueItemBackup(id)
+
+    expect(send).toHaveBeenCalledWith('cloud:blobState', { hash: 'contenthash', state: 'synced' })
   })
 })
 

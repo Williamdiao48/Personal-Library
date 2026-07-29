@@ -402,12 +402,36 @@ describe('ItemCard — cloud backup action', () => {
     expect(onBackupToCloud).toHaveBeenCalled()
   })
 
-  it('shows a non-interactive "Backed up" label instead of the button once backed up', () => {
+  it('shows a non-interactive "Backed up" label only once the blob is actually synced', () => {
     const onBackupToCloud = vi.fn()
-    renderCard({ item: makeItem({ cloud_backup: 1 }), onBackupToCloud })
+    renderCard({ item: makeItem({ cloud_backup: 1, cloud_state: 'synced' }), onBackupToCloud })
     fireEvent.click(screen.getByRole('button', { name: 'More options' }))
     expect(screen.getByText('✓ Backed up to cloud')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Back up to cloud' })).toBeNull()
+  })
+
+  it('shows a non-interactive "Backing up…" label while the upload is still in flight', () => {
+    const onBackupToCloud = vi.fn()
+    // Intent set (cloud_backup=1) but blob not yet synced (pending/unknown).
+    renderCard({ item: makeItem({ cloud_backup: 1, cloud_state: 'pending' }), onBackupToCloud })
+    fireEvent.click(screen.getByRole('button', { name: 'More options' }))
+    expect(screen.getByText('Backing up…')).toBeInTheDocument()
+    // Not a false success, and no action to click yet.
+    expect(screen.queryByText('✓ Backed up to cloud')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull()
+  })
+
+  it('shows "Backup failed — Retry" and re-invokes the handler when the upload errored', async () => {
+    const onBackupToCloud = vi.fn().mockResolvedValue(undefined)
+    renderCard({ item: makeItem({ cloud_backup: 1, cloud_state: 'error' }), onBackupToCloud })
+    fireEvent.click(screen.getByRole('button', { name: 'More options' }))
+    // No false "✓ Backed up" — the failure is shown honestly and is retriable.
+    expect(screen.queryByText('✓ Backed up to cloud')).toBeNull()
+    const retry = screen.getByRole('button', { name: 'Backup failed — Retry' })
+    await act(async () => {
+      fireEvent.click(retry)
+    })
+    expect(onBackupToCloud).toHaveBeenCalled()
   })
 })
 

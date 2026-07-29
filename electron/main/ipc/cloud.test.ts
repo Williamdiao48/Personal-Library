@@ -30,8 +30,42 @@ describe('cloud:backupItem', () => {
 
     const res = await invoke('cloud:backupItem', id)
 
-    expect(res).toEqual({ ok: true })
+    // Mocked enqueue records no blob_hash/ledger row, so the real state is unknown
+    // yet → reported as still-pending. The gate flips on regardless (intent).
+    expect(res).toEqual({ ok: true, state: 'pending' })
     expect(h.enqueueItemBackup).toHaveBeenCalledWith(id)
+    expect(cloudBackupOf(id)).toBe(1)
+  })
+
+  it('reports state:synced from the ledger when the blob uploaded', async () => {
+    const id = seedItem(db, { file_path: 'a.html' })
+    // Simulate the uploader: stamp the item's content hash + a synced ledger row.
+    h.enqueueItemBackup.mockImplementationOnce(async () => {
+      db.prepare(`UPDATE items SET blob_hash = 'hh' WHERE id = ?`).run(id)
+      db.prepare(
+        `INSERT INTO blob_sync (content_hash, kind, state, updated_at) VALUES ('hh','content','synced',0)`,
+      ).run()
+    })
+
+    const res = await invoke('cloud:backupItem', id)
+
+    expect(res).toEqual({ ok: true, state: 'synced' })
+    expect(cloudBackupOf(id)).toBe(1)
+  })
+
+  it('reports ok:false + state:error (with the ledger error) when upload failed', async () => {
+    const id = seedItem(db, { file_path: 'a.html' })
+    h.enqueueItemBackup.mockImplementationOnce(async () => {
+      db.prepare(`UPDATE items SET blob_hash = 'hh' WHERE id = ?`).run(id)
+      db.prepare(
+        `INSERT INTO blob_sync (content_hash, kind, state, error, updated_at) VALUES ('hh','content','error','R2 PUT failed (400)',0)`,
+      ).run()
+    })
+
+    const res = await invoke('cloud:backupItem', id)
+
+    expect(res).toEqual({ ok: false, state: 'error', error: 'R2 PUT failed (400)' })
+    // Gate still flips on — intent to back up persists so the card shows Retry.
     expect(cloudBackupOf(id)).toBe(1)
   })
 

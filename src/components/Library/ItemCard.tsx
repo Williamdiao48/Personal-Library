@@ -622,19 +622,41 @@ function ItemCard({
                 </button>
               )}
               {onBackupToCloud &&
-                (item.cloud_backup === 1 ? (
-                  <span className="item-card-dropdown-item item-card-dropdown-item--static">
-                    ✓ Backed up to cloud
-                  </span>
-                ) : (
-                  <button
-                    className="item-card-dropdown-item"
-                    onClick={handleBackupToCloud}
-                    disabled={backingUp}
-                  >
-                    {backingUp ? 'Backing up…' : 'Back up to cloud'}
-                  </button>
-                ))}
+                (() => {
+                  // Status is driven by the item's REAL backup state (blob_sync via
+                  // cloud_state), not just the cloud_backup intent flag — so a failed
+                  // upload reads "Retry", not a false "✓ Backed up".
+                  if (backingUp)
+                    return (
+                      <span className="item-card-dropdown-item item-card-dropdown-item--static">
+                        Backing up…
+                      </span>
+                    )
+                  if (item.cloud_backup !== 1)
+                    return (
+                      <button className="item-card-dropdown-item" onClick={handleBackupToCloud}>
+                        Back up to cloud
+                      </button>
+                    )
+                  if (item.cloud_state === 'synced')
+                    return (
+                      <span className="item-card-dropdown-item item-card-dropdown-item--static">
+                        ✓ Backed up to cloud
+                      </span>
+                    )
+                  if (item.cloud_state === 'error')
+                    return (
+                      <button className="item-card-dropdown-item" onClick={handleBackupToCloud}>
+                        Backup failed — Retry
+                      </button>
+                    )
+                  // pending / null → enqueued, upload in flight or awaiting a drain.
+                  return (
+                    <span className="item-card-dropdown-item item-card-dropdown-item--static">
+                      Backing up…
+                    </span>
+                  )
+                })()}
               <button
                 className="item-card-dropdown-item item-card-dropdown-item--danger"
                 onClick={handleDeleteClick}
@@ -693,6 +715,7 @@ export default memo(ItemCard, (prev, next) => {
     pi.rating === ni.rating &&
     pi.review === ni.review &&
     pi.cloud_backup === ni.cloud_backup &&
+    pi.cloud_state === ni.cloud_state &&
     pi.date_modified === ni.date_modified &&
     prev.tags === next.tags &&
     prev.isSelected === next.isSelected &&

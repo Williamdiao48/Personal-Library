@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { installMockApi } from '../../test/renderer/mockWindowApi'
 import { captureService } from './capture'
 import { readerService } from './reader'
@@ -43,6 +43,11 @@ describe('cloudService delegation', () => {
   it('backupItem → api.cloud.backupItem', () => {
     cloudService.backupItem('i1')
     expect(api.cloud.backupItem).toHaveBeenCalledWith('i1')
+  })
+  it('onBlobState → api.cloud.onBlobState', () => {
+    const cb = vi.fn()
+    cloudService.onBlobState(cb)
+    expect(api.cloud.onBlobState).toHaveBeenCalledWith(cb)
   })
 })
 

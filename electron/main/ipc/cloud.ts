@@ -11,6 +11,7 @@ import { enqueueItemBackup } from '../cloud/uploader'
 
 interface BackupResult {
   ok: boolean
+  state?: 'pending' | 'synced' | 'error'
   error?: string
 }
 
@@ -22,14 +23,28 @@ export function registerCloudHandlers(): void {
     if (!item) return { ok: false, error: 'Item not found.' }
 
     // Compute hashes + enqueue first (this also records blob_hash/cover_hash on
-    // the item and kicks a drain). Only flip the privacy gate once that succeeds,
-    // so an item that couldn't be packaged never shows as "backed up".
+    // the item and awaits a drain). Only flip the privacy gate once that succeeds,
+    // so an item that couldn't be packaged never shows as backed-up.
     try {
       await enqueueItemBackup(id)
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
+    // cloud_backup is intent ("keep this backed up") — set it even if the upload
+    // failed, so a failed item shows "Backup failed — Retry" rather than reverting.
     db.prepare(`UPDATE items SET cloud_backup = 1 WHERE id = ?`).run(id)
-    return { ok: true }
+
+    // enqueueItemBackup awaited the drain, so the content blob's ledger row now
+    // reflects the real outcome. Report it so the card renders truth immediately.
+    const row = db
+      .prepare(
+        `SELECT bs.state AS state, bs.error AS error
+         FROM items i LEFT JOIN blob_sync bs ON bs.content_hash = i.blob_hash
+         WHERE i.id = ?`,
+      )
+      .get(id) as { state?: 'pending' | 'synced' | 'error'; error?: string | null } | undefined
+    const state = row?.state
+    if (state === 'error') return { ok: false, state, error: row?.error ?? 'Upload failed.' }
+    return { ok: true, state: state ?? 'pending' }
   })
 }
