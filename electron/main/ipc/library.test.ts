@@ -108,18 +108,37 @@ describe('library IPC — read & trash lifecycle', () => {
     expect(((await invoke('library:getTrashed')) as Item[]).length).toBe(0)
   })
 
-  it('permanentlyDelete removes the row entirely', async () => {
+  it('permanentlyDelete keeps a syncing tombstone (purged_at) but hides the item', async () => {
+    // Under sync the row can't be physically removed (the deletion must propagate);
+    // purged_at marks the bytes reclaimed so it stays out of Trash and every view.
     seedItem(db, { id: 'gone', deleted_at: 1 })
     await invoke('library:permanentlyDelete', 'gone')
-    expect(db.prepare('SELECT COUNT(*) n FROM items').get()).toEqual({ n: 0 })
+    const row = db
+      .prepare('SELECT deleted_at, purged_at, dirty FROM items WHERE id = ?')
+      .get('gone') as {
+      deleted_at: number | null
+      purged_at: number | null
+      dirty: number
+    }
+    expect(row.deleted_at).not.toBeNull() // tombstone survives
+    expect(row.purged_at).not.toBeNull() // marked purged
+    expect(row.dirty).toBe(1) // queued to push the deletion
+    expect(((await invoke('library:getTrashed')) as Item[]).length).toBe(0)
+    expect(((await invoke('library:getAll')) as Item[]).length).toBe(0)
   })
 
-  it('emptyTrash deletes only trashed rows', async () => {
+  it('emptyTrash purges only trashed rows, leaving live rows untouched', async () => {
     seedItem(db, { id: 'keep' })
     seedItem(db, { id: 'trash1', deleted_at: 1 })
     seedItem(db, { id: 'trash2', deleted_at: 2 })
     await invoke('library:emptyTrash')
-    expect(db.prepare('SELECT id FROM items').all()).toEqual([{ id: 'keep' }])
+    // Live row stays fully live; trashed rows become purged tombstones (kept as rows).
+    const purged = db
+      .prepare('SELECT id FROM items WHERE purged_at IS NOT NULL ORDER BY id')
+      .all() as { id: string }[]
+    expect(purged.map((r) => r.id)).toEqual(['trash1', 'trash2'])
+    expect(((await invoke('library:getAll')) as Item[]).map((i) => i.id)).toEqual(['keep'])
+    expect(((await invoke('library:getTrashed')) as Item[]).length).toBe(0)
   })
 
   // ── H1 regression: hard-delete must remove FTS postings (contentless FTS5) ──
@@ -134,25 +153,23 @@ describe('library IPC — read & trash lifecycle', () => {
     expect(db.prepare('SELECT COUNT(*) n FROM item_fts_index').get()).toEqual({ n: 0 })
   })
 
-  it('search does NOT cross-match a deleted item’s text after its rowid is reused (H1)', async () => {
-    // A takes a rowid and indexes "zebra"; delete it, then B is inserted and
-    // reuses A's just-freed rowid. Without FTS cleanup, "zebra" would resolve to B.
-    const a = seedItem(db, { title: 'A', deleted_at: 1 })
+  it('search stops matching a permanently-deleted item’s text (FTS postings stripped, H1)', async () => {
+    // Under tombstones the items row (and its rowid) persists, so the H1 rowid-reuse
+    // cross-match can no longer occur — but permanentlyDelete must still strip the
+    // FTS postings so the purged item’s text is no longer searchable.
+    const a = seedItem(db, { title: 'A' })
     indexFts(a, 'zebra')
-    const aRowid = (db.prepare('SELECT rowid FROM items WHERE id = ?').get(a) as { rowid: number })
-      .rowid
+    expect(searchHits('zebra', a)).toBe(true)
 
+    await invoke('library:softDelete', a) // trash first (realistic flow)
     await invoke('library:permanentlyDelete', a)
 
+    // A fresh item gets a NEW rowid (the tombstone still occupies A's) and its own term.
     const b = seedItem(db, { title: 'B' })
-    const bRowid = (db.prepare('SELECT rowid FROM items WHERE id = ?').get(b) as { rowid: number })
-      .rowid
-    expect(bRowid).toBe(aRowid) // precondition: SQLite reused the freed rowid
     indexFts(b, 'giraffe')
 
-    expect(searchHits('zebra', b)).toBe(false) // A's stale term must not hit B
-    expect(searchHits('giraffe', b)).toBe(true) // B's own term still works
-    expect(((await invoke('library:search', 'zebra')) as Item[]).length).toBe(0)
+    expect(searchHits('giraffe', b)).toBe(true) // B's own term works
+    expect(((await invoke('library:search', 'zebra')) as Item[]).length).toBe(0) // A's term gone
   })
 
   it('emptyTrash removes FTS postings for every purged row (H1)', async () => {
@@ -287,7 +304,8 @@ describe('library IPC — tags', () => {
     await invoke('tags:rename', t.id, 'scifi')
     await invoke('tags:setColor', t.id, '#00ff00')
     const all = (await invoke('tags:getAll')) as any[]
-    expect(all).toEqual([{ id: t.id, name: 'scifi', color: '#00ff00' }])
+    expect(all).toHaveLength(1)
+    expect(all[0]).toMatchObject({ id: t.id, name: 'scifi', color: '#00ff00' })
 
     await invoke('tags:delete', t.id)
     expect(((await invoke('tags:getAll')) as any[]).length).toBe(0)
@@ -381,14 +399,18 @@ describe('library IPC — simple reads & scroll position', () => {
 describe('library IPC — trash file cleanup (cover paths)', () => {
   it('permanentlyDelete tolerates a cover_path whose file is already gone', async () => {
     seedItem(db, { id: 'pd', deleted_at: 1, cover_path: 'content/pd-cover.png' })
-    await invoke('library:permanentlyDelete', 'pd') // unlink throws → caught, row still deleted
-    expect(db.prepare('SELECT COUNT(*) n FROM items').get()).toEqual({ n: 0 })
+    await invoke('library:permanentlyDelete', 'pd') // unlink throws → caught, row still purged
+    expect(db.prepare('SELECT purged_at FROM items WHERE id = ?').get('pd')).not.toMatchObject({
+      purged_at: null,
+    })
   })
 
   it('emptyTrash tolerates trashed rows with cover paths', async () => {
     seedItem(db, { id: 'et', deleted_at: 2, cover_path: 'content/et-cover.png' })
     await invoke('library:emptyTrash')
-    expect(db.prepare('SELECT COUNT(*) n FROM items').get()).toEqual({ n: 0 })
+    expect(db.prepare('SELECT purged_at FROM items WHERE id = ?').get('et')).not.toMatchObject({
+      purged_at: null,
+    })
   })
 })
 

@@ -9,6 +9,7 @@ import { backupService } from './backup'
 import { annotationsService, annotationThemesService } from './annotationsService'
 import { discoverService } from './discover'
 import { cloudService } from './cloud'
+import { syncService } from './sync'
 
 // The service layer is a thin pass-through to window.api. These tests lock the
 // wiring for every non-library service — right namespace, right method, right
@@ -209,6 +210,26 @@ describe('annotationThemesService delegation', () => {
   it('delete forwards the id', () => {
     annotationThemesService.delete('t1')
     expect(api.annotationThemes.delete).toHaveBeenCalledWith('t1')
+  })
+})
+
+describe('syncService delegation', () => {
+  it('setEnabled forwards the flag', () => {
+    syncService.setEnabled(true)
+    expect(api.sync.setEnabled).toHaveBeenCalledWith(true)
+  })
+  it('getStatus → api.sync.getStatus', () => {
+    syncService.getStatus()
+    expect(api.sync.getStatus).toHaveBeenCalledTimes(1)
+  })
+  it('now → api.sync.now', () => {
+    syncService.now()
+    expect(api.sync.now).toHaveBeenCalledTimes(1)
+  })
+  it('onStatus forwards the callback', () => {
+    const cb = vi.fn()
+    syncService.onStatus(cb)
+    expect(api.sync.onStatus).toHaveBeenCalledWith(cb)
   })
 })
 

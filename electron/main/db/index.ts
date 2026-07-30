@@ -11,7 +11,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 35
+export const CURRENT_VERSION = 38
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -348,6 +348,119 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   // synced items row (Phase 3) carries it so another device resolves bytes.
   // ALTER-ADD, MIGRATIONS only (never in SCHEMA baseline, per the fresh-install gotcha).
   35: `ALTER TABLE items ADD COLUMN blob_hash TEXT;`,
+  // Cloud Phase 3 — the uniform sync clock. Every syncable table gains the three
+  // columns the LWW sync engine needs:
+  //   • updated_at INTEGER — client-ms logical clock, bumped on every local write;
+  //     the LWW comparand on pull-apply. `items` gets its OWN updated_at (backfilled
+  //     from date_modified) — NOT reusing date_modified, because the server force-
+  //     stamps updated_at and LWW must compare local-vs-server on the same clock;
+  //     date_modified stays a display/refresh field. `reading_sessions` is append-
+  //     only (Decision 4) so it needs no clock or tombstone — just a push flag.
+  //   • deleted_at INTEGER — tombstone. Converts hard-deletes into propagating
+  //     soft-deletes (Chunk 2 rewires the delete paths). `items` already has it
+  //     (mig 15). Omitted on append-only reading_sessions.
+  //   • dirty INTEGER NOT NULL DEFAULT 1 — push flag: 1 = needs upload, cleared to
+  //     0 after a successful push read-back (and set 0 on pull-apply so a just-
+  //     pulled row isn't echoed back). DEFAULT 1 means every EXISTING row is dirty,
+  //     so the first sync after sign-in pushes the whole current library up.
+  // Push dirtiness is a flag, NOT a wall-clock cursor: the server force-stamps
+  // updated_at (Phase-1 set_updated_at trigger), so a lagging client clock could
+  // sort a fresh edit below a server-time cursor and never push it. The flag is
+  // clock-independent. Backfill updated_at from each table's best existing
+  // timestamp so pre-sync LWW ordering is sane. collection_items.sort_order already
+  // exists (mig 16). ALTER-ADD, MIGRATIONS only (never in SCHEMA baseline, per the
+  // fresh-install duplicate-column gotcha).
+  36: `
+    ALTER TABLE items ADD COLUMN updated_at INTEGER;
+    ALTER TABLE items ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE items SET updated_at = date_modified;
+
+    ALTER TABLE progress ADD COLUMN updated_at INTEGER;
+    ALTER TABLE progress ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE progress ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE progress SET updated_at =
+      COALESCE(last_read_at, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+
+    ALTER TABLE tags ADD COLUMN updated_at INTEGER;
+    ALTER TABLE tags ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE tags ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE tags SET updated_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER);
+
+    ALTER TABLE item_tags ADD COLUMN updated_at INTEGER;
+    ALTER TABLE item_tags ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE item_tags ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE item_tags SET updated_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER);
+
+    ALTER TABLE collections ADD COLUMN updated_at INTEGER;
+    ALTER TABLE collections ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE collections ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE collections SET updated_at =
+      COALESCE(date_created, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+
+    ALTER TABLE collection_items ADD COLUMN updated_at INTEGER;
+    ALTER TABLE collection_items ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE collection_items ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE collection_items SET updated_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER);
+
+    ALTER TABLE annotations ADD COLUMN updated_at INTEGER;
+    ALTER TABLE annotations ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE annotations ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE annotations SET updated_at =
+      COALESCE(created_at, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+
+    ALTER TABLE annotation_themes ADD COLUMN updated_at INTEGER;
+    ALTER TABLE annotation_themes ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE annotation_themes ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE annotation_themes SET updated_at =
+      COALESCE(created_at, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+
+    ALTER TABLE annotation_theme_links ADD COLUMN updated_at INTEGER;
+    ALTER TABLE annotation_theme_links ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE annotation_theme_links ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE annotation_theme_links SET updated_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER);
+
+    ALTER TABLE goals ADD COLUMN updated_at INTEGER;
+    ALTER TABLE goals ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE goals ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE goals SET updated_at =
+      COALESCE(created_at, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+
+    ALTER TABLE goal_items ADD COLUMN updated_at INTEGER;
+    ALTER TABLE goal_items ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE goal_items ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE goal_items SET updated_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER);
+
+    ALTER TABLE reading_sessions ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+  `,
+  // Cloud Phase 3 — permanent-delete marker. Under sync, emptyTrash /
+  // permanentlyDelete / the 30-day purge can no longer physically DELETE the items
+  // row: the synced tombstone (deleted_at) must survive so the deletion propagates
+  // (an item synced, then trashed+emptied OFFLINE, would otherwise resurrect on the
+  // next pull). purged_at marks such a row as "bytes reclaimed, keep as pure
+  // tombstone" so getTrashed can exclude it (a deleted_at row with purged_at set is
+  // gone-for-good, not recoverable trash). LOCAL-ONLY — never synced to Postgres;
+  // the cloud tombstone is deleted_at alone. ALTER-ADD, MIGRATIONS only (never in
+  // SCHEMA baseline, per the fresh-install duplicate-column gotcha).
+  37: `ALTER TABLE items ADD COLUMN purged_at INTEGER;`,
+  // Cloud Phase 3 — the sync engine's device-local bookkeeping. NEITHER table is
+  // synced to Postgres (they're this device's private cursor + identity).
+  //   • sync_meta — one row holding this install's stable device_id (LWW tiebreak
+  //     debugging + "which device last wrote"). Not a security boundary (RLS is).
+  //   • sync_cursors — the per-table pull high-water mark: the max server updated_at
+  //     this device has durably applied. Next pull = WHERE updated_at > pull_cursor.
+  //     Advanced only AFTER a batch is applied in a txn, so a crash re-pulls rather
+  //     than skips (over-fetch is safe — apply is idempotent via LWW).
+  // New tables — MIGRATIONS only, never in schema.ts SCHEMA (fresh-install gotcha).
+  38: `
+    CREATE TABLE IF NOT EXISTS sync_meta (
+      id        INTEGER PRIMARY KEY CHECK (id = 1),
+      device_id TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sync_cursors (
+      table_name  TEXT PRIMARY KEY,
+      pull_cursor INTEGER NOT NULL DEFAULT 0
+    );
+  `,
 }
 
 export function initDatabase(): void {
@@ -369,7 +482,7 @@ export function initDatabase(): void {
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
   const stale = db
     .prepare(
-      `SELECT rowid, id, title, author, content_type, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL AND deleted_at < ?`,
+      `SELECT rowid, id, title, author, content_type, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL AND deleted_at < ? AND purged_at IS NULL`,
     )
     .all(cutoff) as (FtsItem & { rowid: number; cover_path: string | null })[]
   for (const item of stale) {
@@ -385,7 +498,9 @@ export function initDatabase(): void {
         unlinkSync(safeUserDataPath(item.cover_path))
       } catch {}
     }
-    db.prepare('DELETE FROM items WHERE id = ?').run(item.id)
+    // Keep the tombstone (deleted_at) so the deletion still syncs; purged_at marks
+    // the bytes reclaimed. Physically deleting would risk resurrect-on-pull.
+    db.prepare('UPDATE items SET purged_at = ?, dirty = 1 WHERE id = ?').run(Date.now(), item.id)
   }
 
   // Bound the recommendation-candidate caches: evict cache/embedding rows untouched

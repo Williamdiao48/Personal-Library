@@ -1,27 +1,49 @@
 import { ipcMain } from 'electron'
 import { randomUUID } from 'crypto'
 import { all, run, getDb } from '../db'
+import { NAME_TOMB_SEP_SQL } from '../db/nameTombstone'
 import type { Collection, Item } from '../../../src/types'
 
 export function registerCollectionHandlers(): void {
   ipcMain.handle('collections:getAll', () => {
-    return all<Collection>('SELECT * FROM collections ORDER BY name')
+    return all<Collection>('SELECT * FROM collections WHERE deleted_at IS NULL ORDER BY name')
   })
 
   ipcMain.handle('collections:create', (_e, name: string) => {
     const id = randomUUID()
     const now = Date.now()
-    run('INSERT INTO collections (id, name, date_created) VALUES (?, ?, ?)', [id, name, now])
+    run('INSERT INTO collections (id, name, date_created, updated_at) VALUES (?, ?, ?, ?)', [
+      id,
+      name,
+      now,
+      now,
+    ])
     return { id, name, date_created: now } as Collection
   })
 
   ipcMain.handle('collections:delete', (_e, id: string) => {
-    // collection_items rows cascade via ON DELETE CASCADE
-    run('DELETE FROM collections WHERE id = ?', [id])
+    // Soft-delete (propagating tombstone). Suffix the name (Postgres-safe separator,
+    // see nameTombstone) to free the local UNIQUE(name) slot (R6), and tombstone this
+    // collection's membership rows (they used to go via ON DELETE CASCADE).
+    const now = Date.now()
+    getDb().transaction(() => {
+      run(
+        `UPDATE collections SET deleted_at = ?, updated_at = ?, dirty = 1, name = name || ${NAME_TOMB_SEP_SQL} || id WHERE id = ?`,
+        [now, now, id],
+      )
+      run(
+        `UPDATE collection_items SET deleted_at = ?, updated_at = ?, dirty = 1 WHERE collection_id = ? AND deleted_at IS NULL`,
+        [now, now, id],
+      )
+    })()
   })
 
   ipcMain.handle('collections:rename', (_e, id: string, name: string) => {
-    run('UPDATE collections SET name = ? WHERE id = ?', [name, id])
+    run('UPDATE collections SET name = ?, updated_at = ?, dirty = 1 WHERE id = ?', [
+      name,
+      Date.now(),
+      id,
+    ])
   })
 
   ipcMain.handle('collections:getAllItemCollections', () => {
@@ -30,7 +52,7 @@ export function registerCollectionHandlers(): void {
       FROM collection_items ci
       JOIN collections c ON c.id = ci.collection_id
       JOIN items i ON i.id = ci.item_id
-      WHERE i.deleted_at IS NULL
+      WHERE i.deleted_at IS NULL AND ci.deleted_at IS NULL AND c.deleted_at IS NULL
     `)
   })
 
@@ -41,7 +63,7 @@ export function registerCollectionHandlers(): void {
       FROM items i
       JOIN collection_items ci ON ci.item_id = i.id
       LEFT JOIN progress p ON p.item_id = i.id
-      WHERE ci.collection_id = ? AND i.deleted_at IS NULL
+      WHERE ci.collection_id = ? AND i.deleted_at IS NULL AND ci.deleted_at IS NULL
       ORDER BY ci.sort_order ASC NULLS LAST, ci.rowid ASC
     `,
       [collectionId],
@@ -50,49 +72,62 @@ export function registerCollectionHandlers(): void {
 
   ipcMain.handle('collections:addItem', (_e, collectionId: string, itemId: string) => {
     const db = getDb()
+    const now = Date.now()
     db.transaction(() => {
+      // Next position among LIVE members only (a tombstoned membership doesn't hold a slot).
       const row = db
         .prepare(
-          'SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM collection_items WHERE collection_id = ?',
+          'SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM collection_items WHERE collection_id = ? AND deleted_at IS NULL',
         )
         .get([collectionId]) as { max_order: number }
+      // Upsert-revive: re-adding a previously-removed item flips its tombstone live.
       db.prepare(
-        'INSERT OR IGNORE INTO collection_items (collection_id, item_id, sort_order) VALUES (?, ?, ?)',
-      ).run(collectionId, itemId, row.max_order + 1)
+        `INSERT INTO collection_items (collection_id, item_id, sort_order, updated_at, dirty) VALUES (?, ?, ?, ?, 1)
+         ON CONFLICT(collection_id, item_id) DO UPDATE SET
+           deleted_at = NULL, sort_order = excluded.sort_order, updated_at = excluded.updated_at, dirty = 1`,
+      ).run(collectionId, itemId, row.max_order + 1, now)
     })()
   })
 
   ipcMain.handle('collections:removeItem', (_e, collectionId: string, itemId: string) => {
-    run('DELETE FROM collection_items WHERE collection_id = ? AND item_id = ?', [
-      collectionId,
-      itemId,
-    ])
+    const now = Date.now()
+    run(
+      'UPDATE collection_items SET deleted_at = ?, updated_at = ?, dirty = 1 WHERE collection_id = ? AND item_id = ? AND deleted_at IS NULL',
+      [now, now, collectionId, itemId],
+    )
   })
 
   ipcMain.handle('collections:reorderItems', (_e, collectionId: string, itemIds: string[]) => {
     const db = getDb()
+    const now = Date.now()
     const stmt = db.prepare(
-      'UPDATE collection_items SET sort_order = ? WHERE collection_id = ? AND item_id = ?',
+      'UPDATE collection_items SET sort_order = ?, updated_at = ?, dirty = 1 WHERE collection_id = ? AND item_id = ?',
     )
     db.transaction(() => {
-      itemIds.forEach((id, i) => stmt.run(i, collectionId, id))
+      itemIds.forEach((id, i) => stmt.run(i, now, collectionId, id))
     })()
   })
 
   ipcMain.handle('collections:setForItem', (_e, itemId: string, collectionIds: string[]) => {
     const db = getDb()
+    const now = Date.now()
+    // Preserve prior positions (incl. tombstoned rows) so a revive restores order.
     const existing = db
       .prepare('SELECT collection_id, sort_order FROM collection_items WHERE item_id = ?')
       .all([itemId]) as { collection_id: string; sort_order: number | null }[]
     const savedOrders = new Map(existing.map((r) => [r.collection_id, r.sort_order]))
 
-    const deleteExisting = db.prepare('DELETE FROM collection_items WHERE item_id = ?')
-    const insert = db.prepare(
-      'INSERT OR IGNORE INTO collection_items (collection_id, item_id, sort_order) VALUES (?, ?, ?)',
+    const tombstoneAll = db.prepare(
+      'UPDATE collection_items SET deleted_at = ?, updated_at = ?, dirty = 1 WHERE item_id = ? AND deleted_at IS NULL',
+    )
+    const upsert = db.prepare(
+      `INSERT INTO collection_items (collection_id, item_id, sort_order, updated_at, dirty) VALUES (?, ?, ?, ?, 1)
+       ON CONFLICT(collection_id, item_id) DO UPDATE SET
+         deleted_at = NULL, sort_order = excluded.sort_order, updated_at = excluded.updated_at, dirty = 1`,
     )
     db.transaction(() => {
-      deleteExisting.run(itemId)
-      for (const cid of collectionIds) insert.run(cid, itemId, savedOrders.get(cid) ?? null)
+      tombstoneAll.run(now, now, itemId)
+      for (const cid of collectionIds) upsert.run(cid, itemId, savedOrders.get(cid) ?? null, now)
     })()
   })
 }

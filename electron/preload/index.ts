@@ -273,6 +273,21 @@ contextBridge.exposeInMainWorld('api', {
     },
   },
 
+  // Library/metadata sync (Phase 3). The master switch is renderer-owned and
+  // pushed via setEnabled (mirrors discover.setEnabled); status is pulled on mount
+  // and pushed live via 'sync:status'.
+  sync: {
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('sync:setEnabled', enabled),
+    getStatus: () => ipcRenderer.invoke('sync:getStatus'),
+    now: () => ipcRenderer.invoke('sync:now'),
+    onStatus: (callback: (status: import('../../src/types').SyncStatus) => void) => {
+      const handler = (_e: unknown, status: import('../../src/types').SyncStatus) =>
+        callback(status)
+      ipcRenderer.on('sync:status', handler)
+      return () => ipcRenderer.removeListener('sync:status', handler)
+    },
+  },
+
   // Local LLM (Ollama) book reranker — opt-in refinement of book recommendations.
   llm: {
     setConfig: (cfg: { enabled: boolean; model: string; baseUrl: string }) =>

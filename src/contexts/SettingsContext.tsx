@@ -77,6 +77,10 @@ export interface AppSettings {
   // Remembers the user's last per-capture choice (Decision 8): the capture toggle
   // starts here. Initial false = local-only.
   cloudBackupDefault: boolean
+  // Library/metadata sync (Phase 3) — the master switch. OFF by default; even when
+  // signed in, no sync round runs until the user turns this on. Mirrored to the
+  // main process (like enableDiscover) on boot + on toggle.
+  enableSync: boolean
 }
 
 const CUSTOM_THEME_VARS: Array<[keyof CustomTheme, string]> = [
@@ -108,6 +112,7 @@ const DEFAULTS: AppSettings = {
   annotationSortBy: 'title',
   cloudBackupEnabled: false,
   cloudBackupDefault: false,
+  enableSync: false,
 }
 
 const STORAGE_KEY = 'app-settings'

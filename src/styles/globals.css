@@ -2325,6 +2325,15 @@ button:disabled {
   margin-top: 2px;
 }
 
+/* Right-side control column for the sync row: toggle stacked over "Sync now". */
+.settings-sync-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .settings-feedback--ok {
   color: var(--success);
 }

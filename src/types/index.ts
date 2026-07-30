@@ -329,6 +329,24 @@ export interface AuthResult {
   needsConfirmation?: boolean
 }
 
+// ── Library sync (Phase 3) ───────────────────────────────────────────────────
+// The renderer-facing snapshot of the metadata sync engine. Tokens/cursors stay
+// in main; the renderer only sees this status.
+export interface SyncStatus {
+  /** User's master switch (renderer-owned, mirrored to main). */
+  enabled: boolean
+  /** Build carries Supabase creds. */
+  configured: boolean
+  /** A session exists (last known). */
+  signedIn: boolean
+  /** A round is in flight. */
+  running: boolean
+  /** ms epoch of the last successful round this session, or null. */
+  lastSyncedAt: number | null
+  /** Message from the last failed round, cleared on the next success. */
+  lastError: string | null
+}
+
 // Type the window.api surface so the renderer gets full type-safety
 export interface Api {
   library: {
@@ -527,6 +545,17 @@ export interface Api {
     /** Subscribe to blob sync-state changes (content_hash → synced/error) so cards
      *  update live for the fire-and-forget capture path; returns unsubscribe. */
     onBlobState: (callback: (ev: { hash: string; state: 'synced' | 'error' }) => void) => () => void
+  }
+  sync: {
+    /** Mirror the sync master switch to main (arms/disarms the poll). Returns the
+     *  resulting status. */
+    setEnabled: (enabled: boolean) => Promise<SyncStatus>
+    /** Current status snapshot (renderer hydrates its status view with this). */
+    getStatus: () => Promise<SyncStatus>
+    /** Manual "Sync now" — resolves once the round finishes. */
+    now: () => Promise<SyncStatus>
+    /** Subscribe to status changes; returns unsubscribe. */
+    onStatus: (callback: (status: SyncStatus) => void) => () => void
   }
   llm: {
     /** Sync the local-LLM reranker setting to the main process (mirrors discover.setEnabled). */
