@@ -106,12 +106,17 @@ describe('collections IPC — membership & ordering', () => {
     expect(rows.map((r) => r.item_id)).toEqual(['active'])
   })
 
-  it('deleting a collection cascades its membership rows', async () => {
+  it('deleting a collection tombstones its membership rows (soft-delete)', async () => {
     const c = seedCollection(db, 'C')
     const a = seedItem(db, {})
     await invoke('collections:addItem', c, a)
     await invoke('collections:delete', c)
-    expect(db.prepare('SELECT COUNT(*) n FROM collection_items').get()).toEqual({ n: 0 })
+    // Membership rows persist as tombstones (deleted_at set) so the removal syncs;
+    // no live membership remains and the item itself is untouched.
+    expect(
+      db.prepare('SELECT COUNT(*) n FROM collection_items WHERE deleted_at IS NULL').get(),
+    ).toEqual({ n: 0 })
+    expect(db.prepare('SELECT COUNT(*) n FROM collection_items').get()).toEqual({ n: 1 })
     expect(db.prepare('SELECT COUNT(*) n FROM items').get()).toEqual({ n: 1 }) // item survives
   })
 })

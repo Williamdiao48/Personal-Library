@@ -4,6 +4,7 @@ import { unlinkSync, writeFileSync, copyFileSync, readFileSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { JSDOM } from 'jsdom'
 import { all, get, run, getDb } from '../db'
+import { NAME_TOMB_SEP_SQL } from '../db/nameTombstone'
 import { refreshContent, appendChapters, getChapterCount } from '../capture'
 import { BROWSER_HEADERS } from '../capture/fetch'
 import { safeContentPath, safeUserDataPath } from '../security/paths'
@@ -60,11 +61,13 @@ export function registerLibraryHandlers(): void {
   })
 
   ipcMain.handle('library:softDelete', (_e, id: string) => {
-    run('UPDATE items SET deleted_at = ? WHERE id = ?', [Date.now(), id])
+    // Trash = the syncing tombstone. dirty=1 so the deletion propagates on push.
+    run('UPDATE items SET deleted_at = ?, dirty = 1 WHERE id = ?', [Date.now(), id])
   })
 
   ipcMain.handle('library:restore', (_e, id: string) => {
-    run('UPDATE items SET deleted_at = NULL WHERE id = ?', [id])
+    // Un-trash. dirty=1 so the resurrection propagates on push.
+    run('UPDATE items SET deleted_at = NULL, dirty = 1 WHERE id = ?', [id])
   })
 
   ipcMain.handle('library:getTrashed', () => {
@@ -72,7 +75,7 @@ export function registerLibraryHandlers(): void {
       SELECT i.*, p.scroll_position, p.last_read_at, p.scroll_chapter, p.scroll_y, p.status
       FROM items i
       LEFT JOIN progress p ON p.item_id = i.id
-      WHERE i.deleted_at IS NOT NULL
+      WHERE i.deleted_at IS NOT NULL AND i.purged_at IS NULL
       ORDER BY i.deleted_at DESC
     `)
   })
@@ -91,7 +94,10 @@ export function registerLibraryHandlers(): void {
     const fts = await ftsDeleteValuesAsync(db, item)
     db.transaction(() => {
       removeFtsIndex(db, item.rowid, id, fts)
-      db.prepare('DELETE FROM items WHERE id = ?').run(id)
+      // Keep the row as a pure tombstone (deleted_at already set at trash time) so
+      // the deletion propagates to other devices; purged_at marks the bytes as
+      // reclaimed and keeps it out of the Trash view. dirty=1 to re-push the state.
+      db.prepare('UPDATE items SET purged_at = ?, dirty = 1 WHERE id = ?').run(Date.now(), id)
     })()
     // safeContentPath/safeUserDataPath throw on traversal (F1); the throw is
     // caught here so a malicious path is simply skipped, never escaping.
@@ -109,14 +115,19 @@ export function registerLibraryHandlers(): void {
     const db = getDb()
     const rows = db
       .prepare(
-        'SELECT rowid, id, title, author, content_type, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL',
+        'SELECT rowid, id, title, author, content_type, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL AND purged_at IS NULL',
       )
       .all() as (FtsItem & { rowid: number; cover_path: string | null })[]
     for (const item of rows) {
       const fts = await ftsDeleteValuesAsync(db, item)
       db.transaction(() => {
         removeFtsIndex(db, item.rowid, item.id, fts)
-        db.prepare('DELETE FROM items WHERE id = ?').run(item.id)
+        // Keep the row as a pure tombstone; purged_at reclaims the bytes (see
+        // permanentlyDelete). Physically deleting would risk resurrect-on-pull.
+        db.prepare('UPDATE items SET purged_at = ?, dirty = 1 WHERE id = ?').run(
+          Date.now(),
+          item.id,
+        )
       })()
       try {
         unlinkSync(safeContentPath(item.file_path))
@@ -137,14 +148,16 @@ export function registerLibraryHandlers(): void {
     const upsertProgress = (itemId: string) =>
       run(
         `
-      INSERT INTO progress (item_id, scroll_position, max_scroll_position, last_read_at)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO progress (item_id, scroll_position, max_scroll_position, last_read_at, updated_at, dirty)
+      VALUES (?, ?, ?, ?, ?, 1)
       ON CONFLICT(item_id) DO UPDATE SET
         scroll_position     = excluded.scroll_position,
         max_scroll_position = MAX(COALESCE(max_scroll_position, 0), excluded.scroll_position),
-        last_read_at        = excluded.last_read_at
+        last_read_at        = excluded.last_read_at,
+        updated_at          = excluded.updated_at,
+        dirty               = 1
     `,
-        [itemId, position, position, now],
+        [itemId, position, position, now, now],
       )
 
     upsertProgress(id)
@@ -170,14 +183,16 @@ export function registerLibraryHandlers(): void {
     // derived pair, this is the spot that would need the same fan-out.
     run(
       `
-      INSERT INTO progress (item_id, scroll_chapter, scroll_y, last_read_at)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO progress (item_id, scroll_chapter, scroll_y, last_read_at, updated_at, dirty)
+      VALUES (?, ?, ?, ?, ?, 1)
       ON CONFLICT(item_id) DO UPDATE SET
         scroll_chapter = excluded.scroll_chapter,
         scroll_y       = excluded.scroll_y,
-        last_read_at   = excluded.last_read_at
+        last_read_at   = excluded.last_read_at,
+        updated_at     = excluded.updated_at,
+        dirty          = 1
     `,
-      [id, chapter, scrollY, Date.now()],
+      [id, chapter, scrollY, Date.now(), Date.now()],
     )
   })
 
@@ -206,25 +221,43 @@ export function registerLibraryHandlers(): void {
       FROM item_tags it
       JOIN tags t ON t.id = it.tag_id
       JOIN items i ON i.id = it.item_id
-      WHERE i.deleted_at IS NULL
+      WHERE i.deleted_at IS NULL AND it.deleted_at IS NULL AND t.deleted_at IS NULL
     `)
   })
 
   // --- Tags ---
 
   ipcMain.handle('tags:getAll', () => {
-    return all<Tag>('SELECT * FROM tags ORDER BY name')
+    return all<Tag>('SELECT * FROM tags WHERE deleted_at IS NULL ORDER BY name')
   })
 
   ipcMain.handle('tags:create', (_e, name: string, color: string) => {
     const id = randomUUID()
-    run('INSERT INTO tags (id, name, color) VALUES (?, ?, ?)', [id, name, color])
+    run('INSERT INTO tags (id, name, color, updated_at) VALUES (?, ?, ?, ?)', [
+      id,
+      name,
+      color,
+      Date.now(),
+    ])
     return { id, name, color } as Tag
   })
 
   ipcMain.handle('tags:delete', (_e, id: string) => {
-    // item_tags rows are cleaned up automatically via ON DELETE CASCADE
-    run('DELETE FROM tags WHERE id = ?', [id])
+    // Soft-delete (propagating tombstone). Suffix the name to free the local
+    // UNIQUE(name) slot so re-creating a same-named tag doesn't collide (R6). The
+    // separator must be Postgres-safe so the tombstone name syncs (see nameTombstone).
+    // Also tombstone this tag's item_tags links (they used to go via ON DELETE CASCADE).
+    const now = Date.now()
+    getDb().transaction(() => {
+      run(
+        `UPDATE tags SET deleted_at = ?, updated_at = ?, dirty = 1, name = name || ${NAME_TOMB_SEP_SQL} || id WHERE id = ?`,
+        [now, now, id],
+      )
+      run(
+        `UPDATE item_tags SET deleted_at = ?, updated_at = ?, dirty = 1 WHERE tag_id = ? AND deleted_at IS NULL`,
+        [now, now, id],
+      )
+    })()
   })
 
   ipcMain.handle('tags:getForItem', (_e, itemId: string) => {
@@ -232,7 +265,7 @@ export function registerLibraryHandlers(): void {
       `
       SELECT t.* FROM tags t
       JOIN item_tags it ON it.tag_id = t.id
-      WHERE it.item_id = ?
+      WHERE it.item_id = ? AND it.deleted_at IS NULL AND t.deleted_at IS NULL
     `,
       [itemId],
     )
@@ -240,21 +273,32 @@ export function registerLibraryHandlers(): void {
 
   ipcMain.handle('tags:setForItem', (_e, itemId: string, tagIds: string[]) => {
     const db = getDb()
-    const deleteExisting = db.prepare('DELETE FROM item_tags WHERE item_id = ?')
-    const insertTag = db.prepare('INSERT OR IGNORE INTO item_tags (item_id, tag_id) VALUES (?, ?)')
-
+    const now = Date.now()
+    // Tombstone the item's current live links, then upsert-revive the selected set
+    // (revive flips a prior tombstone back to live so re-adding a tag reuses its row).
+    const tombstoneAll = db.prepare(
+      `UPDATE item_tags SET deleted_at = ?, updated_at = ?, dirty = 1 WHERE item_id = ? AND deleted_at IS NULL`,
+    )
+    const upsertTag = db.prepare(
+      `INSERT INTO item_tags (item_id, tag_id, updated_at, dirty) VALUES (?, ?, ?, 1)
+       ON CONFLICT(item_id, tag_id) DO UPDATE SET deleted_at = NULL, updated_at = excluded.updated_at, dirty = 1`,
+    )
     db.transaction(() => {
-      deleteExisting.run(itemId)
-      for (const tagId of tagIds) insertTag.run(itemId, tagId)
+      tombstoneAll.run(now, now, itemId)
+      for (const tagId of tagIds) upsertTag.run(itemId, tagId, now)
     })()
   })
 
   ipcMain.handle('tags:rename', (_e, id: string, name: string) => {
-    run('UPDATE tags SET name = ? WHERE id = ?', [name, id])
+    run('UPDATE tags SET name = ?, updated_at = ?, dirty = 1 WHERE id = ?', [name, Date.now(), id])
   })
 
   ipcMain.handle('tags:setColor', (_e, id: string, color: string) => {
-    run('UPDATE tags SET color = ? WHERE id = ?', [color, id])
+    run('UPDATE tags SET color = ?, updated_at = ?, dirty = 1 WHERE id = ?', [
+      color,
+      Date.now(),
+      id,
+    ])
   })
 
   ipcMain.handle('tags:getItemCounts', () => {
@@ -262,7 +306,7 @@ export function registerLibraryHandlers(): void {
       SELECT it.tag_id, COUNT(*) AS count
       FROM item_tags it
       JOIN items i ON i.id = it.item_id
-      WHERE i.deleted_at IS NULL
+      WHERE i.deleted_at IS NULL AND it.deleted_at IS NULL
       GROUP BY it.tag_id
     `)
   })
@@ -289,7 +333,7 @@ export function registerLibraryHandlers(): void {
     writeFileSync(safeContentPath(coverFile), buf)
     const coverPath = `content/${coverFile}`
 
-    db.prepare('UPDATE items SET cover_path = ?, date_modified = ? WHERE id = ?').run(
+    db.prepare('UPDATE items SET cover_path = ?, date_modified = ?, dirty = 1 WHERE id = ?').run(
       coverPath,
       Date.now(),
       id,
@@ -303,7 +347,7 @@ export function registerLibraryHandlers(): void {
     for (const { id: derivedId } of derived) {
       const derivedFile = `${derivedId}-cover.${ext}`
       writeFileSync(safeContentPath(derivedFile), buf)
-      db.prepare('UPDATE items SET cover_path = ?, date_modified = ? WHERE id = ?').run(
+      db.prepare('UPDATE items SET cover_path = ?, date_modified = ?, dirty = 1 WHERE id = ?').run(
         `content/${derivedFile}`,
         Date.now(),
         derivedId,
@@ -316,24 +360,33 @@ export function registerLibraryHandlers(): void {
   ipcMain.handle('library:setStatus', (_e, id: string, status: string | null) => {
     run(
       `
-      INSERT INTO progress (item_id, status)
-      VALUES (?, ?)
-      ON CONFLICT(item_id) DO UPDATE SET status = excluded.status
+      INSERT INTO progress (item_id, status, updated_at, dirty)
+      VALUES (?, ?, ?, 1)
+      ON CONFLICT(item_id) DO UPDATE SET
+        status = excluded.status, updated_at = excluded.updated_at, dirty = 1
     `,
-      [id, status],
+      [id, status, Date.now()],
     )
   })
 
   ipcMain.handle('library:setAuthor', (_e, id: string, author: string | null) => {
-    run('UPDATE items SET author = ?, date_modified = ? WHERE id = ?', [author, Date.now(), id])
+    run('UPDATE items SET author = ?, date_modified = ?, dirty = 1 WHERE id = ?', [
+      author,
+      Date.now(),
+      id,
+    ])
   })
 
   ipcMain.handle('library:setTitle', (_e, id: string, title: string) => {
-    run('UPDATE items SET title = ?, date_modified = ? WHERE id = ?', [title, Date.now(), id])
+    run('UPDATE items SET title = ?, date_modified = ?, dirty = 1 WHERE id = ?', [
+      title,
+      Date.now(),
+      id,
+    ])
   })
 
   ipcMain.handle('library:setRating', (_e, id: string, rating: number | null) => {
-    run('UPDATE items SET rating = ?, date_modified = ? WHERE id = ?', [
+    run('UPDATE items SET rating = ?, date_modified = ?, dirty = 1 WHERE id = ?', [
       clampRating(rating),
       Date.now(),
       id,
@@ -341,7 +394,11 @@ export function registerLibraryHandlers(): void {
   })
 
   ipcMain.handle('library:setReview', (_e, id: string, review: string | null) => {
-    run('UPDATE items SET review = ?, date_modified = ? WHERE id = ?', [review, Date.now(), id])
+    run('UPDATE items SET review = ?, date_modified = ?, dirty = 1 WHERE id = ?', [
+      review,
+      Date.now(),
+      id,
+    ])
   })
 
   ipcMain.handle('library:findBySourceUrl', (_e, url: string) => {
@@ -461,7 +518,7 @@ export function registerLibraryHandlers(): void {
 
     db.transaction(() => {
       db.prepare(
-        'UPDATE items SET word_count = ?, content_hash = ?, date_modified = ? WHERE id = ?',
+        'UPDATE items SET word_count = ?, content_hash = ?, date_modified = ?, dirty = 1 WHERE id = ?',
       ).run(newWordCount, newHash, now, id)
 
       db.prepare(
@@ -509,7 +566,7 @@ export function registerLibraryHandlers(): void {
     copyFileSync(src, safeContentPath(coverFile)) // guard a crafted id (L2)
     const coverPath = `content/${coverFile}`
 
-    db.prepare('UPDATE items SET cover_path = ?, date_modified = ? WHERE id = ?').run(
+    db.prepare('UPDATE items SET cover_path = ?, date_modified = ?, dirty = 1 WHERE id = ?').run(
       coverPath,
       Date.now(),
       id,

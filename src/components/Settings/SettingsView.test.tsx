@@ -11,6 +11,16 @@ vi.mock('../../services/backup', () => ({
   backupService: { export: vi.fn(), import: vi.fn() },
 }))
 
+// Library sync (Phase 3): mock the thin service; the component talks only to it.
+vi.mock('../../services/sync', () => ({
+  syncService: {
+    getStatus: vi.fn(),
+    setEnabled: vi.fn(),
+    now: vi.fn(),
+    onStatus: vi.fn(() => () => {}),
+  },
+}))
+
 // Account section: keep it in its unconfigured (offline) state for these tests —
 // they cover appearance/data, not auth. The auth flow has its own suite.
 vi.mock('../../services/auth', () => ({
@@ -30,6 +40,8 @@ const backup = backupService as unknown as {
 }
 import { authService } from '../../services/auth'
 const auth = authService as unknown as Record<string, ReturnType<typeof vi.fn>>
+import { syncService } from '../../services/sync'
+const sync = syncService as unknown as Record<string, ReturnType<typeof vi.fn>>
 
 function renderView() {
   return render(
@@ -58,6 +70,11 @@ function createTheme(name: string) {
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  // SyncSettings' mount effect guards on window.api?.sync; give it a truthy stub
+  // (the service itself is mocked, so these props are never actually called).
+  ;(window as unknown as { api: unknown }).api = { sync: {} }
+  sync.getStatus.mockResolvedValue(undefined)
+  sync.onStatus.mockReturnValue(() => {})
 })
 
 describe('SettingsView — navigation & appearance', () => {
@@ -314,5 +331,48 @@ describe('SettingsView — Account section', () => {
     renderView()
     expect(await screen.findByText('me@x.com')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+  })
+
+  it('signed-in with sync on shows last-synced status and runs a manual sync', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })
+    localStorage.setItem('app-settings', JSON.stringify({ enableSync: true }))
+    const synced = {
+      enabled: true,
+      configured: true,
+      signedIn: true,
+      running: false,
+      lastSyncedAt: Date.now() - 2 * 60_000, // "2 min ago"
+      lastError: null,
+    }
+    sync.getStatus.mockResolvedValue(synced)
+    sync.now.mockResolvedValue({ ...synced, lastSyncedAt: Date.now() })
+
+    renderView()
+
+    expect(await screen.findByText(/Last synced 2 min ago/)).toBeInTheDocument()
+    const btn = screen.getByRole('button', { name: 'Sync now' })
+    await act(async () => {
+      fireEvent.click(btn)
+    })
+    expect(sync.now).toHaveBeenCalled()
+  })
+
+  it('signed-in with sync on surfaces the last error', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })
+    localStorage.setItem('app-settings', JSON.stringify({ enableSync: true }))
+    sync.getStatus.mockResolvedValue({
+      enabled: true,
+      configured: true,
+      signedIn: true,
+      running: false,
+      lastSyncedAt: null,
+      lastError: 'PostgREST down',
+    })
+
+    renderView()
+
+    expect(await screen.findByText(/Last sync failed: PostgREST down/)).toBeInTheDocument()
   })
 })
