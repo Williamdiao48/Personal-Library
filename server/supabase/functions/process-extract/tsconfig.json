@@ -1,0 +1,14 @@
+{
+  // Isolated typecheck for the cross-runtime core (handler + Google auth) that
+  // the vitest `server` project runs in Node. index.ts is EXCLUDED — it's Deno
+  // glue with jsr:/npm: specifiers + Deno.* globals that Node's tsc can't
+  // resolve (it's checked by `deno`/deploy, like blob-url). Run: `tsc --noEmit`.
+  "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "skipLibCheck": true,
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["handler.ts", "googleAuth.ts", "handler.test.ts", "googleAuth.test.ts"]
+}
