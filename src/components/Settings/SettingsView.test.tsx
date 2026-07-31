@@ -333,6 +333,22 @@ describe('SettingsView — Account section', () => {
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
   })
 
+  it('signed-in shows the cloud-processing toggle and persists a toggle', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })
+    renderView()
+
+    const toggle = await screen.findByRole('switch', { name: 'Process files in the cloud' })
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    await act(async () => {
+      fireEvent.click(toggle)
+    })
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    expect(JSON.parse(localStorage.getItem('app-settings') ?? '{}')).toMatchObject({
+      enableCloudProcessing: true,
+    })
+  })
+
   it('signed-in with sync on shows last-synced status and runs a manual sync', async () => {
     auth.isConfigured.mockResolvedValueOnce(true)
     auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })

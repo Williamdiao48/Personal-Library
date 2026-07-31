@@ -18,7 +18,7 @@ import { captureUniversal } from './sites/universal'
 import { safeContentPath } from '../security/paths'
 import { assertImportFile } from '../security/validation'
 import { assertHttpUrl, safeFetch } from '../security/net-guard'
-import { parseEpub } from '../workers/parse-host'
+import { resolveEpubParse } from '../cloud/processing'
 import { extractPdfText } from './pdfText'
 import { indexFtsText, readStoredFtsText } from '../db/ftsText'
 import { computeContentHash } from '../util/contentHash'
@@ -424,9 +424,11 @@ async function captureEpub(filePath: string, cloudBackup = false): Promise<Captu
   // Import-time gate: size cap + ZIP magic before any parse or copy (F2).
   await assertImportFile(filePath, 'epub')
 
-  // Parse metadata + text in the sandboxed worker (F7). A parse crash/hang
-  // rejects here rather than taking down the main process; we then import the
-  // (still-copied) file with fallback metadata and null word count.
+  // Parse metadata + text off-device when the user opted into cloud processing
+  // (Phase 4) — the untrusted file is extracted in an isolated Cloud Run
+  // container — otherwise in the sandboxed worker (F7). Either way a parse
+  // crash/hang/error rejects here rather than taking down the main process; we
+  // then import the (still-copied) file with fallback metadata and null word count.
   let meta: {
     title: string | null
     author: string | null
@@ -436,7 +438,7 @@ async function captureEpub(filePath: string, cloudBackup = false): Promise<Captu
   let wordCount: number | null = null
   let plainText = ''
   try {
-    const parsed = await parseEpub(filePath)
+    const parsed = await resolveEpubParse(filePath)
     meta = {
       title: parsed.title,
       author: parsed.author,
