@@ -3,15 +3,22 @@
 // UNTRUSTED source file (pulled from R2 via a presigned GET) into the app's
 // canonical result shape, off the user's machine.
 //
-// It holds NO long-lived credential (Decision 3): the Edge Function mints a
-// presigned GET for the source and a presigned PUT for the cover blob and hands
-// both in per request. All CPU work runs through the SHARED extractor
-// (electron/main/capture/extract) — the exact same code the Electron parse
-// worker runs — so the cloud result is byte-identical to the local one, with the
-// same zip-bomb / inflate / size guards baked in.
+// It holds NO long-lived credential (Decision 3): the Edge Function mints ONE
+// presigned GET for the source and hands it in per request — that's the only
+// capability the container ever gets. All CPU work runs through the SHARED
+// extractor (electron/main/capture/extract) — the exact same code the Electron
+// parse worker runs — so the cloud result is byte-identical to the local one,
+// with the same zip-bomb / inflate / size guards baked in.
+//
+// The cover is returned INLINE (base64), not PUT to R2 by the container: covers
+// are content-addressed by sha256(cover bytes), a hash only known AFTER
+// extraction, so the Edge Function can't presign the right key ahead of time.
+// Returning the (small) cover lets the CLIENT content-address + store it via the
+// exact same Phase-2 path it uses for locally-extracted covers — one code path,
+// and the container stays a pure GET-only, credential-light worker.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { randomUUID, createHash } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -23,19 +30,17 @@ export interface ExtractRequest {
   kind: 'epub'
   /** Presigned R2 GET URL for the untrusted source blob. */
   sourceUrl: string
-  /** Presigned R2 PUT URL for the cover blob; omit to skip cover storage. */
-  coverPutUrl?: string
 }
 
 /**
- * The wire result. Mirrors {@link EpubParseResult} but drops `coverBuffer` (the
- * bytes go straight to R2) and adds the content-addressed `coverHash` the
- * Phase-2/3 cover model keys on.
+ * The wire result. Mirrors {@link EpubParseResult} but carries the cover as
+ * base64 (`coverBase64`) instead of a Node Buffer, since it travels as JSON. The
+ * client decodes it back to bytes and stores it exactly as a local cover.
  */
 export interface ExtractResponse {
   title: string | null
   author: string | null
-  coverHash: string | null
+  coverBase64: string | null
   coverExt: string | null
   plainText: string
   wordCount: number | null
@@ -93,45 +98,17 @@ export async function handleExtract(
     await writeFile(srcPath, bytes)
     const result = extractEpub(srcPath)
 
-    // 3. Cover bytes (if any) become a content-addressed R2 blob; return the hash
-    //    so the client can slot it straight into the Phase-2/3 cover model.
-    let coverHash: string | null = null
-    if (result.coverBuffer && req.coverPutUrl) {
-      coverHash = createHash('sha256').update(result.coverBuffer).digest('hex')
-      const put = await fetchImpl(req.coverPutUrl, {
-        method: 'PUT',
-        // Fresh Uint8Array view: a Node Buffer's generic type doesn't line up with
-        // the DOM `BodyInit` the fetch types expect, though it works at runtime.
-        body: new Uint8Array(result.coverBuffer),
-        headers: { 'content-type': coverContentType(result.coverExt) },
-      })
-      if (!put.ok) throw new ExtractError(502, `cover upload failed: ${put.status}`)
-    }
-
+    // 3. Cover bytes (if any) ride back inline as base64; the client hashes +
+    //    stores them just like a local cover. No PUT here — see the header note.
     return {
       title: result.title,
       author: result.author,
-      coverHash,
+      coverBase64: result.coverBuffer ? result.coverBuffer.toString('base64') : null,
       coverExt: result.coverExt,
       plainText: result.plainText,
       wordCount: result.wordCount,
     }
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {})
-  }
-}
-
-function coverContentType(ext: string | null): string {
-  switch (ext) {
-    case 'png':
-      return 'image/png'
-    case 'jpg':
-      return 'image/jpeg'
-    case 'gif':
-      return 'image/gif'
-    case 'webp':
-      return 'image/webp'
-    default:
-      return 'application/octet-stream'
   }
 }

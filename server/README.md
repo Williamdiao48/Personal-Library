@@ -159,24 +159,31 @@ runs), so a cloud result is byte-identical to the local one, guards and all.
 ### Credential model (same trust boundary as `blob-url`)
 
 The container holds **no long-lived credential**. Per request it receives only a
-presigned R2 **GET** (source) and **PUT** (cover), minted by the `process-extract`
-Edge Function (Chunk 3) after it verifies the caller's JWT. Cloud Run ingress is
+single presigned R2 **GET** (the source), minted by the `process-extract` Edge
+Function (Chunk 3) after it verifies the caller's JWT. Cloud Run ingress is
 **internal/authenticated only** — the Edge Function (with a Google-signed ID
 token) is the sole caller; the service is never publicly invocable.
+
+The container does **not** upload the cover. Covers are content-addressed by
+`sha256(cover bytes)` — a hash only known *after* extraction — so the Edge
+Function can't presign the right key up front. Instead the container returns the
+(small) cover **inline** as base64; the client hashes and stores it via the same
+Phase-2 path it uses for locally-extracted covers. One code path, and the
+container stays a pure GET-only worker.
 
 ### Contract
 
 `POST /extract` (body ≤ 64 KB — the multi-MB source travels via R2, not here):
 ```jsonc
-{ "kind": "epub", "sourceUrl": "<presigned GET>", "coverPutUrl": "<presigned PUT>" }
+{ "kind": "epub", "sourceUrl": "<presigned GET>" }
 ```
-Success (`200`): the canonical result, cover bytes already PUT to R2:
+Success (`200`): the canonical result (mirrors `EpubParseResult`, cover inline):
 ```jsonc
-{ "title": "...", "author": "...", "coverHash": "<sha256 hex|null>",
+{ "title": "...", "author": "...", "coverBase64": "<base64|null>",
   "coverExt": "png|jpg|gif|webp|null", "plainText": "...", "wordCount": 123 }
 ```
 `GET /health` → `200 {ok:true}`. Errors carry an HTTP status: `400` bad
-request/kind, `413` oversized source, `502` R2 fetch/upload failure, `500` else.
+request/kind, `413` oversized source, `502` R2 fetch failure, `500` else.
 
 ### Build & test
 
