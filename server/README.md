@@ -21,6 +21,14 @@ server/
       blob-url/
         index.ts                       -- Phase 2: mint presigned R2 URLs (Deno)
     config.toml                        -- created by `supabase init` (see below)
+  cloud-run/
+    extract/                           -- Phase 4: untrusted-file extraction container
+      src/
+        extractHandler.ts              -- GET source → shared extractor → PUT cover
+        server.ts                      -- minimal HTTP entrypoint ($PORT)
+        extractHandler.test.ts         -- unit + loopback round-trip (fake R2)
+      Dockerfile                       -- built from REPO ROOT context
+      package.json / tsconfig.json
   README.md
 ```
 
@@ -137,6 +145,62 @@ curl -sS -X POST "$SUPABASE_URL/functions/v1/blob-url" \
 The client side (the uploader that calls this) IS unit-tested in the app, against
 a stubbed `fetch` — see Phase 2 chunk 4.
 
+## Cloud Run: `extract` container (Phase 4 processing)
+
+`cloud-run/extract/` runs heavy, **untrusted** file extraction (EPUB now; PDF +
+scraped HTML in a later chunk) in a throwaway container instead of on the user's
+machine — the security payoff — and off the main process. It wraps the **shared**
+`electron/main/capture/extract` module (the exact code the local parse worker
+runs), so a cloud result is byte-identical to the local one, guards and all.
+
+> Full design: `docs/internal/planning/cloud/phase-4-cloud-processing.md`
+> (internal, not pushed).
+
+### Credential model (same trust boundary as `blob-url`)
+
+The container holds **no long-lived credential**. Per request it receives only a
+presigned R2 **GET** (source) and **PUT** (cover), minted by the `process-extract`
+Edge Function (Chunk 3) after it verifies the caller's JWT. Cloud Run ingress is
+**internal/authenticated only** — the Edge Function (with a Google-signed ID
+token) is the sole caller; the service is never publicly invocable.
+
+### Contract
+
+`POST /extract` (body ≤ 64 KB — the multi-MB source travels via R2, not here):
+```jsonc
+{ "kind": "epub", "sourceUrl": "<presigned GET>", "coverPutUrl": "<presigned PUT>" }
+```
+Success (`200`): the canonical result, cover bytes already PUT to R2:
+```jsonc
+{ "title": "...", "author": "...", "coverHash": "<sha256 hex|null>",
+  "coverExt": "png|jpg|gif|webp|null", "plainText": "...", "wordCount": 123 }
+```
+`GET /health` → `200 {ok:true}`. Errors carry an HTTP status: `400` bad
+request/kind, `413` oversized source, `502` R2 fetch/upload failure, `500` else.
+
+### Build & test
+
+```bash
+cd server/cloud-run/extract
+npm install
+npm run typecheck                 # isolated tsc (repo-root typecheck scopes to electron/**)
+npm run build                     # esbuild bundle → dist/server.js
+
+# Image build uses the REPO ROOT as context (bundles the shared extractor):
+docker build -f server/cloud-run/extract/Dockerfile -t extract .
+```
+The handler + HTTP plumbing are covered by the repo's vitest `server` project
+(`npm test`) — a fake R2 plus a real loopback round-trip, no GCP needed. The
+container is deployed and verified against **real** Cloud Run + dev Supabase by
+the Phase 4 exit-gate spike (Chunk 5), never in CI.
+
+### Deploy secrets (Chunk 5, never committed)
+
+The container itself needs none. The **Edge Function** side needs the Cloud Run
+service URL + a way to mint an invoker ID token (service-account), set via
+`supabase secrets set` alongside the existing R2 secrets. GCP project id + the
+service-account live in GCP, not the repo.
+
 ## What's here vs. coming
 
 - **Now (Phase 1):** these migrations + auth. Empty tables; nothing syncs yet.
@@ -145,5 +209,7 @@ a stubbed `fetch` — see Phase 2 chunk 4.
   desktop app.
 - **Phase 3:** the client-side sync engine fills these tables (LWW on
   `updated_at`, tombstones via `deleted_at`).
-- **Phase 4+:** a Node API (only for server-trusted work — processing containers,
-  social brokering). Still nothing to run in `server/` until then.
+- **Phase 4:** the `cloud-run/extract` container (above) + a `process-extract`
+  Edge Function (Chunk 3) that mints its URLs. Opt-in (`enableCloudProcessing`,
+  default off); local extraction stays the default and the offline fallback.
+- **Phase 5:** social brokering (independent, unblocked).
