@@ -3,6 +3,7 @@ import { getSupabase, isConfigured } from '../auth/client'
 import { presignBlobUrl } from './presign'
 import { sha256Hex } from './blobHash'
 import { parseEpub } from '../workers/parse-host'
+import { extractPdf, type PdfParseResult } from '../capture/extract'
 import type { EpubParseResult } from '../workers/parse-protocol'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,13 +63,14 @@ async function canCloudProcess(): Promise<boolean> {
 }
 
 /**
- * Extract an EPUB off-device via the Phase 4 pipeline. Uploads the raw source to
- * the caller's own R2 prefix (content-addressed by the raw bytes' sha256, reusing
- * the Phase-2 `content` presign — so it dedupes against a backup of the same
- * file), invokes `process-extract`, and maps the result back to an
- * EpubParseResult. Throws on any failure; callers fall back to local parsing.
+ * Extract a source file off-device via the Phase 4 pipeline (kind-agnostic core).
+ * Uploads the raw source to the caller's own R2 prefix (content-addressed by the
+ * raw bytes' sha256, reusing the Phase-2 `content` presign — so it dedupes against
+ * a backup of the same file), invokes `process-extract`, and returns the raw
+ * container response. Throws on any failure; the per-kind wrappers map the result
+ * and callers fall back to local parsing.
  */
-export async function cloudExtractEpub(filePath: string): Promise<EpubParseResult> {
+async function cloudExtract(filePath: string, kind: 'epub' | 'pdf'): Promise<CloudExtractResponse> {
   const supabase = getSupabase()
   if (!supabase) throw new Error('cloud not configured')
 
@@ -77,7 +79,7 @@ export async function cloudExtractEpub(filePath: string): Promise<EpubParseResul
   const bytes = await readFile(filePath)
   const contentHash = sha256Hex(bytes)
 
-  // 1 — Upload the raw EPUB so the container can GET it. users/<uid>/content/<hash>,
+  // 1 — Upload the raw source so the container can GET it. users/<uid>/content/<hash>,
   //     the same key process-extract will presign a GET for.
   const putUrl = await presignBlobUrl('put', 'content', contentHash)
   const put = await fetch(putUrl, { method: 'PUT', body: new Uint8Array(bytes) })
@@ -93,15 +95,22 @@ export async function cloudExtractEpub(filePath: string): Promise<EpubParseResul
   // 2 — Drive the orchestrator (JWT attached by supabase-js). It presigns the GET,
   //     mints the Google ID token, and invokes the private container.
   const { data, error } = await supabase.functions.invoke('process-extract', {
-    body: { kind: 'epub', content_hash: contentHash },
+    body: { kind, content_hash: contentHash },
   })
   if (error) throw new Error(`process-extract failed: ${error.message ?? String(error)}`)
   const res = data as CloudExtractResponse | null
   if (!res || typeof res.plainText !== 'string') {
     throw new Error('process-extract returned an unexpected response')
   }
+  return res
+}
 
-  // 3 — Map back to the local EpubParseResult shape (decode the inline cover).
+/**
+ * Extract an EPUB off-device and map the result back to the local EpubParseResult
+ * shape (decode the inline cover). Throws on any failure; callers fall back.
+ */
+export async function cloudExtractEpub(filePath: string): Promise<EpubParseResult> {
+  const res = await cloudExtract(filePath, 'epub')
   return {
     title: res.title ?? null,
     author: res.author ?? null,
@@ -110,6 +119,16 @@ export async function cloudExtractEpub(filePath: string): Promise<EpubParseResul
     plainText: res.plainText,
     wordCount: res.wordCount ?? null,
   }
+}
+
+/**
+ * Extract a PDF off-device and map the result back to the local PdfParseResult
+ * shape (text + word count only — PDFs carry no title/author/cover on either
+ * path). Throws on any failure; callers fall back.
+ */
+export async function cloudExtractPdf(filePath: string): Promise<PdfParseResult> {
+  const res = await cloudExtract(filePath, 'pdf')
+  return { plainText: res.plainText, wordCount: res.wordCount ?? null }
 }
 
 /**
@@ -129,6 +148,25 @@ export async function resolveEpubParse(filePath: string): Promise<EpubParseResul
     }
   }
   return parseEpub(filePath)
+}
+
+/**
+ * Parse a PDF for import — off-device when the user opted in and it's available,
+ * otherwise via the local (shared) pdf.js extractor. Cloud is best-effort: any
+ * failure falls back to local so an import never blocks on the network.
+ */
+export async function resolvePdfParse(filePath: string): Promise<PdfParseResult> {
+  if (await canCloudProcess()) {
+    try {
+      return await cloudExtractPdf(filePath)
+    } catch (err) {
+      console.warn(
+        '[cloud-processing] cloud pdf extract failed, falling back to local parse:',
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+  return extractPdf(filePath)
 }
 
 /** Test-only: reset the master switch between tests. */

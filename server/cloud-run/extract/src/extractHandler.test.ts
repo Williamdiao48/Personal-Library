@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { handleExtract, ExtractError } from './extractHandler'
 import { createExtractServer } from './server'
 import { buildEpub, PNG_1x1 } from '../../../../test/fixtures/epub'
+import { buildPdf } from '../../../../test/fixtures/pdf'
 
 type FetchLike = typeof fetch
 
@@ -21,6 +22,7 @@ const EPUB_NO_COVER = buildEpub({
   title: 'No Cover',
   chapters: [{ href: 'c1.xhtml', title: 'Ch 1', body: '<p>Body.</p>' }],
 })
+const PDF = Buffer.from(buildPdf('Hello World from PDF'))
 
 // A fake R2: a GET that serves `sourceBytes`. `opts` tweaks status / content-
 // length to exercise the guard paths. The container only ever does a GET now.
@@ -87,10 +89,42 @@ describe('handleExtract', () => {
     ).rejects.toMatchObject({ status: 413 })
   })
 
+  it('extracts a PDF: text + word count, null metadata/cover', async () => {
+    const r = await handleExtract({ kind: 'pdf', sourceUrl: 'https://r2/source' }, fakeR2(PDF))
+    expect(r.plainText).toContain('Hello World from PDF')
+    expect(r.wordCount).toBe(4)
+    expect(r.title).toBeNull()
+    expect(r.author).toBeNull()
+    expect(r.coverBase64).toBeNull()
+    expect(r.coverExt).toBeNull()
+  })
+
+  it('is best-effort on a garbage PDF: empty result, no throw', async () => {
+    const r = await handleExtract(
+      { kind: 'pdf', sourceUrl: 'https://r2/source' },
+      fakeR2(Buffer.from('not a pdf at all')),
+    )
+    expect(r).toEqual({
+      title: null,
+      author: null,
+      coverBase64: null,
+      coverExt: null,
+      plainText: '',
+      wordCount: null,
+    })
+  })
+
+  it('rejects an oversized PDF source (declared Content-Length) before reading it', async () => {
+    const fetchImpl = fakeR2(PDF, { contentLength: String(300 * 1_048_576) })
+    await expect(
+      handleExtract({ kind: 'pdf', sourceUrl: 'https://r2/source' }, fetchImpl),
+    ).rejects.toMatchObject({ status: 413 })
+  })
+
   it('rejects an unsupported kind', async () => {
     await expect(
       handleExtract(
-        { kind: 'pdf' as unknown as 'epub', sourceUrl: 'https://r2/source' },
+        { kind: 'html' as unknown as 'epub', sourceUrl: 'https://r2/source' },
         fakeR2(EPUB),
       ),
     ).rejects.toBeInstanceOf(ExtractError)

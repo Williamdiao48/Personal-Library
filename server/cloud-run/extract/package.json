@@ -7,13 +7,14 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "esbuild src/server.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/server.js --external:jsdom --external:adm-zip --external:sanitize-html",
+    "build": "esbuild src/server.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/server.js --external:jsdom --external:adm-zip --external:sanitize-html --external:pdfjs-dist/legacy/build/pdf.mjs",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
     "jsdom": "^24.1.1",
+    "pdfjs-dist": "5.4.624",
     "sanitize-html": "^2.13.0"
   },
   "devDependencies": {

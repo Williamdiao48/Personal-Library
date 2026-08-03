@@ -54,7 +54,9 @@ export async function handleProcessExtract(
   const userId = await deps.verifyJwt(req.headers.get('Authorization') ?? '')
   if (!userId) return json({ error: 'unauthorized' }, 401)
 
-  // 2 — Validate the request: exactly { kind:'epub', content_hash:<sha256> }.
+  // 2 — Validate the request: { kind:'epub'|'pdf', content_hash:<sha256> }. The
+  //     kind is opaque plumbing here — it's forwarded to the container, which owns
+  //     the per-kind extraction; this layer only allow-lists the known values.
   let body: { kind?: unknown; content_hash?: unknown }
   try {
     body = await req.json()
@@ -63,7 +65,9 @@ export async function handleProcessExtract(
   }
   const kind = String(body.kind ?? '')
   const contentHash = String(body.content_hash ?? '')
-  if (kind !== 'epub') return json({ error: 'kind must be "epub"' }, 400)
+  if (kind !== 'epub' && kind !== 'pdf') {
+    return json({ error: 'kind must be "epub" or "pdf"' }, 400)
+  }
   if (!HASH_RE.test(contentHash)) {
     return json({ error: 'content_hash must be a sha256 hex string' }, 400)
   }

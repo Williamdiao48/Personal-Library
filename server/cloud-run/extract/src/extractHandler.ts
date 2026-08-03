@@ -22,14 +22,20 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { extractEpub } from '../../../../electron/main/capture/extract'
-import { EPUB_MAX_BYTES } from '../../../../electron/main/security/validation'
+import { extractEpub, extractPdf } from '../../../../electron/main/capture/extract'
+import { EPUB_MAX_BYTES, PDF_MAX_BYTES } from '../../../../electron/main/security/validation'
 
 export interface ExtractRequest {
-  /** Only EPUB in the Phase 4 MVP; PDF + scraped-HTML join in Chunk 6. */
-  kind: 'epub'
+  /** EPUB + PDF supported (Chunk 6); scraped-HTML joins in a later chunk. */
+  kind: 'epub' | 'pdf'
   /** Presigned R2 GET URL for the untrusted source blob. */
   sourceUrl: string
+}
+
+/** Whole-file size cap per kind — the same guard the local import path enforces. */
+const MAX_BYTES: Record<ExtractRequest['kind'], number> = {
+  epub: EPUB_MAX_BYTES,
+  pdf: PDF_MAX_BYTES,
 }
 
 /**
@@ -68,38 +74,52 @@ export async function handleExtract(
   req: ExtractRequest,
   fetchImpl: FetchLike = fetch,
 ): Promise<ExtractResponse> {
-  if (!req || req.kind !== 'epub') {
+  if (!req || (req.kind !== 'epub' && req.kind !== 'pdf')) {
     throw new ExtractError(400, `unsupported kind: ${String(req?.kind)}`)
   }
   if (typeof req.sourceUrl !== 'string' || req.sourceUrl.length === 0) {
     throw new ExtractError(400, 'missing sourceUrl')
   }
 
-  // 1. Pull the untrusted source from R2. Enforce the same whole-file size cap
-  //    the local import path uses — reject early on a declared Content-Length,
-  //    and again after read in case the header lied.
+  // 1. Pull the untrusted source from R2. Enforce the same per-kind whole-file
+  //    size cap the local import path uses — reject early on a declared
+  //    Content-Length, and again after read in case the header lied.
+  const maxBytes = MAX_BYTES[req.kind]
   const res = await fetchImpl(req.sourceUrl)
   if (!res.ok) throw new ExtractError(502, `source fetch failed: ${res.status}`)
   const declared = Number(res.headers.get('content-length'))
-  if (Number.isFinite(declared) && declared > EPUB_MAX_BYTES) {
+  if (Number.isFinite(declared) && declared > maxBytes) {
     throw new ExtractError(413, `source too large: ${declared} bytes`)
   }
   const bytes = Buffer.from(await res.arrayBuffer())
-  if (bytes.length > EPUB_MAX_BYTES) {
+  if (bytes.length > maxBytes) {
     throw new ExtractError(413, `source too large: ${bytes.length} bytes`)
   }
 
-  // 2. extractEpub reads a file PATH; stage the bytes in tmpfs (/tmp) and always
-  //    clean up. The zip-bomb / per-entry inflate guards live inside the shared
-  //    extractor, so a malicious archive is bounded here just as it is locally.
+  // 2. The shared extractors read a file PATH; stage the bytes in tmpfs (/tmp)
+  //    and always clean up. The zip-bomb / inflate / pdf.js guards live inside the
+  //    shared extractor, so a malicious file is bounded here just as it is locally.
   const dir = await mkdtemp(join(tmpdir(), 'extract-'))
-  const srcPath = join(dir, `${randomUUID()}.epub`)
+  const srcPath = join(dir, `${randomUUID()}.${req.kind}`)
   try {
     await writeFile(srcPath, bytes)
-    const result = extractEpub(srcPath)
 
-    // 3. Cover bytes (if any) ride back inline as base64; the client hashes +
-    //    stores them just like a local cover. No PUT here — see the header note.
+    // PDF: text-only, no metadata/cover (parity with the local capturePdf path).
+    if (req.kind === 'pdf') {
+      const result = await extractPdf(srcPath)
+      return {
+        title: null,
+        author: null,
+        coverBase64: null,
+        coverExt: null,
+        plainText: result.plainText,
+        wordCount: result.wordCount,
+      }
+    }
+
+    // EPUB: metadata + text; the cover (if any) rides back inline as base64 so the
+    // client hashes + stores it just like a local cover. No PUT — see header note.
+    const result = extractEpub(srcPath)
     return {
       title: result.title,
       author: result.author,

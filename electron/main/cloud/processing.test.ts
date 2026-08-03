@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
     plainText: 'local text',
     wordCount: 2,
   })),
+  extractPdf: vi.fn(async () => ({ plainText: 'local pdf text', wordCount: 3 })),
 }))
 vi.mock('../auth/client', () => ({
   isConfigured: h.isConfigured,
@@ -28,10 +29,13 @@ vi.mock('../auth/client', () => ({
 vi.mock('./presign', () => ({ presignBlobUrl: h.presignBlobUrl }))
 vi.mock('node:fs/promises', () => ({ readFile: h.readFile }))
 vi.mock('../workers/parse-host', () => ({ parseEpub: h.parseEpub }))
+vi.mock('../capture/extract', () => ({ extractPdf: h.extractPdf }))
 
 import {
   resolveEpubParse,
+  resolvePdfParse,
   cloudExtractEpub,
+  cloudExtractPdf,
   setCloudProcessingEnabled,
   isCloudProcessingEnabled,
   __resetForTest,
@@ -49,6 +53,7 @@ beforeEach(() => {
   h.isConfigured.mockReturnValue(true)
   h.getSession.mockResolvedValue({ data: { session: { access_token: 't' } } })
   h.readFile.mockResolvedValue(RAW)
+  h.extractPdf.mockResolvedValue({ plainText: 'local pdf text', wordCount: 3 })
   h.presignBlobUrl.mockResolvedValue('https://r2.example/put-url')
   h.invoke.mockResolvedValue({
     data: {
@@ -141,6 +146,42 @@ describe('cloudExtractEpub', () => {
   })
 })
 
+describe('cloudExtractPdf', () => {
+  it('uploads the raw source, invokes process-extract with kind:pdf, maps text + count', async () => {
+    h.invoke.mockResolvedValue({
+      data: {
+        title: null,
+        author: null,
+        coverBase64: null,
+        coverExt: null,
+        plainText: 'cloud pdf text',
+        wordCount: 5,
+      },
+      error: null,
+    })
+    const result = await cloudExtractPdf('/tmp/doc.pdf')
+
+    expect(h.presignBlobUrl).toHaveBeenCalledWith('put', 'content', RAW_HASH)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'PUT' })
+    expect(h.invoke).toHaveBeenCalledWith('process-extract', {
+      body: { kind: 'pdf', content_hash: RAW_HASH },
+    })
+    // PDFs carry no title/author/cover — the mapped result is text + count only.
+    expect(result).toEqual({ plainText: 'cloud pdf text', wordCount: 5 })
+  })
+
+  it('throws when the source upload fails', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => 'denied',
+    } as unknown as Response)
+    await expect(cloudExtractPdf('/tmp/doc.pdf')).rejects.toThrow(/source upload failed \(403\)/)
+    expect(h.invoke).not.toHaveBeenCalled()
+  })
+})
+
 describe('resolveEpubParse', () => {
   it('parses locally when cloud processing is disabled', async () => {
     setCloudProcessingEnabled(false)
@@ -181,6 +222,45 @@ describe('resolveEpubParse', () => {
     const result = await resolveEpubParse('/tmp/book.epub')
     expect(result.title).toBe('Local Title')
     expect(h.parseEpub).toHaveBeenCalledWith('/tmp/book.epub')
+    warn.mockRestore()
+  })
+})
+
+describe('resolvePdfParse', () => {
+  it('parses locally when cloud processing is disabled', async () => {
+    setCloudProcessingEnabled(false)
+    const result = await resolvePdfParse('/tmp/doc.pdf')
+    expect(result).toEqual({ plainText: 'local pdf text', wordCount: 3 })
+    expect(h.extractPdf).toHaveBeenCalledWith('/tmp/doc.pdf')
+    expect(h.presignBlobUrl).not.toHaveBeenCalled()
+  })
+
+  it('parses in the cloud when enabled + configured + signed in', async () => {
+    setCloudProcessingEnabled(true)
+    h.invoke.mockResolvedValue({
+      data: {
+        title: null,
+        author: null,
+        coverBase64: null,
+        coverExt: null,
+        plainText: 'cloud pdf text',
+        wordCount: 5,
+      },
+      error: null,
+    })
+    const result = await resolvePdfParse('/tmp/doc.pdf')
+    expect(result).toEqual({ plainText: 'cloud pdf text', wordCount: 5 })
+    expect(h.invoke).toHaveBeenCalledOnce()
+    expect(h.extractPdf).not.toHaveBeenCalled()
+  })
+
+  it('falls back to local when cloud extraction throws', async () => {
+    setCloudProcessingEnabled(true)
+    fetchMock.mockRejectedValue(new Error('offline'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = await resolvePdfParse('/tmp/doc.pdf')
+    expect(result).toEqual({ plainText: 'local pdf text', wordCount: 3 })
+    expect(h.extractPdf).toHaveBeenCalledWith('/tmp/doc.pdf')
     warn.mockRestore()
   })
 })

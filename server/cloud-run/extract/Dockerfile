@@ -14,7 +14,9 @@
 FROM node:22-slim AS build
 WORKDIR /repo/server/cloud-run/extract
 
-# Install the container's own deps (adm-zip / jsdom / sanitize-html + esbuild).
+# Install the container's own deps (adm-zip / jsdom / sanitize-html / pdfjs-dist
+# + esbuild). pdfjs-dist is pinned to the repo-root version so cloud PDF text
+# extraction is byte-identical to the local pdf.js the app ships.
 COPY server/cloud-run/extract/package*.json ./
 RUN npm install --no-audit --no-fund
 
