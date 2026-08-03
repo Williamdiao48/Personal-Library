@@ -56,7 +56,7 @@ describe('enqueueItemBackup', () => {
     })
     // ledger row synced, PUT issued with the bytes
     expect(blobRow('contenthash')).toMatchObject({ kind: 'content', state: 'synced' })
-    expect(h.presignBlobUrl).toHaveBeenCalledWith('put', 'content', 'contenthash')
+    expect(h.presignBlobUrl).toHaveBeenCalledWith('put', 'content', 'contenthash', 7) // 'CONTENT'
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0][0]).toBe('https://r2.example/put-url')
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'PUT' })

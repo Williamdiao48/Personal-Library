@@ -106,7 +106,7 @@ async function uploadBlob(hash: string, kind: BlobKind): Promise<void> {
   const data = resolveBlobBytes(hash, kind)
   // The source item was deleted before we drained — nothing to upload.
   if (!data) throw new Error(`no local source for ${kind} blob ${hash.slice(0, 12)}`)
-  const url = await presignBlobUrl('put', kind, hash)
+  const url = await presignBlobUrl('put', kind, hash, data.length)
   const res = await fetch(url, { method: 'PUT', body: data })
   if (!res.ok) {
     // R2/S3 returns an XML body (<Code>…</Code>) explaining a 4xx; surface a
