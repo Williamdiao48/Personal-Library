@@ -4,6 +4,7 @@ import { SettingsProvider, useSettings } from './contexts/SettingsContext'
 import { discoverService } from './services/discover'
 import { llmService } from './services/llm'
 import { syncService } from './services/sync'
+import { processingService } from './services/processing'
 import { ToastProvider, useToast } from './contexts/ToastContext'
 import { UpdaterProvider, useUpdater } from './contexts/UpdaterContext'
 import { CaptureJobsProvider } from './contexts/CaptureJobsContext'
@@ -104,6 +105,15 @@ function DiscoverBackfillSync() {
     if (!window.api?.sync) return
     void syncService.setEnabled(settings.enableSync)
   }, [settings.enableSync])
+
+  // Mirror the cloud-processing master switch to main (source of truth is
+  // localStorage, re-synced on boot + on change). Main reads it at each EPUB
+  // import to decide off-device vs. local parsing; actual cloud use additionally
+  // requires being signed in.
+  useEffect(() => {
+    if (!window.api?.processing) return
+    void processingService.setEnabled(settings.enableCloudProcessing)
+  }, [settings.enableCloudProcessing])
   return null
 }
 

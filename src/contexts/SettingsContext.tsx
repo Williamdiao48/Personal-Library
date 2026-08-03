@@ -81,6 +81,11 @@ export interface AppSettings {
   // signed in, no sync round runs until the user turns this on. Mirrored to the
   // main process (like enableDiscover) on boot + on toggle.
   enableSync: boolean
+  // Cloud processing (Phase 4) — extract untrusted files off-device in an isolated
+  // container instead of on this machine. OFF by default; requires being signed in.
+  // Best-effort: falls back to local parsing when unavailable. Mirrored to the main
+  // process (like enableSync) on boot + on toggle.
+  enableCloudProcessing: boolean
 }
 
 const CUSTOM_THEME_VARS: Array<[keyof CustomTheme, string]> = [
@@ -113,6 +118,7 @@ const DEFAULTS: AppSettings = {
   cloudBackupEnabled: false,
   cloudBackupDefault: false,
   enableSync: false,
+  enableCloudProcessing: false,
 }
 
 const STORAGE_KEY = 'app-settings'

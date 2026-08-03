@@ -21,6 +21,14 @@ server/
       blob-url/
         index.ts                       -- Phase 2: mint presigned R2 URLs (Deno)
     config.toml                        -- created by `supabase init` (see below)
+  cloud-run/
+    extract/                           -- Phase 4: untrusted-file extraction container
+      src/
+        extractHandler.ts              -- GET source → shared extractor → PUT cover
+        server.ts                      -- minimal HTTP entrypoint ($PORT)
+        extractHandler.test.ts         -- unit + loopback round-trip (fake R2)
+      Dockerfile                       -- built from REPO ROOT context
+      package.json / tsconfig.json
   README.md
 ```
 
@@ -137,6 +145,125 @@ curl -sS -X POST "$SUPABASE_URL/functions/v1/blob-url" \
 The client side (the uploader that calls this) IS unit-tested in the app, against
 a stubbed `fetch` — see Phase 2 chunk 4.
 
+## Cloud Run: `extract` container (Phase 4 processing)
+
+`cloud-run/extract/` runs heavy, **untrusted** file extraction (EPUB now; PDF +
+scraped HTML in a later chunk) in a throwaway container instead of on the user's
+machine — the security payoff — and off the main process. It wraps the **shared**
+`electron/main/capture/extract` module (the exact code the local parse worker
+runs), so a cloud result is byte-identical to the local one, guards and all.
+
+> Full design: `docs/internal/planning/cloud/phase-4-cloud-processing.md`
+> (internal, not pushed).
+
+### Credential model (same trust boundary as `blob-url`)
+
+The container holds **no long-lived credential**. Per request it receives only a
+single presigned R2 **GET** (the source), minted by the `process-extract` Edge
+Function (Chunk 3) after it verifies the caller's JWT. Cloud Run ingress is
+**internal/authenticated only** — the Edge Function (with a Google-signed ID
+token) is the sole caller; the service is never publicly invocable.
+
+The container does **not** upload the cover. Covers are content-addressed by
+`sha256(cover bytes)` — a hash only known *after* extraction — so the Edge
+Function can't presign the right key up front. Instead the container returns the
+(small) cover **inline** as base64; the client hashes and stores it via the same
+Phase-2 path it uses for locally-extracted covers. One code path, and the
+container stays a pure GET-only worker.
+
+### Contract
+
+`POST /extract` (body ≤ 64 KB — the multi-MB source travels via R2, not here):
+```jsonc
+{ "kind": "epub", "sourceUrl": "<presigned GET>" }
+```
+Success (`200`): the canonical result (mirrors `EpubParseResult`, cover inline):
+```jsonc
+{ "title": "...", "author": "...", "coverBase64": "<base64|null>",
+  "coverExt": "png|jpg|gif|webp|null", "plainText": "...", "wordCount": 123 }
+```
+`GET /health` → `200 {ok:true}`. Errors carry an HTTP status: `400` bad
+request/kind, `413` oversized source, `502` R2 fetch failure, `500` else.
+
+### Build & test
+
+```bash
+cd server/cloud-run/extract
+npm install
+npm run typecheck                 # isolated tsc (repo-root typecheck scopes to electron/**)
+npm run build                     # esbuild bundle → dist/server.js
+
+# Image build uses the REPO ROOT as context (bundles the shared extractor):
+docker build -f server/cloud-run/extract/Dockerfile -t extract .
+```
+The handler + HTTP plumbing are covered by the repo's vitest `server` project
+(`npm test`) — a fake R2 plus a real loopback round-trip, no GCP needed. The
+container is deployed and verified against **real** Cloud Run + dev Supabase by
+the Phase 4 exit-gate spike (Chunk 5), never in CI.
+
+### Deploy secrets (Chunk 5, never committed)
+
+The container itself needs none. The **Edge Function** side (`process-extract`,
+below) needs the Cloud Run service URL + the service-account key to mint invoker
+ID tokens, set via `supabase secrets set` alongside the existing R2 secrets. GCP
+project id + the service-account live in GCP, not the repo.
+
+## Edge Function: `process-extract` (Phase 4 orchestrator)
+
+`functions/process-extract/` is the server half of cloud extraction — the piece
+that lets the credential-light container stay credential-light. Flow:
+
+```
+client (main)                       process-extract (Edge Fn)          Cloud Run /extract
+  │ upload source to R2 (Phase-2 uploader, dedupe by hash)
+  │ POST {kind:'epub', content_hash} + JWT ─────────►
+  │                          verify JWT → presign GET(source)
+  │                          → mint Google ID token (SA) → POST ─────────►
+  │                                                          GET source, extract,
+  │                          ◄──────── {title,author,coverBase64,…} ──────
+  │ ◄──── result JSON ───
+  │ hash+store cover (same Phase-2 path), write item row + FTS
+```
+
+Same trust boundary as `blob-url`: the `user_id` in the presigned source key
+comes from the **verified token**, never the body. The container is reached with
+a **Google-signed ID token** (service-account, `target_audience` = the Cloud Run
+URL) because the service is deployed private (`--no-allow-unauthenticated`).
+
+### Contract
+
+`POST /functions/v1/process-extract` — `Authorization: Bearer <supabase-jwt>`.
+```jsonc
+{ "kind": "epub", "content_hash": "<sha256 hex of the R2 source blob>" }
+```
+Success (`200`) passes the container's result straight through (see the extract
+contract above). Errors: `401` (bad/absent JWT), `400` (bad kind/hash/JSON),
+`502` (Cloud Run failed), `500` (server misconfigured — R2 or Cloud Run env).
+
+### Structure & test
+
+Only `index.ts` is Deno glue (env + Supabase client + R2 presign + `Deno.serve`),
+untested like `blob-url`. The logic worth testing is cross-runtime (Web Crypto +
+fetch only) and **is** covered by the vitest `server` project:
+- `handler.ts` — validation, key scoping, orchestration (9 tests, fake deps).
+- `googleAuth.ts` — the service-account **JWT-bearer → ID-token** flow (3 tests:
+  signs with a generated RSA key against a fake token endpoint, asserts the
+  `target_audience` claim + error paths). Isolated `tsc` via the local
+  `tsconfig.json` (excludes the Deno `index.ts`).
+
+### Deploy (Chunk 5)
+
+```bash
+cd server
+supabase secrets set \
+  CLOUD_RUN_URL=https://extract-xxxx.run.app \
+  GCP_SERVICE_ACCOUNT_KEY="$(cat sa-key.json)"    # invoker SA; never committed
+  # (R2_* already set for blob-url; SUPABASE_URL/ANON_KEY auto-injected)
+supabase functions deploy process-extract
+```
+Leave the default `verify_jwt = true` (gateway rejects tokenless calls). Smoke-
+test after deploy like `blob-url` — it isn't in the vitest suite end-to-end.
+
 ## What's here vs. coming
 
 - **Now (Phase 1):** these migrations + auth. Empty tables; nothing syncs yet.
@@ -145,5 +272,7 @@ a stubbed `fetch` — see Phase 2 chunk 4.
   desktop app.
 - **Phase 3:** the client-side sync engine fills these tables (LWW on
   `updated_at`, tombstones via `deleted_at`).
-- **Phase 4+:** a Node API (only for server-trusted work — processing containers,
-  social brokering). Still nothing to run in `server/` until then.
+- **Phase 4:** the `cloud-run/extract` container (above) + a `process-extract`
+  Edge Function (Chunk 3) that mints its URLs. Opt-in (`enableCloudProcessing`,
+  default off); local extraction stays the default and the offline fallback.
+- **Phase 5:** social brokering (independent, unblocked).

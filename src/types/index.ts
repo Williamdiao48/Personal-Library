@@ -557,6 +557,11 @@ export interface Api {
     /** Subscribe to status changes; returns unsubscribe. */
     onStatus: (callback: (status: SyncStatus) => void) => () => void
   }
+  processing: {
+    /** Mirror the cloud-processing master switch to main (read at each EPUB import
+     *  to decide off-device vs. local parsing). */
+    setEnabled: (enabled: boolean) => Promise<void>
+  }
   llm: {
     /** Sync the local-LLM reranker setting to the main process (mirrors discover.setEnabled). */
     setConfig: (cfg: { enabled: boolean; model: string; baseUrl: string }) => Promise<void>

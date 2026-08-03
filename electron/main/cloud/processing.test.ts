@@ -1,0 +1,186 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { createHash } from 'node:crypto'
+
+// Mock every seam so these tests are about the cloud-or-local DECISION + the
+// upload/invoke/map plumbing — not real files, network, or EPUB parsing.
+const h = vi.hoisted(() => ({
+  isConfigured: vi.fn(() => true),
+  getSession: vi.fn(async () => ({ data: { session: { access_token: 't' } } })),
+  invoke: vi.fn(),
+  presignBlobUrl: vi.fn(async () => 'https://r2.example/put-url'),
+  readFile: vi.fn(async () => Buffer.from('RAW-EPUB-BYTES')),
+  parseEpub: vi.fn(async () => ({
+    title: 'Local Title',
+    author: 'Local Author',
+    coverBuffer: null,
+    coverExt: null,
+    plainText: 'local text',
+    wordCount: 2,
+  })),
+}))
+vi.mock('../auth/client', () => ({
+  isConfigured: h.isConfigured,
+  getSupabase: () => ({
+    auth: { getSession: h.getSession },
+    functions: { invoke: h.invoke },
+  }),
+}))
+vi.mock('./presign', () => ({ presignBlobUrl: h.presignBlobUrl }))
+vi.mock('node:fs/promises', () => ({ readFile: h.readFile }))
+vi.mock('../workers/parse-host', () => ({ parseEpub: h.parseEpub }))
+
+import {
+  resolveEpubParse,
+  cloudExtractEpub,
+  setCloudProcessingEnabled,
+  isCloudProcessingEnabled,
+  __resetForTest,
+} from './processing'
+
+const RAW = Buffer.from('RAW-EPUB-BYTES')
+const RAW_HASH = createHash('sha256').update(RAW).digest('hex')
+const PNG_B64 = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64')
+
+let fetchMock: ReturnType<typeof vi.fn>
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  __resetForTest()
+  h.isConfigured.mockReturnValue(true)
+  h.getSession.mockResolvedValue({ data: { session: { access_token: 't' } } })
+  h.readFile.mockResolvedValue(RAW)
+  h.presignBlobUrl.mockResolvedValue('https://r2.example/put-url')
+  h.invoke.mockResolvedValue({
+    data: {
+      title: 'Cloud Title',
+      author: 'Cloud Author',
+      coverBase64: PNG_B64,
+      coverExt: 'png',
+      plainText: 'cloud text',
+      wordCount: 2,
+    },
+    error: null,
+  })
+  fetchMock = vi.fn(async () => ({ ok: true, status: 200 }) as unknown as Response)
+  vi.stubGlobal('fetch', fetchMock)
+})
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+describe('setCloudProcessingEnabled / isCloudProcessingEnabled', () => {
+  it('mirrors the master switch', () => {
+    expect(isCloudProcessingEnabled()).toBe(false)
+    setCloudProcessingEnabled(true)
+    expect(isCloudProcessingEnabled()).toBe(true)
+    setCloudProcessingEnabled(false)
+    expect(isCloudProcessingEnabled()).toBe(false)
+  })
+})
+
+describe('cloudExtractEpub', () => {
+  it('uploads the raw source, invokes process-extract, and maps the result', async () => {
+    const result = await cloudExtractEpub('/tmp/book.epub')
+
+    // Presigned a PUT for the content blob keyed by the RAW bytes' sha256.
+    expect(h.presignBlobUrl).toHaveBeenCalledWith('put', 'content', RAW_HASH)
+    // Raw bytes PUT to the presigned URL.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('https://r2.example/put-url')
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'PUT' })
+    // process-extract invoked with the SAME content_hash (not the request body's).
+    expect(h.invoke).toHaveBeenCalledWith('process-extract', {
+      body: { kind: 'epub', content_hash: RAW_HASH },
+    })
+    // Result mapped to the EpubParseResult shape, inline cover decoded to a Buffer.
+    expect(result.title).toBe('Cloud Title')
+    expect(result.author).toBe('Cloud Author')
+    expect(result.coverExt).toBe('png')
+    expect(result.coverBuffer).toBeInstanceOf(Buffer)
+    expect(result.coverBuffer?.toString('base64')).toBe(PNG_B64)
+    expect(result.plainText).toBe('cloud text')
+    expect(result.wordCount).toBe(2)
+  })
+
+  it('maps a null cover and null metadata cleanly', async () => {
+    h.invoke.mockResolvedValue({
+      data: {
+        title: null,
+        author: null,
+        coverBase64: null,
+        coverExt: null,
+        plainText: '',
+        wordCount: null,
+      },
+      error: null,
+    })
+    const result = await cloudExtractEpub('/tmp/book.epub')
+    expect(result.coverBuffer).toBeNull()
+    expect(result.title).toBeNull()
+    expect(result.wordCount).toBeNull()
+  })
+
+  it('throws when the source upload fails', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => '<Error>denied</Error>',
+    } as unknown as Response)
+    await expect(cloudExtractEpub('/tmp/book.epub')).rejects.toThrow(/source upload failed \(403\)/)
+    expect(h.invoke).not.toHaveBeenCalled()
+  })
+
+  it('throws when process-extract returns an error', async () => {
+    h.invoke.mockResolvedValue({ data: null, error: { message: 'boom' } })
+    await expect(cloudExtractEpub('/tmp/book.epub')).rejects.toThrow(/process-extract failed: boom/)
+  })
+
+  it('throws on an unexpected response shape', async () => {
+    h.invoke.mockResolvedValue({ data: { nope: true }, error: null })
+    await expect(cloudExtractEpub('/tmp/book.epub')).rejects.toThrow(/unexpected response/)
+  })
+})
+
+describe('resolveEpubParse', () => {
+  it('parses locally when cloud processing is disabled', async () => {
+    setCloudProcessingEnabled(false)
+    const result = await resolveEpubParse('/tmp/book.epub')
+    expect(result.title).toBe('Local Title')
+    expect(h.parseEpub).toHaveBeenCalledWith('/tmp/book.epub')
+    expect(h.presignBlobUrl).not.toHaveBeenCalled()
+  })
+
+  it('parses locally when enabled but the build is not configured', async () => {
+    setCloudProcessingEnabled(true)
+    h.isConfigured.mockReturnValue(false)
+    const result = await resolveEpubParse('/tmp/book.epub')
+    expect(result.title).toBe('Local Title')
+    expect(h.invoke).not.toHaveBeenCalled()
+  })
+
+  it('parses locally when enabled + configured but signed out', async () => {
+    setCloudProcessingEnabled(true)
+    h.getSession.mockResolvedValue({ data: { session: null } })
+    const result = await resolveEpubParse('/tmp/book.epub')
+    expect(result.title).toBe('Local Title')
+    expect(h.invoke).not.toHaveBeenCalled()
+  })
+
+  it('parses in the cloud when enabled + configured + signed in', async () => {
+    setCloudProcessingEnabled(true)
+    const result = await resolveEpubParse('/tmp/book.epub')
+    expect(result.title).toBe('Cloud Title')
+    expect(h.invoke).toHaveBeenCalledOnce()
+    expect(h.parseEpub).not.toHaveBeenCalled()
+  })
+
+  it('falls back to local when cloud extraction throws', async () => {
+    setCloudProcessingEnabled(true)
+    fetchMock.mockRejectedValue(new Error('offline'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = await resolveEpubParse('/tmp/book.epub')
+    expect(result.title).toBe('Local Title')
+    expect(h.parseEpub).toHaveBeenCalledWith('/tmp/book.epub')
+    warn.mockRestore()
+  })
+})

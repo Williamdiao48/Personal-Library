@@ -7,6 +7,10 @@ import { resolve } from 'path'
 //                a stub so pure helpers that touch app.getPath/ipcMain are testable
 //                without a real Electron runtime.
 //   • renderer — React components/hooks/services (jsdom env) with Testing Library.
+//   • server   — deployable server-side code (node env): the Cloud Run extraction
+//                container handler, tested against a fake R2. Lives outside the
+//                coverage denominator (root config includes only electron/**, src/**)
+//                since it ships as its own image, not part of the app bundle.
 // Coverage and reporters live in the root vitest.config.ts (coverage cannot be set
 // per-project).
 const electronAlias = { electron: resolve(__dirname, 'test/stubs/electron.ts') }
@@ -29,6 +33,14 @@ export default defineWorkspace([
       globals: true,
       include: ['src/**/*.test.{ts,tsx}'],
       setupFiles: ['./test/renderer/setup.ts'],
+    },
+  },
+  {
+    resolve: { alias: electronAlias },
+    test: {
+      name: 'server',
+      environment: 'node',
+      include: ['server/**/*.test.ts'],
     },
   },
 ])

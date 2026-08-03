@@ -288,6 +288,13 @@ contextBridge.exposeInMainWorld('api', {
     },
   },
 
+  // Cloud processing (Phase 4) — off-device extraction of untrusted files. The
+  // master switch is renderer-owned and pushed via setEnabled (mirrors
+  // discover/sync.setEnabled); there is no background work to report.
+  processing: {
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('processing:setEnabled', enabled),
+  },
+
   // Local LLM (Ollama) book reranker — opt-in refinement of book recommendations.
   llm: {
     setConfig: (cfg: { enabled: boolean; model: string; baseUrl: string }) =>

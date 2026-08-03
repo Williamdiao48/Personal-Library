@@ -10,6 +10,7 @@ import { annotationsService, annotationThemesService } from './annotationsServic
 import { discoverService } from './discover'
 import { cloudService } from './cloud'
 import { syncService } from './sync'
+import { processingService } from './processing'
 
 // The service layer is a thin pass-through to window.api. These tests lock the
 // wiring for every non-library service — right namespace, right method, right
@@ -230,6 +231,13 @@ describe('syncService delegation', () => {
     const cb = vi.fn()
     syncService.onStatus(cb)
     expect(api.sync.onStatus).toHaveBeenCalledWith(cb)
+  })
+})
+
+describe('processingService delegation', () => {
+  it('setEnabled forwards the flag', () => {
+    processingService.setEnabled(true)
+    expect(api.processing.setEnabled).toHaveBeenCalledWith(true)
   })
 })
 

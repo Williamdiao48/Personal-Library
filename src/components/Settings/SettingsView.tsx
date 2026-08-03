@@ -537,6 +537,24 @@ function AccountSettings() {
         </div>
 
         <SyncSettings />
+
+        <div className="settings-row settings-row--top">
+          <div className="settings-row-stack">
+            <label className="settings-row-label" htmlFor="toggle-cloud-processing">
+              Process files in the cloud
+            </label>
+            <span className="settings-row-hint">
+              When on, imported EPUBs are extracted in an isolated cloud container instead of on
+              this device — so an untrusted file is never parsed locally. Falls back to on-device
+              parsing when offline.
+            </span>
+          </div>
+          <Toggle
+            id="toggle-cloud-processing"
+            checked={settings.enableCloudProcessing}
+            onChange={(v) => updateSettings({ enableCloudProcessing: v })}
+          />
+        </div>
       </>
     )
   }
