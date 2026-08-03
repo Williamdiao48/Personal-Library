@@ -18,8 +18,7 @@ import { captureUniversal } from './sites/universal'
 import { safeContentPath } from '../security/paths'
 import { assertImportFile } from '../security/validation'
 import { assertHttpUrl, safeFetch } from '../security/net-guard'
-import { resolveEpubParse } from '../cloud/processing'
-import { extractPdfText } from './pdfText'
+import { resolveEpubParse, resolvePdfParse } from '../cloud/processing'
 import { indexFtsText, readStoredFtsText } from '../db/ftsText'
 import { computeContentHash } from '../util/contentHash'
 import { persistSourceTags, siteKeyFromUrl } from '../recommender/sourceTags'
@@ -518,21 +517,13 @@ async function capturePdf(filePath: string, cloudBackup = false): Promise<Captur
   const title = basename(filePath, '.pdf')
   const now = Date.now()
 
-  // Extract text for word count and FTS — non-fatal if PDF is image-only or
-  // encrypted. Runs in main (not the F7 worker): the bundled pdfjs-dist needs no
-  // DOM globals for text extraction, but keeping it here mirrors the reader and
-  // avoids paying the engine load in the parse worker. F3-hardened flags live in
-  // extractPdfText (CVE-2024-4367 is already fixed in the bundled pdfjs 5.4.x;
-  // the flags are defense-in-depth against future font/eval/XFA issues).
-  let wordCount: number | null = null
-  let plainText = ''
-  try {
-    const buffer = readFileSync(filePath)
-    plainText = await extractPdfText(buffer)
-    wordCount = plainText.split(/\s+/).filter(Boolean).length
-  } catch {
-    // Proceed with null word count for scanned/encrypted PDFs
-  }
+  // Extract text for word count and FTS off-device when the user opted into cloud
+  // processing (Phase 4) — the untrusted PDF is parsed in an isolated Cloud Run
+  // container — otherwise via the shared local pdf.js extractor (which runs in
+  // main; pdf.js text extraction needs no F7 worker). Both paths converge on the
+  // same F3-hardened extractPdf, and both are best-effort: an image-only/encrypted
+  // PDF yields empty text + null word count rather than aborting the import.
+  const { plainText, wordCount } = await resolvePdfParse(filePath)
 
   const db = getDb()
   try {

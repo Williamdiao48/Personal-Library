@@ -92,8 +92,19 @@ describe('handleProcessExtract', () => {
     expect(res.status).toBe(400)
   })
 
-  it('400s a non-epub kind', async () => {
-    const res = await handleProcessExtract(post({ kind: 'pdf', content_hash: HASH }), makeDeps())
+  it('accepts a pdf kind and forwards it to the container', async () => {
+    const deps = makeDeps()
+    const res = await handleProcessExtract(post({ kind: 'pdf', content_hash: HASH }), deps)
+    expect(res.status).toBe(200)
+    expect(deps.invokeCloudRun).toHaveBeenCalledWith(
+      'https://extract-abc.run.app/extract',
+      'id-token-123',
+      { kind: 'pdf', sourceUrl: `https://r2/user-1/${HASH}?sig` },
+    )
+  })
+
+  it('400s an unsupported kind', async () => {
+    const res = await handleProcessExtract(post({ kind: 'html', content_hash: HASH }), makeDeps())
     expect(res.status).toBe(400)
   })
 
