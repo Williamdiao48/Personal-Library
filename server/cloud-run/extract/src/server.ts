@@ -1,16 +1,17 @@
 // Cloud Run entrypoint. A minimal Node HTTP server (no framework — keeps the
 // image tiny and the attack surface small) wrapping the extraction handler.
-// Cloud Run injects $PORT; the service is deployed with ingress = internal/
-// authenticated only, so the ONLY caller is the process-extract Edge Function
-// (Chunk 3) presenting a Google-signed ID token — this server does no auth of
-// its own, that is the ingress boundary's job.
+// Cloud Run injects $PORT; the service is deployed --no-allow-unauthenticated
+// with --ingress=all (the Edge Function calls in from Supabase, OUTSIDE GCP, so
+// internal-only ingress would block it). The ONLY authorized caller is the
+// process-extract Edge Function (Chunk 3) presenting a Google-signed ID token —
+// this server does no auth of its own; the IAM invoker check is the boundary.
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { handleExtract, ExtractError, type ExtractRequest } from './extractHandler'
 
 const PORT = Number(process.env.PORT) || 8080
-// The request body is only the small JSON envelope {kind, urls}; the multi-MB
-// source arrives out-of-band from R2, never through here.
+// The request body is only the small JSON envelope {kind, sourceUrl}; the
+// multi-MB source arrives out-of-band from R2, never through here.
 const MAX_BODY_BYTES = 64 * 1024
 
 function sendJson(res: ServerResponse, status: number, obj: unknown): void {
@@ -31,6 +32,10 @@ export function createExtractServer() {
     let size = 0
     let aborted = false
     req.on('data', (c: Buffer) => {
+      // Once we've sent the 413 and destroyed the request, ignore any already-
+      // buffered chunks — re-entering below would sendJson() a second time and
+      // throw ERR_STREAM_WRITE_AFTER_END inside the event handler.
+      if (aborted) return
       size += c.length
       if (size > MAX_BODY_BYTES) {
         aborted = true

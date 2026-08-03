@@ -36,8 +36,10 @@ USER node
 COPY --chown=node:node --from=build /repo/server/cloud-run/extract/dist ./dist
 COPY --chown=node:node --from=build /repo/server/cloud-run/extract/node_modules ./node_modules
 
-# Cloud Run injects $PORT (default 8080). The service is deployed with
-# ingress=internal-and-cloud-load-balancing and a read-only root filesystem
-# except a /tmp tmpfs — set at deploy time (Chunk 5), not bakeable here.
+# Cloud Run injects $PORT (default 8080). The service is deployed
+# --no-allow-unauthenticated --ingress=all (the Edge Function calls in from
+# Supabase, outside GCP, so internal-only ingress would block it; the ID-token
+# IAM check is the auth boundary, not the network). Deploy-time flags (Chunk 5),
+# not bakeable here.
 EXPOSE 8080
 CMD ["node", "dist/server.js"]
