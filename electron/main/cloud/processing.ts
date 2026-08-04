@@ -81,7 +81,7 @@ async function cloudExtract(filePath: string, kind: 'epub' | 'pdf'): Promise<Clo
 
   // 1 — Upload the raw source so the container can GET it. users/<uid>/content/<hash>,
   //     the same key process-extract will presign a GET for.
-  const putUrl = await presignBlobUrl('put', 'content', contentHash)
+  const putUrl = await presignBlobUrl('put', 'content', contentHash, bytes.length)
   const put = await fetch(putUrl, { method: 'PUT', body: new Uint8Array(bytes) })
   if (!put.ok) {
     const detail = await Promise.resolve()

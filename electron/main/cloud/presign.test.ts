@@ -16,10 +16,18 @@ beforeEach(() => {
 describe('presignBlobUrl', () => {
   it('invokes the blob-url function with { op, kind, hash } and returns the url', async () => {
     h.invoke.mockResolvedValue({ data: { url: 'https://r2/signed', key: 'k', expiresIn: 300 } })
-    const url = await presignBlobUrl('put', 'content', 'abc123')
+    const url = await presignBlobUrl('get', 'content', 'abc123')
     expect(url).toBe('https://r2/signed')
     expect(h.invoke).toHaveBeenCalledWith('blob-url', {
-      body: { op: 'put', kind: 'content', hash: 'abc123' },
+      body: { op: 'get', kind: 'content', hash: 'abc123' },
+    })
+  })
+
+  it('forwards the byte size for a put (the PUT cap) but omits it otherwise', async () => {
+    h.invoke.mockResolvedValue({ data: { url: 'https://r2/signed', key: 'k', expiresIn: 300 } })
+    await presignBlobUrl('put', 'content', 'abc123', 4096)
+    expect(h.invoke).toHaveBeenCalledWith('blob-url', {
+      body: { op: 'put', kind: 'content', hash: 'abc123', size: 4096 },
     })
   })
 

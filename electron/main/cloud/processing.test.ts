@@ -87,8 +87,9 @@ describe('cloudExtractEpub', () => {
   it('uploads the raw source, invokes process-extract, and maps the result', async () => {
     const result = await cloudExtractEpub('/tmp/book.epub')
 
-    // Presigned a PUT for the content blob keyed by the RAW bytes' sha256.
-    expect(h.presignBlobUrl).toHaveBeenCalledWith('put', 'content', RAW_HASH)
+    // Presigned a PUT for the content blob keyed by the RAW bytes' sha256, with
+    // the raw byte count as the upload-size cap ('RAW-EPUB-BYTES' = 14 bytes).
+    expect(h.presignBlobUrl).toHaveBeenCalledWith('put', 'content', RAW_HASH, RAW.length)
     // Raw bytes PUT to the presigned URL.
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0][0]).toBe('https://r2.example/put-url')
@@ -161,7 +162,7 @@ describe('cloudExtractPdf', () => {
     })
     const result = await cloudExtractPdf('/tmp/doc.pdf')
 
-    expect(h.presignBlobUrl).toHaveBeenCalledWith('put', 'content', RAW_HASH)
+    expect(h.presignBlobUrl).toHaveBeenCalledWith('put', 'content', RAW_HASH, RAW.length)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'PUT' })
     expect(h.invoke).toHaveBeenCalledWith('process-extract', {
