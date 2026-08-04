@@ -125,6 +125,9 @@ export interface CaptureResult {
   title: string
   author: string | null
   wordCount: number | null
+  // File imports only: the raw file was already in the library (same sha256), so
+  // it collapsed onto the existing item — `id` is that item's, no new one created.
+  duplicate?: boolean
 }
 
 // A background URL capture job tracked in the renderer while the main process

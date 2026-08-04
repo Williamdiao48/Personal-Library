@@ -11,7 +11,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 38
+export const CURRENT_VERSION = 39
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -460,6 +460,20 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
       table_name  TEXT PRIMARY KEY,
       pull_cursor INTEGER NOT NULL DEFAULT 0
     );
+  `,
+  // Import de-duplication — a real sha256 of the RAW imported file bytes (the
+  // epub/pdf exactly as the user picked it), so re-importing the identical file
+  // is caught before any parse/copy/upload (capture/fileHash.ts). Distinct from:
+  //   • items.content_hash — a fast 32-bit HTML-only text fingerprint (staleness).
+  //   • items.blob_hash — sha256 of the PACKED archive (includes the per-item
+  //     <id>.epub filename → differs across imports), cloud-only.
+  // Neither is a stable raw-file identity, so this is its own column. LOCAL-ONLY —
+  // not in SYNC_SPECS (a device dedups against its own on-disk files); existing
+  // rows backfill lazily at startup (backfillFileHashes). ALTER-ADD, MIGRATIONS
+  // only (never in SCHEMA baseline, per the fresh-install duplicate-column gotcha).
+  39: `
+    ALTER TABLE items ADD COLUMN file_hash TEXT;
+    CREATE INDEX IF NOT EXISTS idx_items_file_hash ON items (file_hash);
   `,
 }
 

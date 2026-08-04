@@ -21,6 +21,7 @@ import { assertHttpUrl, safeFetch } from '../security/net-guard'
 import { resolveEpubParse, resolvePdfParse } from '../cloud/processing'
 import { indexFtsText, readStoredFtsText } from '../db/ftsText'
 import { computeContentHash } from '../util/contentHash'
+import { computeFileHash } from './fileHash'
 import { persistSourceTags, siteKeyFromUrl } from '../recommender/sourceTags'
 
 export interface CaptureResult {
@@ -28,6 +29,31 @@ export interface CaptureResult {
   title: string
   author: string | null
   wordCount: number | null
+  // Set when a file import matched an existing library item (same raw-file
+  // sha256) and was collapsed onto it — no new item was created; `id` is the
+  // existing item's. The renderer surfaces this ("Already in your library").
+  duplicate?: boolean
+}
+
+// A pre-existing library item that a re-imported file collapsed onto, looked up
+// by items.file_hash. Only LIVE items dedup: a byte-identical file whose item is
+// in trash re-imports fresh (the user deleted it — a new copy is the intent).
+function findDuplicateByFileHash(fileHash: string): CaptureResult | null {
+  const dup = getDb()
+    .prepare(
+      `SELECT id, title, author, word_count FROM items
+       WHERE file_hash = ? AND deleted_at IS NULL LIMIT 1`,
+    )
+    .get(fileHash) as
+    { id: string; title: string; author: string | null; word_count: number | null } | undefined
+  if (!dup) return null
+  return {
+    id: dup.id,
+    title: dup.title,
+    author: dup.author,
+    wordCount: dup.word_count,
+    duplicate: true,
+  }
 }
 
 export interface ChapterRange {
@@ -423,6 +449,13 @@ async function captureEpub(filePath: string, cloudBackup = false): Promise<Captu
   // Import-time gate: size cap + ZIP magic before any parse or copy (F2).
   await assertImportFile(filePath, 'epub')
 
+  // De-dup on the raw file bytes BEFORE the expensive parse/copy/upload: an
+  // identical file already in the library collapses onto that item, so a
+  // re-import costs a single hash + indexed lookup, not another cloud round-trip.
+  const fileHash = computeFileHash(readFileSync(filePath))
+  const existing = findDuplicateByFileHash(fileHash)
+  if (existing) return existing
+
   // Parse metadata + text off-device when the user opted into cloud processing
   // (Phase 4) — the untrusted file is extracted in an isolated Cloud Run
   // container — otherwise in the sandboxed worker (F7). Either way a parse
@@ -475,10 +508,21 @@ async function captureEpub(filePath: string, cloudBackup = false): Promise<Captu
     db.transaction(() => {
       db.prepare(
         `
-        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, date_saved, date_modified, cloud_backup)
-        VALUES (?, ?, ?, NULL, 'epub', ?, ?, ?, ?, ?, ?)
+        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, file_hash, date_saved, date_modified, cloud_backup)
+        VALUES (?, ?, ?, NULL, 'epub', ?, ?, ?, ?, ?, ?, ?)
       `,
-      ).run(id, title, author, destFileName, coverPath, wordCount, now, now, cloudBackup ? 1 : 0)
+      ).run(
+        id,
+        title,
+        author,
+        destFileName,
+        coverPath,
+        wordCount,
+        fileHash,
+        now,
+        now,
+        cloudBackup ? 1 : 0,
+      )
 
       db.prepare(
         `
@@ -507,6 +551,11 @@ async function capturePdf(filePath: string, cloudBackup = false): Promise<Captur
   // Import-time gate: size cap + %PDF- magic before any parse or copy (F2).
   await assertImportFile(filePath, 'pdf')
 
+  // De-dup on the raw file bytes before parse/copy/upload (see captureEpub).
+  const fileHash = computeFileHash(readFileSync(filePath))
+  const existing = findDuplicateByFileHash(fileHash)
+  if (existing) return existing
+
   const id = randomUUID()
   const contentDir = getContentDir()
 
@@ -530,10 +579,10 @@ async function capturePdf(filePath: string, cloudBackup = false): Promise<Captur
     db.transaction(() => {
       db.prepare(
         `
-        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, date_saved, date_modified, cloud_backup)
-        VALUES (?, ?, NULL, NULL, 'pdf', ?, NULL, ?, ?, ?, ?)
+        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, file_hash, date_saved, date_modified, cloud_backup)
+        VALUES (?, ?, NULL, NULL, 'pdf', ?, NULL, ?, ?, ?, ?, ?)
       `,
-      ).run(id, title, destFileName, wordCount, now, now, cloudBackup ? 1 : 0)
+      ).run(id, title, destFileName, wordCount, fileHash, now, now, cloudBackup ? 1 : 0)
 
       db.prepare(
         `
