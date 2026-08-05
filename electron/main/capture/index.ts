@@ -2,7 +2,7 @@ import { JSDOM } from 'jsdom'
 import { Readability } from '@mozilla/readability'
 import { app } from 'electron'
 import { join, extname, basename } from 'path'
-import { mkdirSync, writeFileSync, readFileSync, copyFileSync, unlinkSync } from 'fs'
+import { mkdirSync, writeFileSync, readFileSync, copyFileSync, unlinkSync, existsSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { getDb } from '../db'
 import { sanitize } from './sanitizer'
@@ -38,15 +38,44 @@ export interface CaptureResult {
 // A pre-existing library item that a re-imported file collapsed onto, looked up
 // by items.file_hash. Only LIVE items dedup: a byte-identical file whose item is
 // in trash re-imports fresh (the user deleted it — a new copy is the intent).
-function findDuplicateByFileHash(fileHash: string): CaptureResult | null {
+//
+// Cross-device: Phase-3 sync replicates items across a user's devices, so the
+// matched item can be one first imported on ANOTHER device — whose bytes aren't on
+// THIS device yet (content arrives via pull-on-open, and only if it was backed up
+// to R2). When the matched item's local file is missing, we adopt the just-imported
+// bytes into its path so the de-duped book is immediately openable here (the user
+// clearly has the file — they just picked it). `importPath` is that picked file.
+function resolveFileDuplicate(fileHash: string, importPath: string): CaptureResult | null {
   const dup = getDb()
     .prepare(
-      `SELECT id, title, author, word_count FROM items
+      `SELECT id, title, author, word_count, file_path FROM items
        WHERE file_hash = ? AND deleted_at IS NULL LIMIT 1`,
     )
     .get(fileHash) as
-    { id: string; title: string; author: string | null; word_count: number | null } | undefined
+    | {
+        id: string
+        title: string
+        author: string | null
+        word_count: number | null
+        file_path: string
+      }
+    | undefined
   if (!dup) return null
+
+  // Adopt the imported bytes if this device lacks the matched item's content
+  // (cross-device dedup against a not-yet-downloaded book). Best-effort: a failed
+  // copy must not block the dedup — the item stays as-is (pull-on-open remains an
+  // option if it was backed up). dedup only matches epub/pdf items, so file_path
+  // is a single content file (no multi-chapter handling).
+  const localPath = safeContentPath(dup.file_path)
+  if (!existsSync(localPath)) {
+    try {
+      copyFileSync(importPath, localPath)
+    } catch {
+      // leave the item's bytes unresolved; the duplicate result still stands.
+    }
+  }
+
   return {
     id: dup.id,
     title: dup.title,
@@ -453,7 +482,7 @@ async function captureEpub(filePath: string, cloudBackup = false): Promise<Captu
   // identical file already in the library collapses onto that item, so a
   // re-import costs a single hash + indexed lookup, not another cloud round-trip.
   const fileHash = computeFileHash(readFileSync(filePath))
-  const existing = findDuplicateByFileHash(fileHash)
+  const existing = resolveFileDuplicate(fileHash, filePath)
   if (existing) return existing
 
   // Parse metadata + text off-device when the user opted into cloud processing
@@ -553,7 +582,7 @@ async function capturePdf(filePath: string, cloudBackup = false): Promise<Captur
 
   // De-dup on the raw file bytes before parse/copy/upload (see captureEpub).
   const fileHash = computeFileHash(readFileSync(filePath))
-  const existing = findDuplicateByFileHash(fileHash)
+  const existing = resolveFileDuplicate(fileHash, filePath)
   if (existing) return existing
 
   const id = randomUUID()
