@@ -29,7 +29,13 @@ export function computeFileHash(buf: Buffer): string {
  * until the library is fully hashed; a book whose file went missing is skipped
  * (stays NULL) rather than aborting the pass. Returns how many rows it filled.
  *
- * Local-only work: file_hash is not synced, so this never marks rows dirty.
+ * Marks each filled row dirty=1 so the newly-computed hash PUSHES to the server on
+ * the next sync round — that's what makes the EXISTING library de-dup across a
+ * user's devices (a new import is already dirty, so it syncs on its own). Because
+ * file_hash is a real synced column and the server restamps updated_at on push, a
+ * backfilled row becomes the LWW winner for its whole row; it only changes
+ * file_hash, so at worst it reverts other columns to their last-synced values —
+ * acceptable for a single-user account (see the plan's documented tradeoff).
  */
 export function backfillFileHashes(database: Database.Database): number {
   const rows = database
@@ -39,7 +45,7 @@ export function backfillFileHashes(database: Database.Database): number {
     )
     .all() as { id: string; file_path: string }[]
 
-  const update = database.prepare('UPDATE items SET file_hash = ? WHERE id = ?')
+  const update = database.prepare('UPDATE items SET file_hash = ?, dirty = 1 WHERE id = ?')
   let filled = 0
   for (const row of rows) {
     try {

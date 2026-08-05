@@ -101,4 +101,21 @@ describe('backfillFileHashes', () => {
     expect(backfillFileHashes(db)).toBe(1)
     expect(backfillFileHashes(db)).toBe(0)
   })
+
+  it('marks each filled row dirty so the hash pushes on the next sync (cross-device dedup)', () => {
+    const db = openTestDb()
+    const e = seedItem(db, { content_type: 'epub', file_path: 'sync.epub' })
+    writeContent('sync.epub', 'PK sync bytes')
+    // Simulate a pre-existing, already-synced (clean) row that predates the column.
+    db.prepare('UPDATE items SET dirty = 0 WHERE id = ?').run(e)
+
+    expect(backfillFileHashes(db)).toBe(1)
+
+    const row = db.prepare('SELECT dirty, file_hash FROM items WHERE id = ?').get(e) as {
+      dirty: number
+      file_hash: string | null
+    }
+    expect(row.file_hash).not.toBeNull()
+    expect(row.dirty).toBe(1) // re-dirtied so Phase-3 sync carries file_hash to other devices
+  })
 })

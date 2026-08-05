@@ -74,6 +74,12 @@ export const SYNC_SPECS: SyncSpec[] = [
       'review',
       'blob_hash',
       'cover_hash',
+      // sha256 of the RAW imported epub/pdf bytes (util/capture fileHash.ts). Synced
+      // so a book imported on one device de-dups when the identical file is imported
+      // on another device of the same account (the local findDuplicateByFileHash
+      // query then matches the pulled-in row). Cross-USER dedup is a separate future
+      // design (shared storage + proof-of-possession) — not implied by syncing this.
+      'file_hash',
       'updated_at',
       'deleted_at',
     ],
