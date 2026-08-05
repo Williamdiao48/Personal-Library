@@ -17,11 +17,13 @@ const mocks = vi.hoisted(() => ({
   auth: { user: null as { id: string; email: string | null } | null, configured: false },
   settings: { cloudBackupEnabled: false, cloudBackupDefault: false },
   updateSettings: vi.fn(),
+  addToast: vi.fn(),
 }))
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => mocks.auth }))
 vi.mock('../../contexts/SettingsContext', () => ({
   useSettings: () => ({ settings: mocks.settings, updateSettings: mocks.updateSettings }),
 }))
+vi.mock('../../contexts/ToastContext', () => ({ useToast: () => ({ addToast: mocks.addToast }) }))
 
 import { captureService } from '../../services/capture'
 import { libraryService } from '../../services/library'
@@ -157,6 +159,33 @@ describe('AddItemModal — file import', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Browse files...' }))
     })
     expect(screen.getByText('bad file')).toBeInTheDocument()
+  })
+
+  it('toasts and closes on a duplicate — without inserting a (phantom) card', async () => {
+    cap.fromFile.mockResolvedValue({ id: 'dup1', title: 'Dup Book', duplicate: true })
+    const props = renderModal()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Browse files...' }))
+    })
+    expect(mocks.addToast).toHaveBeenCalledWith(
+      expect.stringContaining('already in your library'),
+      'success',
+    )
+    // The item already exists in the list — inserting it again (onSaved) is the
+    // phantom-card bug, so we close instead and never fetch it.
+    expect(props.onSaved).not.toHaveBeenCalled()
+    expect(props.onClose).toHaveBeenCalled()
+    expect(lib.getById).not.toHaveBeenCalled()
+  })
+
+  it('does not toast for a normal (non-duplicate) import', async () => {
+    cap.fromFile.mockResolvedValue({ id: 'f1', title: 'Book' })
+    lib.getById.mockResolvedValue({ id: 'f1', title: 'Book' } as Item)
+    renderModal()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Browse files...' }))
+    })
+    expect(mocks.addToast).not.toHaveBeenCalled()
   })
 })
 

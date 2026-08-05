@@ -94,8 +94,14 @@ describe('database bring-up', () => {
         'cloud_backup',
         'cover_hash',
         'blob_hash',
+        'file_hash',
       ]),
     )
+  })
+
+  it('creates idx_items_file_hash (import de-dup, migration 39)', () => {
+    const db = openTestDb()
+    expect(indexesOf(db)).toContain('idx_items_file_hash')
   })
 
   it('progress has all migration-added columns', () => {

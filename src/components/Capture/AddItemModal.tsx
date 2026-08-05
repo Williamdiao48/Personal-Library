@@ -3,6 +3,7 @@ import { captureService } from '../../services/capture'
 import { libraryService } from '../../services/library'
 import { useAuth } from '../../contexts/AuthContext'
 import { useSettings } from '../../contexts/SettingsContext'
+import { useToast } from '../../contexts/ToastContext'
 import type { CaptureResult, Item } from '../../types'
 
 interface Props {
@@ -25,6 +26,7 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
 
   const { user, configured } = useAuth()
   const { settings, updateSettings } = useSettings()
+  const { addToast } = useToast()
   // The per-capture cloud opt-in only exists when the user is signed in AND has
   // turned the master switch on (Phase 2 Decision 8). Otherwise nothing uploads.
   const cloudEligible = configured && !!user && settings.cloudBackupEnabled
@@ -67,6 +69,14 @@ export default function AddItemModal({ onClose, onSaved, onJobStarted, initialUr
         setImporting(false)
         return
       } // user cancelled picker
+      // A duplicate import created NO new item — just say so and close. Calling
+      // onSaved here would prepend a second card for the already-present item (a
+      // phantom that vanishes on the next library refetch), so we must not.
+      if (result.duplicate) {
+        addToast(`“${result.title}” is already in your library.`, 'success')
+        onClose()
+        return
+      }
       const item = await libraryService.getById(result.id)
       if (!item) throw new Error('Item was saved but could not be retrieved.')
       onSaved(item)
