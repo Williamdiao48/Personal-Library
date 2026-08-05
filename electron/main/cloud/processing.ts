@@ -28,6 +28,35 @@ import type { EpubParseResult } from '../workers/parse-protocol'
 
 let enabled = false
 
+// Bounds so a stalled network/container falls back to local parsing instead of
+// hanging the import indefinitely. The upload can be a large book on a slow link;
+// the invoke must outlast the container's own work ceiling (Cloud Run --timeout=120).
+const SOURCE_UPLOAD_TIMEOUT_MS = 120_000
+const EXTRACT_INVOKE_TIMEOUT_MS = 150_000
+const SOURCE_REAP_TIMEOUT_MS = 30_000
+
+/** Reject `p` if it hasn't settled within `ms` (best-effort cancel — the underlying
+ *  call may still settle later and is ignored). supabase-js `invoke` takes no signal,
+ *  so a timeout race is how we bound it. */
+function withTimeout<T>(p: PromiseLike<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    Promise.resolve(p).then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
+
+// The last reap promise, so tests can await the fire-and-forget cleanup deterministically.
+let lastReap: Promise<void> = Promise.resolve()
+
 /** Mirror the renderer's master switch into the main process. */
 export function setCloudProcessingEnabled(next: boolean): void {
   enabled = next
@@ -64,11 +93,16 @@ async function canCloudProcess(): Promise<boolean> {
 
 /**
  * Extract a source file off-device via the Phase 4 pipeline (kind-agnostic core).
- * Uploads the raw source to the caller's own R2 prefix (content-addressed by the
- * raw bytes' sha256, reusing the Phase-2 `content` presign — so it dedupes against
- * a backup of the same file), invokes `process-extract`, and returns the raw
- * container response. Throws on any failure; the per-kind wrappers map the result
- * and callers fall back to local parsing.
+ * Uploads the RAW source to the caller's own R2 prefix (content-addressed by the
+ * raw bytes' sha256) so the container can GET it, invokes `process-extract`, and
+ * returns the raw container response. Throws on any failure; the per-kind wrappers
+ * map the result and callers fall back to local parsing.
+ *
+ * Note the key is sha256(raw bytes) — NOT the Phase-2 backup key, which is
+ * sha256(packed archive) (itemBlob.buildContentBlob). So this object dedupes only
+ * against another cloud-extract of the same file (idempotent overwrite), not against
+ * the item's backup; it's a transient extraction input that lingers in R2 until a
+ * bucket lifecycle rule reaps it. Reaping is a bucket-config concern, not this path.
  */
 async function cloudExtract(filePath: string, kind: 'epub' | 'pdf'): Promise<CloudExtractResponse> {
   const supabase = getSupabase()
@@ -80,9 +114,13 @@ async function cloudExtract(filePath: string, kind: 'epub' | 'pdf'): Promise<Clo
   const contentHash = sha256Hex(bytes)
 
   // 1 — Upload the raw source so the container can GET it. users/<uid>/content/<hash>,
-  //     the same key process-extract will presign a GET for.
+  //     the same key process-extract will presign a GET for. Bounded upload deadline.
   const putUrl = await presignBlobUrl('put', 'content', contentHash, bytes.length)
-  const put = await fetch(putUrl, { method: 'PUT', body: new Uint8Array(bytes) })
+  const put = await fetch(putUrl, {
+    method: 'PUT',
+    body: new Uint8Array(bytes),
+    signal: AbortSignal.timeout(SOURCE_UPLOAD_TIMEOUT_MS),
+  })
   if (!put.ok) {
     const detail = await Promise.resolve()
       .then(() => put.text())
@@ -92,17 +130,38 @@ async function cloudExtract(filePath: string, kind: 'epub' | 'pdf'): Promise<Clo
     )
   }
 
-  // 2 — Drive the orchestrator (JWT attached by supabase-js). It presigns the GET,
-  //     mints the Google ID token, and invokes the private container.
-  const { data, error } = await supabase.functions.invoke('process-extract', {
-    body: { kind, content_hash: contentHash },
-  })
-  if (error) throw new Error(`process-extract failed: ${error.message ?? String(error)}`)
-  const res = data as CloudExtractResponse | null
-  if (!res || typeof res.plainText !== 'string') {
-    throw new Error('process-extract returned an unexpected response')
+  try {
+    // 2 — Drive the orchestrator (JWT attached by supabase-js). It presigns the GET,
+    //     mints the Google ID token, and invokes the private container. Bounded so a
+    //     stalled container/network falls back to local instead of hanging the import.
+    const { data, error } = await withTimeout(
+      supabase.functions.invoke('process-extract', { body: { kind, content_hash: contentHash } }),
+      EXTRACT_INVOKE_TIMEOUT_MS,
+      'process-extract',
+    )
+    if (error) throw new Error(`process-extract failed: ${error.message ?? String(error)}`)
+    const res = data as CloudExtractResponse | null
+    if (!res || typeof res.plainText !== 'string') {
+      throw new Error('process-extract returned an unexpected response')
+    }
+    return res
+  } finally {
+    // 3 — The uploaded source is a TRANSIENT extraction input; reap it (best-effort,
+    //     non-blocking) so it doesn't linger in R2. A bucket lifecycle rule is the
+    //     backstop for the rare case this never runs (crash/offline mid-import).
+    lastReap = reapSourceBlob(contentHash)
   }
-  return res
+}
+
+/** Best-effort delete of the transient raw-source object from R2 after extraction.
+ *  Never throws — a failure just leaves the object for a bucket lifecycle rule. */
+async function reapSourceBlob(contentHash: string): Promise<void> {
+  try {
+    const url = await presignBlobUrl('delete', 'content', contentHash)
+    await fetch(url, { method: 'DELETE', signal: AbortSignal.timeout(SOURCE_REAP_TIMEOUT_MS) })
+  } catch {
+    // Opportunistic cleanup — swallow (offline, expired URL, R2 hiccup, …).
+  }
 }
 
 /**
@@ -172,4 +231,10 @@ export async function resolvePdfParse(filePath: string): Promise<PdfParseResult>
 /** Test-only: reset the master switch between tests. */
 export function __resetForTest(): void {
   enabled = false
+  lastReap = Promise.resolve()
+}
+
+/** Test-only: await the last fire-and-forget source reap (deterministic assertions). */
+export function __whenReapedForTest(): Promise<void> {
+  return lastReap
 }

@@ -1,6 +1,6 @@
 import { getSupabase } from '../auth/client'
 
-export type BlobOp = 'put' | 'get'
+export type BlobOp = 'put' | 'get' | 'delete'
 export type BlobKind = 'content' | 'cover'
 
 // Client for the blob-url Edge Function (Phase 2 Decision 7). Asks for a

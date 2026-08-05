@@ -19,7 +19,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { AwsClient } from 'npm:aws4fetch@1.0.20'
 import { handleProcessExtract, type ProcessExtractDeps } from './handler.ts'
-import { mintIdToken, type ServiceAccountKey } from './googleAuth.ts'
+import { createCachedIdTokenMinter, type ServiceAccountKey } from './googleAuth.ts'
 
 const SOURCE_GET_EXPIRES = 300 // ~5 min, like blob-url — one transfer's worth.
 
@@ -41,6 +41,9 @@ const r2 = new AwsClient({
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+
+// Lazily built on first mint (needs the parsed SA) and reused across warm invocations.
+let mintCached: ((audience: string) => Promise<string>) | null = null
 
 const deps: ProcessExtractDeps = {
   cloudRunUrl: CLOUD_RUN_URL,
@@ -68,8 +71,13 @@ const deps: ProcessExtractDeps = {
   },
 
   async mintToken(audience) {
-    const sa = JSON.parse(GCP_SERVICE_ACCOUNT_KEY) as ServiceAccountKey
-    return mintIdToken(sa, audience)
+    // Parse the SA once and reuse a per-audience token cache across warm invocations.
+    if (!mintCached) {
+      mintCached = createCachedIdTokenMinter(
+        JSON.parse(GCP_SERVICE_ACCOUNT_KEY) as ServiceAccountKey,
+      )
+    }
+    return mintCached(audience)
   },
 
   invokeCloudRun(extractUrl, idToken, body) {

@@ -71,8 +71,9 @@ const deps: BlobUrlDeps = {
       headers['content-length'] = String(contentLength)
       aws.allHeaders = true
     }
+    const method = op === 'put' ? 'PUT' : op === 'delete' ? 'DELETE' : 'GET'
     const signed = await r2.sign(`${endpoint}?X-Amz-Expires=${EXPIRES_SECONDS}`, {
-      method: op === 'put' ? 'PUT' : 'GET',
+      method,
       headers,
       aws,
     })

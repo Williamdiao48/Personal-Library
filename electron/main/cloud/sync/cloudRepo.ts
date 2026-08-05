@@ -21,6 +21,14 @@ export interface CloudRepo {
   pull(spec: SyncSpec, sinceCursor: number): Promise<SyncRow[]>
   /** Upsert local rows; returns them with the server-stamped updated_at. */
   push(spec: SyncSpec, rows: SyncRow[]): Promise<SyncRow[]>
+  /**
+   * The maximum number of rows a single `pull` can return. The engine needs it to
+   * tell a FULL (LIMIT-truncated) page from a drained one — a page whose last rows
+   * share the max `updated_at` ms can straddle the LIMIT, and skipping past that ms
+   * would silently drop the truncated tail. Optional: a fake that returns unbounded
+   * pages omits it (the truncation-safe backoff then never triggers).
+   */
+  pageSize?: number
 }
 
 const PULL_PAGE = 1000
@@ -37,6 +45,8 @@ function stripUserId(row: Record<string, unknown>): SyncRow {
  */
 export function createSupabaseCloudRepo(client: SupabaseClient, userId: string): CloudRepo {
   return {
+    pageSize: PULL_PAGE,
+
     async pull(spec, sinceCursor) {
       // append tables (reading_sessions) still order by the server updated_at.
       const { data, error } = await client

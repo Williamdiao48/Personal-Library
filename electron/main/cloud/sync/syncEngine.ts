@@ -101,11 +101,27 @@ async function pullTable(
       const plan = planPull(spec, remote, localByKeys(db, spec, remote))
       applyPull(db, spec, plan.apply)
       applied += plan.apply.length
-      // Advance the cursor to the newest server clock in this batch, in the SAME
-      // txn as the apply (crash → re-pull, never skip).
-      const newCursor = remote.reduce((m, r) => Math.max(m, Number(r.updated_at ?? 0)), cursor)
+
+      // Advance the cursor in the SAME txn as the apply (crash → re-pull, never
+      // skip). The cursor is a `.gt(updated_at)` bound and updated_at is ms-
+      // truncated, so several rows can share the max ms in a batch. If this page is
+      // FULL (LIMIT-truncated), the max-ms rows may continue onto the next page, so
+      // advancing to the max would skip that tail. Back off to just BEFORE the max
+      // ms instead: the next page re-includes — and idempotently re-applies — that
+      // ms's rows. A non-full page is fully drained → advance to the max. (A full
+      // page whose rows ALL share one ms can't be sub-paged by timestamp, so advance
+      // and accept the loss — an astronomically unlikely >LIMIT-rows-in-one-ms case.)
+      let maxTs = cursor
+      let minTs = Number.POSITIVE_INFINITY
+      for (const r of remote) {
+        const ts = Number(r.updated_at ?? 0)
+        if (ts > maxTs) maxTs = ts
+        if (ts < minTs) minTs = ts
+      }
+      const full = repo.pageSize !== undefined && remote.length >= repo.pageSize
+      const newCursor = full && minTs !== maxTs ? maxTs - 1 : maxTs
       setCursor(db, spec.table, newCursor)
-      if (newCursor === cursor) remote.length = 0 // no clock progress → stop paging
+      if (newCursor <= cursor) remote.length = 0 // no forward progress → stop paging
     })()
     if (remote.length === 0) break // drained (or the no-progress guard fired)
   }

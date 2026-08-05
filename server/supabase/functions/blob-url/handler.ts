@@ -7,7 +7,7 @@
 // project exercises this in Node against fakes — mirroring
 // process-extract/{handler,index}.ts.
 
-export type BlobOp = 'put' | 'get'
+export type BlobOp = 'put' | 'get' | 'delete'
 export type BlobKind = 'content' | 'cover'
 
 export interface BlobUrlDeps {
@@ -41,7 +41,9 @@ export const MAX_PUT_BYTES: Record<BlobKind, number> = {
 // can ever be signed (no path traversal, no arbitrary keys).
 const HASH_RE = /^[0-9a-f]{64}$/
 const KINDS = new Set<string>(['content', 'cover'])
-const OPS = new Set<string>(['put', 'get'])
+// 'delete' reaps a transient extraction-source object (Phase 4); like 'get' it needs
+// no size. All three stay scoped to the verified user's own key (step 4).
+const OPS = new Set<string>(['put', 'get', 'delete'])
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -74,7 +76,7 @@ export async function handleBlobUrl(req: Request, deps: BlobUrlDeps): Promise<Re
   const op = String(body.op ?? '')
   const kind = String(body.kind ?? '')
   const hash = String(body.hash ?? '')
-  if (!OPS.has(op)) return json({ error: 'op must be "put" or "get"' }, 400)
+  if (!OPS.has(op)) return json({ error: 'op must be "put", "get", or "delete"' }, 400)
   if (!KINDS.has(kind)) return json({ error: 'kind must be "content" or "cover"' }, 400)
   if (!HASH_RE.test(hash)) return json({ error: 'hash must be a sha256 hex string' }, 400)
 
