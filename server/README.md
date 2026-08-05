@@ -240,6 +240,19 @@ Success (`200`) passes the container's result straight through (see the extract
 contract above). Errors: `401` (bad/absent JWT), `400` (bad kind/hash/JSON),
 `502` (Cloud Run failed), `500` (server misconfigured — R2 or Cloud Run env).
 
+### Transient source cleanup
+
+The raw file the client uploads for extraction (`users/<uid>/content/<sha256-of-raw-
+bytes>`) is a **throwaway extraction input** — its key is the raw-bytes hash, which is
+_not_ the Phase-2 backup key (that's the sha256 of the packed archive), so it's never
+reused. After `process-extract` returns, the client best-effort **`DELETE`s** it (a
+presigned `delete` op on `blob-url`). To mop up the rare object left behind when that
+cleanup can't run (crash/offline mid-import), add a **bucket lifecycle rule** as a
+backstop — e.g. expire objects under the `users/` prefix a few days after creation is
+too broad (it also holds durable backups), so scope aggressive expiry only if/when
+extraction sources move to a dedicated prefix. Until then the client `DELETE` is the
+primary reaper and the residue is bounded (one object per never-reaped import).
+
 ### Structure & test
 
 Only `index.ts` is Deno glue (env + Supabase client + R2 presign + `Deno.serve`),

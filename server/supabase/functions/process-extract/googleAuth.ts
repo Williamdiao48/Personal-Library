@@ -62,6 +62,28 @@ export async function mintIdToken(
   return data.id_token
 }
 
+/**
+ * Wrap {@link mintIdToken} with a per-audience cache so a burst of extracts doesn't
+ * hit Google's token endpoint once per call. Google ID tokens live ~1h; we refresh
+ * a little early (`ttlMs` default 50 min) so a near-expiry token isn't handed to
+ * Cloud Run and rejected mid-flight. `now`/`fetchImpl` are injectable for tests.
+ */
+export function createCachedIdTokenMinter(
+  sa: ServiceAccountKey,
+  opts: { fetchImpl?: typeof fetch; now?: () => number; ttlMs?: number } = {},
+): (audience: string) => Promise<string> {
+  const nowFn = opts.now ?? (() => Date.now())
+  const ttlMs = opts.ttlMs ?? 50 * 60_000
+  const cache = new Map<string, { token: string; expiresAt: number }>()
+  return async (audience: string): Promise<string> => {
+    const hit = cache.get(audience)
+    if (hit && hit.expiresAt > nowFn()) return hit.token
+    const token = await mintIdToken(sa, audience, { fetchImpl: opts.fetchImpl, now: nowFn() })
+    cache.set(audience, { token, expiresAt: nowFn() + ttlMs })
+    return token
+  }
+}
+
 async function importPkcs8(pem: string): Promise<CryptoKey> {
   const der = pemToDer(pem)
   return crypto.subtle.importKey(

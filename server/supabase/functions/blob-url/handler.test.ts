@@ -107,9 +107,20 @@ describe('handleBlobUrl', () => {
     expect(deps.presign).not.toHaveBeenCalled()
   })
 
+  it('signs a DELETE with no size (transient extraction-source reaping)', async () => {
+    const deps = makeDeps()
+    const res = await handleBlobUrl(post({ op: 'delete', kind: 'content', hash: HASH }), deps)
+    expect(res.status).toBe(200)
+    expect(deps.presign).toHaveBeenCalledWith({
+      op: 'delete',
+      key: `users/user-1/content/${HASH}`,
+      contentLength: undefined,
+    })
+  })
+
   it('400s an unknown op', async () => {
     const res = await handleBlobUrl(
-      post({ op: 'delete', kind: 'content', hash: HASH, size: 1 }),
+      post({ op: 'head', kind: 'content', hash: HASH, size: 1 }),
       makeDeps(),
     )
     expect(res.status).toBe(400)

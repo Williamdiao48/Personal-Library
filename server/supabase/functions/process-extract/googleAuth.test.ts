@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mintIdToken, type ServiceAccountKey } from './googleAuth'
+import { mintIdToken, createCachedIdTokenMinter, type ServiceAccountKey } from './googleAuth'
 
 type FetchLike = typeof fetch
 
@@ -78,5 +78,41 @@ describe('mintIdToken', () => {
         status: 200,
       })) as unknown as FetchLike
     await expect(mintIdToken(sa, 'https://x.run.app', { fetchImpl })).rejects.toThrow(/no id_token/)
+  })
+})
+
+describe('createCachedIdTokenMinter', () => {
+  function countingFetch(): { fetchImpl: FetchLike; calls: () => number } {
+    let n = 0
+    const fetchImpl = (async () => {
+      n += 1
+      return new Response(JSON.stringify({ id_token: `tok-${n}` }), { status: 200 })
+    }) as unknown as FetchLike
+    return { fetchImpl, calls: () => n }
+  }
+
+  it('reuses a cached token within its TTL and re-mints after it expires', async () => {
+    const sa = await makeServiceAccount()
+    const { fetchImpl, calls } = countingFetch()
+    let clock = 1_700_000_000_000
+    const mint = createCachedIdTokenMinter(sa, { fetchImpl, now: () => clock, ttlMs: 60_000 })
+
+    expect(await mint('https://a.run.app')).toBe('tok-1')
+    expect(await mint('https://a.run.app')).toBe('tok-1') // cached — no new exchange
+    expect(calls()).toBe(1)
+
+    clock += 60_001 // past the TTL
+    expect(await mint('https://a.run.app')).toBe('tok-2') // re-minted
+    expect(calls()).toBe(2)
+  })
+
+  it('caches per audience', async () => {
+    const sa = await makeServiceAccount()
+    const { fetchImpl, calls } = countingFetch()
+    const mint = createCachedIdTokenMinter(sa, { fetchImpl, now: () => 0, ttlMs: 60_000 })
+
+    expect(await mint('https://a.run.app')).toBe('tok-1')
+    expect(await mint('https://b.run.app')).toBe('tok-2') // different audience → its own token
+    expect(calls()).toBe(2)
   })
 })

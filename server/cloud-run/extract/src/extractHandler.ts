@@ -38,6 +38,10 @@ const MAX_BYTES: Record<ExtractRequest['kind'], number> = {
   pdf: PDF_MAX_BYTES,
 }
 
+// Bound the R2 GET so a stalled fetch can't pin an instance until Cloud Run's own
+// request timeout (--timeout=120). The source is already in R2, so this is generous.
+const SOURCE_FETCH_TIMEOUT_MS = 60_000
+
 /**
  * The wire result. Mirrors {@link EpubParseResult} but carries the cover as
  * base64 (`coverBase64`) instead of a Node Buffer, since it travels as JSON. The
@@ -85,7 +89,9 @@ export async function handleExtract(
   //    size cap the local import path uses — reject early on a declared
   //    Content-Length, and again after read in case the header lied.
   const maxBytes = MAX_BYTES[req.kind]
-  const res = await fetchImpl(req.sourceUrl)
+  const res = await fetchImpl(req.sourceUrl, {
+    signal: AbortSignal.timeout(SOURCE_FETCH_TIMEOUT_MS),
+  })
   if (!res.ok) throw new ExtractError(502, `source fetch failed: ${res.status}`)
   const declared = Number(res.headers.get('content-length'))
   if (Number.isFinite(declared) && declared > maxBytes) {

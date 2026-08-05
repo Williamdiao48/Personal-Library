@@ -205,6 +205,65 @@ describe('append events (reading_sessions) — union, never duplicated', () => {
   })
 })
 
+describe('pull pagination — a tie on the max updated_at must not skip the truncated tail', () => {
+  // Regression: the cursor is a `.gt(updated_at)` bound and updated_at is ms-
+  // truncated, so a full (LIMIT-capped) page can END in the middle of a run of rows
+  // sharing one ms. Advancing the cursor to that ms skips the rows of that ms that
+  // fell just past the LIMIT — silently dropping them on the pulling device. This
+  // bites exactly the initial sync of a large library (a bulk push stamps many rows
+  // within the same ms). The fix backs the cursor off to before the max ms on a full
+  // page so the next page re-includes the tail.
+  function makePagedServer(rows: SyncRow[], pageSize: number): CloudRepo {
+    return {
+      pageSize,
+      push: async () => [],
+      async pull(spec, cursor) {
+        if (spec.table !== 'items') return []
+        return rows
+          .filter((r) => Number(r.updated_at) > cursor)
+          .sort((a, b) => Number(a.updated_at) - Number(b.updated_at))
+          .slice(0, pageSize) // emulate PostgREST .limit(pageSize)
+          .map((r) => ({ ...r }))
+      },
+    }
+  }
+
+  const serverItem = (id: string, updated_at: number): SyncRow => ({
+    id,
+    title: id,
+    author: null,
+    source_url: null,
+    content_type: 'article',
+    file_path: `${id}.html`,
+    cover_path: null,
+    word_count: null,
+    description: null,
+    date_saved: 100,
+    date_modified: 100,
+    updated_at,
+    deleted_at: null,
+  })
+
+  it('pulls every row when a shared-ms tie straddles the LIMIT boundary', async () => {
+    // updated_at: i1=10, i2=20, i3=20, i4=30 with pageSize 2. A cursor that jumps to
+    // the batch max (20) after page 1 = [i1@10, i2@20] would skip i3@20.
+    const repo = makePagedServer(
+      [serverItem('i1', 10), serverItem('i2', 20), serverItem('i3', 20), serverItem('i4', 30)],
+      2,
+    )
+    await runSyncRound(B, repo)
+    expect(liveIds(B)).toEqual(['i1', 'i2', 'i3', 'i4'])
+  })
+
+  it('is idempotent — a second round pulls nothing new and keeps the cursor put', async () => {
+    const repo = makePagedServer([serverItem('i1', 10), serverItem('i2', 20)], 2)
+    await runSyncRound(B, repo)
+    const report = await runSyncRound(B, repo)
+    expect(report.applied.items ?? 0).toBe(0)
+    expect(liveIds(B)).toEqual(['i1', 'i2'])
+  })
+})
+
 describe('resilience', () => {
   it('a failing pull ends the round cleanly (ok=false, no throw)', async () => {
     seedItem(A, 'i1')
