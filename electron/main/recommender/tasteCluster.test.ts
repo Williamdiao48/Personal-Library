@@ -6,7 +6,11 @@ import { cosine, normalize } from './vectorMath'
 // unit-length (the app's invariant) so cosine is a plain dot.
 
 const v = (...xs: number[]): Float32Array => normalize(Float32Array.from(xs))
-const item = (e: Float32Array, w = 1, key = Math.random().toString()): WeightedVec => ({ e, w, key })
+const item = (e: Float32Array, w = 1, key = Math.random().toString()): WeightedVec => ({
+  e,
+  w,
+  key,
+})
 
 /** k=2-forcing config: split at ≥ 2 items so the small fixtures below cluster. */
 const K2 = { ...CLUSTER, TARGET_SIZE: 3 }
