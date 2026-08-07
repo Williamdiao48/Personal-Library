@@ -154,7 +154,12 @@ export async function fetchFfnCandidates(
       )
       misses.forEach((q, i) => {
         const cands = parseFfnResultsPage(htmls[i] ?? '', cfg)
-        writeCandidateCache(`ffn:v${CANDIDATE_TEXT_VERSION}:${q.url}`, cands, now)
+        // Only cache a NON-empty parse. A Cloudflare interstitial (or a markup change)
+        // returns a 200 whose page has no `div.z-list`, so parse yields [] — caching
+        // that would serve empty for the whole (long) FFN TTL even after it recovers.
+        // Still record it in `fetched` for this run's merge; just don't persist it.
+        if (cands.length > 0)
+          writeCandidateCache(`ffn:v${CANDIDATE_TEXT_VERSION}:${q.url}`, cands, now)
         fetched.set(q.url, cands)
       })
     } catch {
