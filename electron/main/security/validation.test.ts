@@ -9,6 +9,7 @@ import {
   assertEpubBuffer,
   assertEntryInflateOk,
   assertImportFile,
+  normalizeCoverExt,
   PDF_MAGIC,
   EPUB_MAGIC,
   ZIP_ENTRY_MAX_BYTES,
@@ -59,6 +60,33 @@ describe('assertEntryInflateOk', () => {
   })
   it('rejects a high compression-ratio bomb below the size cap', () => {
     expect(() => assertEntryInflateOk(fakeEntry(10 * MiB, 1))).toThrow(/compression ratio too high/)
+  })
+})
+
+describe('normalizeCoverExt (SEC-4)', () => {
+  it('passes through allow-listed extensions', () => {
+    for (const ext of ['jpg', 'png', 'gif', 'webp']) {
+      expect(normalizeCoverExt(ext)).toBe(ext)
+    }
+  })
+  it('folds jpeg → jpg and is case-insensitive', () => {
+    expect(normalizeCoverExt('jpeg')).toBe('jpg')
+    expect(normalizeCoverExt('JPEG')).toBe('jpg')
+    expect(normalizeCoverExt('PNG')).toBe('png')
+  })
+  it('falls back to jpg for null / empty / unknown extensions', () => {
+    expect(normalizeCoverExt(null)).toBe('jpg')
+    expect(normalizeCoverExt(undefined)).toBe('jpg')
+    expect(normalizeCoverExt('')).toBe('jpg')
+    expect(normalizeCoverExt('svg')).toBe('jpg')
+    expect(normalizeCoverExt('html')).toBe('jpg')
+  })
+  it('never returns a value that could traverse or smuggle a second extension', () => {
+    // Hostile parser/container outputs → always collapse to the safe fallback,
+    // so `<id>-cover.${normalizeCoverExt(x)}` cannot escape content/.
+    for (const hostile of ['../../../etc/evil', 'png/../../x', 'jpg.exe', 'png ', '.png']) {
+      expect(normalizeCoverExt(hostile)).toBe('jpg')
+    }
   })
 })
 

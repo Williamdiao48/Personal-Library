@@ -32,6 +32,33 @@ export const ZIP_ENTRY_MAX_BYTES = 25 * MiB // max decompressed size of one entr
 export const ZIP_TOTAL_MAX_BYTES = 250 * MiB // max total decompressed per archive
 export const ZIP_MAX_RATIO = 100 // max size:compressedSize (bomb guard)
 
+// ── Cover-image extension guard (SEC-4) ─────────────────────────────────────
+//
+// A parsed cover is re-saved on disk as `<id>-cover.<ext>`. The `<ext>` is
+// PARSER-supplied and thus untrusted — most sharply for the Phase-4 path, where
+// it arrives verbatim in the extraction container's JSON response. An unchecked
+// value ("../../../evil", "html", …) would let that response steer the write
+// outside `content/` or plant a dangerous extension. So the ext must be
+// canonicalized to a fixed allow-list at the point of use, regardless of source.
+export const COVER_EXT_ALLOWLIST = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp'])
+
+// Ceiling on a decoded inline cover (the Phase-4 container returns it base64 in
+// its response, outside the local zip-inflate caps). Matches the server's cover
+// PUT cap (blob-url MAX_PUT_BYTES.cover) so the two agree.
+export const COVER_MAX_BYTES = 10 * MiB
+
+/**
+ * Canonicalize an untrusted cover-image extension to a safe member of
+ * {@link COVER_EXT_ALLOWLIST} (folding `jpeg`→`jpg`), falling back to `jpg` for
+ * anything unrecognized. The result is always a bare, separator-free extension,
+ * so `<id>-cover.<result>` cannot traverse or smuggle a second extension.
+ */
+export function normalizeCoverExt(rawExt: string | null | undefined): string {
+  const ext = (rawExt ?? '').toLowerCase()
+  if (!COVER_EXT_ALLOWLIST.has(ext)) return 'jpg'
+  return ext === 'jpeg' ? 'jpg' : ext
+}
+
 export type ImportKind = 'pdf' | 'epub'
 
 const MAGIC: Record<ImportKind, Buffer> = { pdf: PDF_MAGIC, epub: EPUB_MAGIC }
