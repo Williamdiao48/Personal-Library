@@ -36,6 +36,24 @@ function chapterIndex(name: string): number {
   return m ? Number(m[1]) : 0
 }
 
+/**
+ * True iff `name` is a legitimate content filename for `item` — its exact
+ * `file_path` (single-file items) or one of its `<id>-chK.html` chapter files
+ * (multi-chapter). Every content file is `<id>`-prefixed at capture time
+ * (capture/index.ts), so this binds a downloaded archive's entry names to the
+ * item being restored: a tampered blob can't name its entries after ANOTHER
+ * item and overwrite its files. Pure (no disk access), unlike contentFileNames —
+ * the downloading device may not have the chapter files locally yet.
+ */
+export function isItemContentName(item: { id: string; file_path: string }, name: string): boolean {
+  if (name === item.file_path) return true
+  const prefix = `${item.id}-ch`
+  const suffix = '.html'
+  if (!name.startsWith(prefix) || !name.endsWith(suffix)) return false
+  const mid = name.slice(prefix.length, name.length - suffix.length)
+  return mid.length > 0 && /^\d+$/.test(mid)
+}
+
 /** Pack an item's content files into one archive and hash it (the R2 content key). */
 export function buildContentBlob(item: ItemBlobRow): { data: Buffer; hash: string } {
   const entries: ArchiveEntry[] = contentFileNames(item).map((name) => ({

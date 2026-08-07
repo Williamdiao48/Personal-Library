@@ -18,6 +18,11 @@
 
 const MAGIC = 'PLAR1\n'
 
+// A sane ceiling on entry count: even a very long multi-chapter fic is a few
+// hundred files. This bounds the header loop against a malicious header that
+// claims millions of entries.
+const MAX_ENTRIES = 10_000
+
 export interface ArchiveEntry {
   name: string
   data: Buffer
@@ -36,21 +41,58 @@ export function packArchive(entries: ArchiveEntry[]): Buffer {
   ])
 }
 
-/** Inverse of packArchive. Throws if the buffer isn't a valid archive. */
-export function unpackArchive(buf: Buffer): ArchiveEntry[] {
+/**
+ * Inverse of packArchive. Throws if the buffer isn't a valid archive.
+ *
+ * The header is attacker-influenced once blobs sync between devices, so every
+ * field is shape- and bounds-checked: a bad `len` that would run past the buffer
+ * throws (rather than silently clamping via `subarray` → truncated content), the
+ * entry count is capped, and `maxTotalBytes` bounds the summed entry size so a
+ * lying header can't drive an unbounded allocation downstream.
+ */
+export function unpackArchive(buf: Buffer, maxTotalBytes = Infinity): ArchiveEntry[] {
   if (!buf.subarray(0, MAGIC.length).equals(Buffer.from(MAGIC, 'utf8'))) {
     throw new Error('not a PLAR1 archive (bad magic)')
   }
   const nl = buf.indexOf(0x0a, MAGIC.length) // first newline after the header JSON
   if (nl === -1) throw new Error('malformed archive: no header terminator')
-  const header = JSON.parse(buf.subarray(MAGIC.length, nl).toString('utf8')) as {
-    files: { name: string; len: number }[]
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(buf.subarray(MAGIC.length, nl).toString('utf8'))
+  } catch {
+    throw new Error('malformed archive: header is not valid JSON')
   }
+  const files = (parsed as { files?: unknown } | null)?.files
+  if (!Array.isArray(files)) {
+    throw new Error('malformed archive: header.files must be an array')
+  }
+  if (files.length > MAX_ENTRIES) {
+    throw new Error('malformed archive: too many entries')
+  }
+
   const entries: ArchiveEntry[] = []
   let offset = nl + 1
-  for (const f of header.files) {
-    entries.push({ name: f.name, data: buf.subarray(offset, offset + f.len) })
-    offset += f.len
+  let total = 0
+  for (const f of files) {
+    const name = (f as { name?: unknown } | null)?.name
+    const len = (f as { len?: unknown } | null)?.len
+    if (typeof name !== 'string' || name.length === 0) {
+      throw new Error('malformed archive: entry name must be a non-empty string')
+    }
+    if (typeof len !== 'number' || !Number.isInteger(len) || len < 0) {
+      throw new Error('malformed archive: entry len must be a non-negative integer')
+    }
+    const end = offset + len
+    if (end > buf.length) {
+      throw new Error('malformed archive: entry length runs past the buffer')
+    }
+    total += len
+    if (total > maxTotalBytes) {
+      throw new Error('malformed archive: total size exceeds the maximum allowed')
+    }
+    entries.push({ name, data: buf.subarray(offset, end) })
+    offset = end
   }
   return entries
 }

@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { app } from '../../../test/stubs/electron'
-import { contentFileNames, buildContentBlob, buildCoverBlob } from './itemBlob'
+import { contentFileNames, isItemContentName, buildContentBlob, buildCoverBlob } from './itemBlob'
 import { unpackArchive } from './blobArchive'
 
 // itemBlob reads real files from <userData>/content, so give each test its own
@@ -46,6 +46,39 @@ describe('contentFileNames', () => {
       'm1-ch2.html',
       'm1-ch10.html',
     ])
+  })
+})
+
+describe('isItemContentName (SEC-1 entry-name binding)', () => {
+  const single = { id: 'e1', file_path: 'e1.epub' }
+  const multi = { id: 'm1', file_path: 'm1-ch0.html' }
+
+  it('accepts the exact file_path (single-file item)', () => {
+    expect(isItemContentName(single, 'e1.epub')).toBe(true)
+  })
+
+  it('accepts the item’s own `<id>-chK.html` chapter files', () => {
+    expect(isItemContentName(multi, 'm1-ch0.html')).toBe(true)
+    expect(isItemContentName(multi, 'm1-ch10.html')).toBe(true)
+  })
+
+  it('rejects a chapter file named after a DIFFERENT item', () => {
+    expect(isItemContentName(multi, 'other-ch0.html')).toBe(false)
+    expect(isItemContentName(single, 'e2.epub')).toBe(false)
+  })
+
+  it('rejects traversal / absolute / non-chapter names', () => {
+    expect(isItemContentName(multi, '../evil.html')).toBe(false)
+    expect(isItemContentName(multi, '/etc/passwd')).toBe(false)
+    expect(isItemContentName(multi, 'm1-chX.html')).toBe(false) // non-numeric index
+    expect(isItemContentName(multi, 'm1-ch.html')).toBe(false) // empty index
+    expect(isItemContentName(multi, 'm1-ch0.htmlx')).toBe(false) // suffix smuggling
+  })
+
+  it('does not let an id prefix be a springboard past the chapter shape', () => {
+    // A name that merely *starts* with the id but isn’t `<id>-chK.html` is rejected.
+    expect(isItemContentName(multi, 'm1-ch0.html/../evil')).toBe(false)
+    expect(isItemContentName(multi, 'm1-cover.png')).toBe(false)
   })
 })
 
