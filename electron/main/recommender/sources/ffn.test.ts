@@ -137,6 +137,22 @@ describe('fetchFfnCandidates', () => {
     expect(await fetchFfnCandidates([query('https://www.fanfiction.net/search/?q=z')])).toEqual([])
   })
 
+  it('does not cache an empty parse (e.g. a Cloudflare interstitial), so it re-fetches on recovery', async () => {
+    // A CF interstitial / non-story page returns a 200 with no `div.z-list`, so parse
+    // yields [] — caching that would serve empty for the whole (long) FFN TTL even
+    // after it recovers. First call parses empty (nothing cached); the next re-fetches.
+    const q = query('https://www.fanfiction.net/search/?keywords=x&type=story&ready=1')
+    mockFetch.mockResolvedValueOnce(['']).mockResolvedValue([RESULTS_HTML])
+    const first = await fetchFfnCandidates([q], { now: 1000 })
+    expect(first).toEqual([])
+    const rows = db.prepare(`SELECT COUNT(*) AS n FROM candidate_cache`).get() as { n: number }
+    expect(rows.n).toBe(0) // the empty parse was NOT written
+
+    const second = await fetchFfnCandidates([q], { now: 2000 }) // within TTL → cache miss
+    expect(second.map((c) => c.title)).toEqual(['Story One', 'Story Two']) // re-fetched, recovered
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+  })
+
   it('a Refresh (soft-floor cfg) re-scrapes a pool the default TTL would still serve', async () => {
     // Aged past the 24 h soft floor but well inside the 14 d hard TTL: a normal read
     // serves cache; a fresh Refresh (soft-floor cfg) re-scrapes the CF window.

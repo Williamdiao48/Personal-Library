@@ -202,6 +202,21 @@ describe('fetchAo3Candidates', () => {
     expect(out).toEqual([])
   })
 
+  it('does not cache an empty parse, so a recovered page re-fetches instead of serving cached empty', async () => {
+    // A markup change (or a soft-block) makes a page that loaded fine parse to [] —
+    // that must NOT poison the cache, or the source stays dead for the whole TTL even
+    // after AO3 recovers. First call parses empty (nothing cached); the next call
+    // re-fetches and gets the real results.
+    mockFetchPage.mockResolvedValueOnce(EMPTY_HTML).mockResolvedValue(RESULTS_HTML)
+    const first = await fetchAo3Candidates([relQ], { now: 1000, delayMs: 0 })
+    expect(first).toEqual([])
+    const rows = db.prepare(`SELECT COUNT(*) AS n FROM candidate_cache`).get() as { n: number }
+    expect(rows.n).toBe(0) // the empty parse was NOT written
+
+    const second = await fetchAo3Candidates([relQ], { now: 2000, delayMs: 0 }) // within TTL
+    expect(second.map((c) => c.title)).toEqual(['First Fic', 'Second Fic']) // re-fetched, recovered
+  })
+
   it('honors the hard MAX_REQUESTS budget across queries', async () => {
     mockFetchPage.mockResolvedValue(RESULTS_HTML)
     const many = Array.from({ length: 20 }, (_, i) =>

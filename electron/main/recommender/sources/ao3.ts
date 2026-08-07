@@ -210,7 +210,12 @@ export async function fetchAo3Candidates(
         requests++
         try {
           cands = parseAo3ResultsPage(await fetchPage(url), cfg)
-          writeCandidateCache(key, cands, now)
+          // Only cache a NON-empty parse. A markup change (or a soft-blocked page)
+          // makes parse return [] on a page that loaded fine; caching that would serve
+          // empty for the whole TTL even after AO3 recovers — a silent source death.
+          // A genuinely-empty page just re-checks on the next refresh (cheap; the loop
+          // below also stops paginating on empty).
+          if (cands.length > 0) writeCandidateCache(key, cands, now)
         } catch {
           cands = []
         }
