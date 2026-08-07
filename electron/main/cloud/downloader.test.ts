@@ -85,10 +85,7 @@ describe('ensureLocalContent — pull', () => {
     // Content files are `<id>`-prefixed at capture time; the pull binds entry names
     // to the item's id, so the archive must use the seeded item's real id.
     const id = seedItem(db, { file_path: 'placeholder' })
-    const archive = packArchive([
-      entry(`${id}-ch0.html`, 'zero'),
-      entry(`${id}-ch1.html`, 'one'),
-    ])
+    const archive = packArchive([entry(`${id}-ch0.html`, 'zero'), entry(`${id}-ch1.html`, 'one')])
     db.prepare(`UPDATE items SET file_path = ?, blob_hash = ? WHERE id = ?`).run(
       `${id}-ch0.html`,
       sha256Hex(archive),
