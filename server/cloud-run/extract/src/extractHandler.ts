@@ -42,6 +42,39 @@ const MAX_BYTES: Record<ExtractRequest['kind'], number> = {
 // request timeout (--timeout=120). The source is already in R2, so this is generous.
 const SOURCE_FETCH_TIMEOUT_MS = 60_000
 
+// SSRF host allow-list (SEC-5, defence-in-depth). The ONLY legitimate `sourceUrl`
+// is a presigned R2 GET, whose host is always `<account>.r2.cloudflarestorage.com`.
+// The container holds no credential and its sole gate is Cloud Run's IAM invoker
+// check; were that ever to regress, an attacker who reached /extract could
+// otherwise steer this fetch at the GCP metadata endpoint (169.254.169.254),
+// localhost, or an internal address. Pinning the host to R2 removes that lever
+// independent of the IAM gate — and blocks credential-in-userinfo tricks, since
+// `URL` parses `https://…r2…@169.254.169.254/` to hostname 169.254.169.254.
+const R2_HOST_SUFFIX = '.r2.cloudflarestorage.com'
+
+// Comma-separated extra hostnames that supplement the built-in R2 suffix. Exists
+// ONLY for local/loopback testing (e.g. a 127.0.0.1 stand-in R2); unset in
+// production, where R2 is the sole permitted origin.
+function extraAllowedHosts(): string[] {
+  return (process.env.EXTRACT_ALLOWED_SOURCE_HOSTS ?? '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+/** Is `rawUrl` a fetchable source origin? Pure but for the env escape hatch. */
+export function isAllowedSourceUrl(rawUrl: string): boolean {
+  let url: URL
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    return false
+  }
+  const host = url.hostname.toLowerCase()
+  if (extraAllowedHosts().includes(host)) return true
+  return url.protocol === 'https:' && host.endsWith(R2_HOST_SUFFIX)
+}
+
 /**
  * The wire result. Mirrors {@link EpubParseResult} but carries the cover as
  * base64 (`coverBase64`) instead of a Node Buffer, since it travels as JSON. The
@@ -83,6 +116,10 @@ export async function handleExtract(
   }
   if (typeof req.sourceUrl !== 'string' || req.sourceUrl.length === 0) {
     throw new ExtractError(400, 'missing sourceUrl')
+  }
+  // SEC-5: refuse any source host that isn't the R2 endpoint before we fetch it.
+  if (!isAllowedSourceUrl(req.sourceUrl)) {
+    throw new ExtractError(400, 'sourceUrl host is not an allowed R2 endpoint')
   }
 
   // 1. Pull the untrusted source from R2. Enforce the same per-kind whole-file
