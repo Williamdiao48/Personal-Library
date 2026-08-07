@@ -2,9 +2,16 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { getDb } from '../db'
 import { getSupabase, isConfigured } from '../auth/client'
 import { safeContentPath } from '../security/paths'
+import { ZIP_TOTAL_MAX_BYTES } from '../security/validation'
 import { unpackArchive } from './blobArchive'
+import { isItemContentName } from './itemBlob'
 import { sha256Hex } from './blobHash'
 import { presignBlobUrl } from './presign'
+
+// A content blob is an archive of one item's raw files. Bound its size the same
+// way the local import path bounds a decompressed archive, so a tampered/oversized
+// blob planted in the shared user prefix can't exhaust memory on open (SEC-2/3).
+const MAX_CONTENT_BLOB_BYTES = ZIP_TOTAL_MAX_BYTES
 
 // Pull-on-open (Phase 2 Decision 3): a device that has an item's metadata row
 // (via Phase 3 sync) but not its bytes fetches them lazily when the reader opens
@@ -50,14 +57,36 @@ export async function ensureLocalContent(relativePath: string): Promise<void> {
   }
   if (!res.ok) throw new Error(`Couldn't download this book (R2 ${res.status}).`)
 
+  // Bound the download (SEC-2). R2 always reports Content-Length and the presigned
+  // PUT that created the object was itself size-capped server-side, so the header
+  // check is the effective guard; the post-read length check backstops a
+  // missing/lying header.
+  const declared = Number(res.headers?.get?.('content-length') ?? '')
+  if (Number.isFinite(declared) && declared > MAX_CONTENT_BLOB_BYTES) {
+    throw new Error('This book is too large to download safely.')
+  }
+
   const buf = Buffer.from(await res.arrayBuffer())
+  if (buf.length > MAX_CONTENT_BLOB_BYTES) {
+    throw new Error('This book is too large to download safely.')
+  }
   // Integrity: the bytes must match the content address we asked for.
   if (sha256Hex(buf) !== item.blob_hash) {
     throw new Error('Downloaded book failed its integrity check.')
   }
 
-  // Guard: safeContentPath rejects any entry name that would escape content/.
-  for (const entry of unpackArchive(buf)) {
+  // Bind every entry name to THIS item before any write (SEC-1): the integrity
+  // check proves the bytes match the requested hash, but NOT that a rogue device
+  // (same account, shared R2 prefix) didn't name its entries after another item to
+  // overwrite its files. Validate all names first — fail closed, no partial writes.
+  // safeContentPath stays as defence-in-depth on the write itself.
+  const entries = unpackArchive(buf, MAX_CONTENT_BLOB_BYTES)
+  for (const entry of entries) {
+    if (!isItemContentName({ id: item.id, file_path: relativePath }, entry.name)) {
+      throw new Error('Downloaded book contained an unexpected file and was rejected.')
+    }
+  }
+  for (const entry of entries) {
     writeFileSync(safeContentPath(entry.name), entry.data)
   }
 }

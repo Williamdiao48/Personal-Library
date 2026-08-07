@@ -44,4 +44,47 @@ describe('blobArchive', () => {
   it('rejects a buffer with bad magic', () => {
     expect(() => unpackArchive(Buffer.from('not an archive'))).toThrow(/magic/)
   })
+
+  // SEC-3: the header is attacker-influenced once blobs sync between devices, so
+  // every field is shape/bounds-validated instead of trusted.
+  describe('rejects malformed / hostile headers', () => {
+    const raw = (header: unknown, body: Buffer = Buffer.alloc(0)): Buffer =>
+      Buffer.concat([Buffer.from('PLAR1\n'), Buffer.from(JSON.stringify(header) + '\n'), body])
+
+    it('throws on a header that is not valid JSON', () => {
+      const buf = Buffer.concat([Buffer.from('PLAR1\n'), Buffer.from('{not json\n')])
+      expect(() => unpackArchive(buf)).toThrow(/valid JSON/)
+    })
+
+    it('throws when files is not an array', () => {
+      expect(() => unpackArchive(raw({ files: 'nope' }))).toThrow(/files must be an array/)
+    })
+
+    it('throws on a non-string entry name', () => {
+      expect(() => unpackArchive(raw({ files: [{ name: 42, len: 0 }] }))).toThrow(/name/)
+    })
+
+    it('throws on a non-integer / negative entry len', () => {
+      expect(() => unpackArchive(raw({ files: [{ name: 'a', len: -1 }] }))).toThrow(/len/)
+      expect(() => unpackArchive(raw({ files: [{ name: 'a', len: 1.5 }] }))).toThrow(/len/)
+    })
+
+    it('throws when an entry len runs past the buffer (no silent truncation)', () => {
+      // Header claims 100 bytes but only 2 follow — old code silently clamped.
+      const buf = raw({ files: [{ name: 'a', len: 100 }] }, Buffer.from('hi'))
+      expect(() => unpackArchive(buf)).toThrow(/past the buffer/)
+    })
+
+    it('throws when the entry count exceeds the cap', () => {
+      const files = Array.from({ length: 10_001 }, (_, i) => ({ name: `f${i}`, len: 0 }))
+      expect(() => unpackArchive(raw({ files }))).toThrow(/too many entries/)
+    })
+
+    it('throws when the summed entry size exceeds maxTotalBytes', () => {
+      const buf = packArchive([entry('a', 'AAAA'), entry('b', 'BBBB')]) // 8 bytes total
+      expect(() => unpackArchive(buf, 5)).toThrow(/total size/)
+      // Well under the cap → still round-trips.
+      expect(unpackArchive(buf, 100)).toHaveLength(2)
+    })
+  })
 })
