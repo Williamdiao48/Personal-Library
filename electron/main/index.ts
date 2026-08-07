@@ -3,7 +3,7 @@ import { autoUpdater } from 'electron-updater'
 import { join } from 'path'
 import { initDatabase, getDb } from './db'
 import { backfillFileHashes } from './capture/fileHash'
-import { safeUserDataPath } from './security/paths'
+import { safeContentPath } from './security/paths'
 import { assertPublicHttpUrl } from './security/net-guard'
 import { registerLibraryHandlers } from './ipc/library'
 import { registerCaptureHandlers } from './ipc/capture'
@@ -154,14 +154,19 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
-  // Serve userData/* via library:// so the renderer can display cover images.
-  // Guard against path traversal via the shared F1 helper (security/paths.ts),
-  // which resolves the path and refuses anything escaping userData.
+  // Serve cover images via library://. The only thing the renderer requests here
+  // is `item.cover_path`, always stored as `content/<id>-cover.<ext>` — so scope
+  // the handler to `content/` (HARDEN-1, defence-in-depth) rather than the whole
+  // userData tree: a hostile cover_path from a crafted/synced row then can't be
+  // steered at library.db, an .env, or anything else under userData, only within
+  // content/. The stored value carries the `content/` prefix, so strip it before
+  // resolving inside content/ (matches ipc/convert.ts). safeContentPath refuses
+  // any traversal escaping content/ (shared F1 helper, security/paths.ts).
   protocol.handle('library', (request) => {
     const relative = request.url.slice('library://'.length)
     let filePath: string
     try {
-      filePath = safeUserDataPath(relative)
+      filePath = safeContentPath(relative.replace(/^content\//, ''))
     } catch {
       return new Response('Forbidden', { status: 403 })
     }
