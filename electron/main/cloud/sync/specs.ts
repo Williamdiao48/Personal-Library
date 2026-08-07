@@ -1,0 +1,203 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Table specs — the single source of truth for WHAT syncs and HOW.
+//
+// One SyncSpec per syncable table, consumed by the pure reconcile engine
+// (reconcile.ts) and the cloudRepo/orchestrator (Chunk 4). Column names are the
+// LOCAL SQLite names, which are 1:1 with the Postgres mirror (server/supabase
+// migrations) MINUS `user_id` (cloudRepo adds it on push, strips it on pull) and
+// MINUS device-local columns (file_path, cover_path, cloud_backup, purged_at,
+// dirty — never synced).
+//
+// Order matters: parents precede children so a pull applies FKs top-down (items
+// before its children; tags before item_tags; collections before collection_items;
+// annotations + annotation_themes before annotation_theme_links).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type SyncRow = Record<string, unknown> & {
+  updated_at?: number | null
+  deleted_at?: number | null
+  /** Local-only push flag; present on local rows, absent on rows pulled from Postgres. */
+  dirty?: number
+}
+
+export interface SyncSpec {
+  table: string
+  /** Primary-key columns (local shape — no user_id). Composite for join tables. */
+  key: string[]
+  /** Columns synced to/from Postgres (includes key + updated_at + deleted_at). */
+  columns: string[]
+  /**
+   * 'lww' — whole-row last-write-wins on updated_at (the default).
+   * 'append' — immutable events (reading_sessions): union by key, no LWW, no
+   *   tombstone; a row is applied iff the local side lacks it.
+   */
+  mode: 'lww' | 'append'
+  /**
+   * For tables with a per-user UNIQUE(name): the column two devices can collide
+   * on when both create the same-named row offline (C4 natural-key merge).
+   */
+  naturalKey?: string
+  /**
+   * Tables + columns that reference this table's id, so a C4 merge can rewrite a
+   * loser's references onto the survivor. Only set on naturalKey tables.
+   */
+  referencedBy?: { table: string; col: string }[]
+}
+
+const LWW = 'lww' as const
+
+export const SYNC_SPECS: SyncSpec[] = [
+  {
+    table: 'items',
+    key: ['id'],
+    // blob_hash/cover_hash are the R2 object keys; file_path/cover_path are the
+    // PORTABLE (relative, id-based) content paths — synced so a second device can
+    // both name the row (file_path NOT NULL) and resolve the bytes via pull-on-open.
+    // All four added to the server items table by a Phase-3 migration.
+    columns: [
+      'id',
+      'title',
+      'author',
+      'source_url',
+      'content_type',
+      'file_path',
+      'cover_path',
+      'word_count',
+      'description',
+      'date_saved',
+      'date_modified',
+      'derived_from',
+      'chapter_start',
+      'chapter_end',
+      'content_hash',
+      'rating',
+      'review',
+      'blob_hash',
+      'cover_hash',
+      // sha256 of the RAW imported epub/pdf bytes (util/capture fileHash.ts). Synced
+      // so a book imported on one device de-dups when the identical file is imported
+      // on another device of the same account (the local findDuplicateByFileHash
+      // query then matches the pulled-in row). Cross-USER dedup is a separate future
+      // design (shared storage + proof-of-possession) — not implied by syncing this.
+      'file_hash',
+      'updated_at',
+      'deleted_at',
+    ],
+    mode: LWW,
+  },
+  {
+    table: 'progress',
+    key: ['item_id'],
+    columns: [
+      'item_id',
+      'scroll_position',
+      'last_read_at',
+      'scroll_chapter',
+      'scroll_y',
+      'status',
+      'max_scroll_position',
+      'updated_at',
+      'deleted_at',
+    ],
+    mode: LWW,
+  },
+  {
+    table: 'tags',
+    key: ['id'],
+    columns: ['id', 'name', 'color', 'updated_at', 'deleted_at'],
+    mode: LWW,
+    naturalKey: 'name',
+    referencedBy: [{ table: 'item_tags', col: 'tag_id' }],
+  },
+  {
+    table: 'item_tags',
+    key: ['item_id', 'tag_id'],
+    columns: ['item_id', 'tag_id', 'updated_at', 'deleted_at'],
+    mode: LWW,
+  },
+  {
+    table: 'collections',
+    key: ['id'],
+    columns: ['id', 'name', 'date_created', 'updated_at', 'deleted_at'],
+    mode: LWW,
+    naturalKey: 'name',
+    referencedBy: [{ table: 'collection_items', col: 'collection_id' }],
+  },
+  {
+    table: 'collection_items',
+    key: ['collection_id', 'item_id'],
+    columns: ['collection_id', 'item_id', 'sort_order', 'updated_at', 'deleted_at'],
+    mode: LWW,
+  },
+  {
+    // Append-only events (Decision 4). Local rows carry no updated_at/deleted_at;
+    // cloudRepo supplies a server updated_at on push (the server restamps anyway).
+    table: 'reading_sessions',
+    key: ['id'],
+    columns: ['id', 'item_id', 'started_at', 'ended_at', 'duration'],
+    mode: 'append',
+  },
+  {
+    table: 'annotations',
+    key: ['id'],
+    columns: [
+      'id',
+      'item_id',
+      'type',
+      'chapter_index',
+      'position',
+      'selected_text',
+      'context_before',
+      'context_after',
+      'note_text',
+      'created_at',
+      'sort_order',
+      'color',
+      'rects',
+      'book_fraction',
+      'updated_at',
+      'deleted_at',
+    ],
+    mode: LWW,
+  },
+  {
+    table: 'annotation_themes',
+    key: ['id'],
+    columns: ['id', 'name', 'created_at', 'updated_at', 'deleted_at'],
+    mode: LWW,
+    naturalKey: 'name',
+    referencedBy: [{ table: 'annotation_theme_links', col: 'theme_id' }],
+  },
+  {
+    table: 'annotation_theme_links',
+    key: ['annotation_id', 'theme_id'],
+    columns: ['annotation_id', 'theme_id', 'updated_at', 'deleted_at'],
+    mode: LWW,
+  },
+  {
+    table: 'goals',
+    key: ['id'],
+    columns: [
+      'id',
+      'type',
+      'title',
+      'period',
+      'target_minutes',
+      'target_count',
+      'created_at',
+      'updated_at',
+      'deleted_at',
+    ],
+    mode: LWW,
+  },
+  {
+    table: 'goal_items',
+    key: ['goal_id', 'item_id'],
+    columns: ['goal_id', 'item_id', 'updated_at', 'deleted_at'],
+    mode: LWW,
+  },
+]
+
+export const SYNC_SPEC_BY_TABLE: Record<string, SyncSpec> = Object.fromEntries(
+  SYNC_SPECS.map((s) => [s.table, s]),
+)

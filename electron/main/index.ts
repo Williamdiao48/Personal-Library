@@ -1,7 +1,8 @@
 import { app, BrowserWindow, protocol, net, dialog } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { join } from 'path'
-import { initDatabase } from './db'
+import { initDatabase, getDb } from './db'
+import { backfillFileHashes } from './capture/fileHash'
 import { safeUserDataPath } from './security/paths'
 import { assertPublicHttpUrl } from './security/net-guard'
 import { registerLibraryHandlers } from './ipc/library'
@@ -19,6 +20,9 @@ import { registerDiscoverHandlers } from './ipc/discover'
 import { registerDictionaryHandlers } from './ipc/dictionary'
 import { registerLlmHandlers } from './ipc/llm'
 import { registerAuthHandlers } from './ipc/auth'
+import { registerCloudHandlers } from './ipc/cloud'
+import { registerSyncHandlers } from './ipc/sync'
+import { registerProcessingHandlers } from './ipc/processing'
 import { shutdownParseWorker } from './workers/parse-host'
 import { shutdownBackfill } from './recommender/lifecycle'
 
@@ -185,6 +189,9 @@ app.whenReady().then(() => {
     registerDictionaryHandlers()
     registerLlmHandlers()
     registerAuthHandlers()
+    registerCloudHandlers()
+    registerSyncHandlers()
+    registerProcessingHandlers()
   } catch (err) {
     dialog.showErrorBox(
       'Personal Library failed to start',
@@ -195,6 +202,16 @@ app.whenReady().then(() => {
   }
 
   createWindow()
+
+  // One-time import-dedup backfill: hash any pre-existing epub/pdf files that lack
+  // a file_hash (migration 39) so the FIRST re-import of an already-imported book
+  // dedups correctly. Deferred off the launch path (reads files from disk) and
+  // best-effort — a failure here must never block startup.
+  setImmediate(() => {
+    try {
+      backfillFileHashes(getDb())
+    } catch {}
+  })
 
   // The embedding backfill is NOT armed here. Embeddings serve only the Discover
   // recommender, so the renderer arms it (via `discover:setEnabled`) once it has

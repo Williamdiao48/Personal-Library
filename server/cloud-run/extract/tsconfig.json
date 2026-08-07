@@ -1,0 +1,14 @@
+{
+  // Isolated typecheck for the container. It pulls the shared extractor in via
+  // the relative repo imports in src/, and resolves deps (adm-zip/jsdom/…) from
+  // the repo-root node_modules by the usual walk-up. Run with `tsc --noEmit`
+  // (repo-root `npm run typecheck` intentionally scopes to electron/**, so this
+  // is checked separately). The Docker image bundles from source with esbuild.
+  "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*"]
+}

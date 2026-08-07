@@ -1,0 +1,21 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 0004 · items.file_hash — cross-device import de-duplication.
+--
+-- sha256 of the RAW imported epub/pdf bytes (local: items.file_hash, migration 39;
+-- electron/main/capture/fileHash.ts). Local dedup (PR #62) short-circuits a
+-- byte-identical re-import on the SAME device. Syncing this column lets Phase-3
+-- sync carry the hash to a user's other devices, so the existing local dedup query
+-- (findDuplicateByFileHash) also catches a re-import of a book first added on a
+-- different device — collapsing it onto the synced-in item instead of minting a
+-- duplicate.
+--
+-- Nullable (a local-only, never-hashed, or article item has no file_hash). RLS +
+-- the set_updated_at trigger already cover `items` generically (0001). Mirrors the
+-- 0003 blob-hashes pattern (add column if not exists).
+--
+-- NOT a cross-USER identity here: blobs stay per-user namespaced (users/<uid>/…),
+-- and this row is RLS-scoped to its owner. Cross-user dedup (shared content-
+-- addressed storage + proof-of-possession) is a separate future design.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+alter table items add column if not exists file_hash text;

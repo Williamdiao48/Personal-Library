@@ -12,54 +12,19 @@
 // network/BrowserWindow layer (capture/fetch.ts). It only reads the input file
 // it is handed and posts structured results back to the host.
 
-import { parseEpubMetadata } from '../capture/parsers/epub'
-import { extractEpubContent } from '../capture/parsers/epub-content'
-import type { ParseRequest, ParseResponse, EpubParseResult } from './parse-protocol'
+import { extractEpub } from '../capture/extract'
+import type { ParseRequest, ParseResponse } from './parse-protocol'
 
 // Log async failures instead of letting them silently exit the process (code 1).
 process.on('uncaughtException', (err) => console.error('[parse-worker] uncaughtException:', err))
 process.on('unhandledRejection', (err) => console.error('[parse-worker] unhandledRejection:', err))
 
-function wordCountOf(text: string): number {
-  return text.split(/\s+/).filter(Boolean).length
-}
-
-// Metadata always resolves (parseEpubMetadata is internally fault-tolerant);
-// content extraction is best-effort — a failure yields null word count, matching
-// the previous in-main behavior, while still importing the (copied) file.
-function handleEpub(filePath: string): EpubParseResult {
-  const meta = parseEpubMetadata(filePath)
-
-  let plainText = ''
-  let wordCount: number | null = null
-  try {
-    const book = extractEpubContent(filePath)
-    plainText = book.chapters
-      .map((ch) =>
-        ch.html
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim(),
-      )
-      .join(' ')
-    wordCount = wordCountOf(plainText)
-  } catch {
-    // content extraction failure is non-fatal
-  }
-
-  return {
-    title: meta.title,
-    author: meta.author,
-    coverBuffer: meta.coverBuffer,
-    coverExt: meta.coverExt,
-    plainText,
-    wordCount,
-  }
-}
-
+// The extraction logic itself is the shared, runtime-agnostic capture/extract
+// module (also vendored by the Phase 4 cloud container) — this worker is just the
+// utilityProcess message envelope around it.
 function handle(req: ParseRequest): ParseResponse {
   try {
-    return { id: req.id, ok: true, result: handleEpub(req.filePath) }
+    return { id: req.id, ok: true, result: extractEpub(req.filePath) }
   } catch (err) {
     return { id: req.id, ok: false, error: err instanceof Error ? err.message : String(err) }
   }

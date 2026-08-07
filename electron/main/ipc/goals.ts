@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { randomUUID } from 'crypto'
-import { run, get, all } from '../db'
+import { run, get, all, getDb } from '../db'
 import type { Goal, GoalType, GoalPeriod, GoalItem } from '../../../src/types'
 
 // Returns the Unix ms timestamp for the start of the current period window.
@@ -81,7 +81,7 @@ function buildGoal(row: GoalRow): Goal {
       FROM goal_items gi
       JOIN items i ON i.id = gi.item_id
       LEFT JOIN progress p ON p.item_id = gi.item_id
-      WHERE gi.goal_id = ?
+      WHERE gi.goal_id = ? AND gi.deleted_at IS NULL AND i.deleted_at IS NULL
       ORDER BY i.title
     `,
       [row.id],
@@ -139,7 +139,7 @@ export function registerGoalsHandlers(): void {
   ipcMain.handle('goals:getAll', (): Goal[] => {
     const rows = all<GoalRow>(
       `SELECT id, type, title, period, target_minutes, target_count, created_at
-       FROM goals ORDER BY created_at`,
+       FROM goals WHERE deleted_at IS NULL ORDER BY created_at`,
     )
     return rows.map(buildGoal)
   })
@@ -160,8 +160,8 @@ export function registerGoalsHandlers(): void {
       const id = randomUUID()
       const now = Date.now()
       run(
-        `INSERT INTO goals (id, type, title, period, target_minutes, target_count, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO goals (id, type, title, period, target_minutes, target_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           payload.type,
@@ -169,6 +169,7 @@ export function registerGoalsHandlers(): void {
           payload.period ?? null,
           payload.targetMinutes ?? null,
           payload.targetCount ?? null,
+          now,
           now,
         ],
       )
@@ -193,30 +194,64 @@ export function registerGoalsHandlers(): void {
         targetCount?: number | null
       },
     ): void => {
+      const now = Date.now()
       if (patch.title !== undefined)
-        run(`UPDATE goals SET title = ? WHERE id = ?`, [patch.title, id])
+        run(`UPDATE goals SET title = ?, updated_at = ?, dirty = 1 WHERE id = ?`, [
+          patch.title,
+          now,
+          id,
+        ])
       if (patch.period !== undefined)
-        run(`UPDATE goals SET period = ? WHERE id = ?`, [patch.period, id])
+        run(`UPDATE goals SET period = ?, updated_at = ?, dirty = 1 WHERE id = ?`, [
+          patch.period,
+          now,
+          id,
+        ])
       if (patch.targetMinutes !== undefined)
-        run(`UPDATE goals SET target_minutes = ? WHERE id = ?`, [patch.targetMinutes, id])
+        run(`UPDATE goals SET target_minutes = ?, updated_at = ?, dirty = 1 WHERE id = ?`, [
+          patch.targetMinutes,
+          now,
+          id,
+        ])
       if (patch.targetCount !== undefined)
-        run(`UPDATE goals SET target_count = ? WHERE id = ?`, [patch.targetCount, id])
+        run(`UPDATE goals SET target_count = ?, updated_at = ?, dirty = 1 WHERE id = ?`, [
+          patch.targetCount,
+          now,
+          id,
+        ])
     },
   )
 
   // ── Delete a goal ───────────────────────────────────────────────
   ipcMain.handle('goals:delete', (_e, id: string): void => {
-    run(`DELETE FROM goals WHERE id = ?`, [id])
+    const now = Date.now()
+    getDb().transaction(() => {
+      run(`UPDATE goals SET deleted_at = ?, updated_at = ?, dirty = 1 WHERE id = ?`, [now, now, id])
+      run(
+        `UPDATE goal_items SET deleted_at = ?, updated_at = ?, dirty = 1 WHERE goal_id = ? AND deleted_at IS NULL`,
+        [now, now, id],
+      )
+    })()
   })
 
   // ── Add an item to a reading list goal ──────────────────────────
   ipcMain.handle('goals:addItem', (_e, goalId: string, itemId: string): void => {
-    run(`INSERT OR IGNORE INTO goal_items (goal_id, item_id) VALUES (?, ?)`, [goalId, itemId])
+    // Upsert-revive: re-adding a previously-removed item flips its tombstone live.
+    const now = Date.now()
+    run(
+      `INSERT INTO goal_items (goal_id, item_id, updated_at, dirty) VALUES (?, ?, ?, 1)
+       ON CONFLICT(goal_id, item_id) DO UPDATE SET deleted_at = NULL, updated_at = excluded.updated_at, dirty = 1`,
+      [goalId, itemId, now],
+    )
   })
 
   // ── Remove an item from a reading list goal ─────────────────────
   ipcMain.handle('goals:removeItem', (_e, goalId: string, itemId: string): void => {
-    run(`DELETE FROM goal_items WHERE goal_id = ? AND item_id = ?`, [goalId, itemId])
+    const now = Date.now()
+    run(
+      `UPDATE goal_items SET deleted_at = ?, updated_at = ?, dirty = 1 WHERE goal_id = ? AND item_id = ? AND deleted_at IS NULL`,
+      [now, now, goalId, itemId],
+    )
   })
 
   // ── Upsert a time or count goal for a specific period ───────────
@@ -225,20 +260,43 @@ export function registerGoalsHandlers(): void {
   ipcMain.handle(
     'goals:upsertPeriodGoal',
     (_e, type: 'time' | 'count', period: GoalPeriod, target: number | null): Goal | null => {
-      const existing = get<{ id: string }>(`SELECT id FROM goals WHERE type = ? AND period = ?`, [
-        type,
-        period,
-      ])
+      const existing = get<{ id: string }>(
+        `SELECT id FROM goals WHERE type = ? AND period = ? AND deleted_at IS NULL`,
+        [type, period],
+      )
 
       if (target === null || target <= 0) {
-        if (existing) run(`DELETE FROM goals WHERE id = ?`, [existing.id])
+        if (existing) {
+          const now = Date.now()
+          getDb().transaction(() => {
+            run(`UPDATE goals SET deleted_at = ?, updated_at = ?, dirty = 1 WHERE id = ?`, [
+              now,
+              now,
+              existing.id,
+            ])
+            run(
+              `UPDATE goal_items SET deleted_at = ?, updated_at = ?, dirty = 1 WHERE goal_id = ? AND deleted_at IS NULL`,
+              [now, now, existing.id],
+            )
+          })()
+        }
         return null
       }
 
       if (existing) {
+        const now = Date.now()
         if (type === 'time')
-          run(`UPDATE goals SET target_minutes = ? WHERE id = ?`, [target, existing.id])
-        else run(`UPDATE goals SET target_count   = ? WHERE id = ?`, [target, existing.id])
+          run(`UPDATE goals SET target_minutes = ?, updated_at = ?, dirty = 1 WHERE id = ?`, [
+            target,
+            now,
+            existing.id,
+          ])
+        else
+          run(`UPDATE goals SET target_count = ?, updated_at = ?, dirty = 1 WHERE id = ?`, [
+            target,
+            now,
+            existing.id,
+          ])
         const row = get<GoalRow>(
           `SELECT id, type, title, period, target_minutes, target_count, created_at FROM goals WHERE id = ?`,
           [existing.id],
@@ -260,9 +318,10 @@ export function registerGoalsHandlers(): void {
           },
         }
         const id = randomUUID()
+        const now = Date.now()
         run(
-          `INSERT INTO goals (id, type, title, period, target_minutes, target_count, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO goals (id, type, title, period, target_minutes, target_count, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             id,
             type,
@@ -270,7 +329,8 @@ export function registerGoalsHandlers(): void {
             period,
             type === 'time' ? target : null,
             type === 'count' ? target : null,
-            Date.now(),
+            now,
+            now,
           ],
         )
         const row = get<GoalRow>(

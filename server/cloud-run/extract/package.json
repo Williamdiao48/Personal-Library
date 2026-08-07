@@ -1,0 +1,28 @@
+{
+  "name": "cloud-extract",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Phase 4 Cloud Run container: untrusted EPUB/PDF/HTML extraction off-device. Wraps the shared electron/main/capture/extract module behind a minimal HTTP service.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "esbuild src/server.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/server.js --external:jsdom --external:adm-zip --external:sanitize-html --external:pdfjs-dist/legacy/build/pdf.mjs",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "jsdom": "^24.1.1",
+    "pdfjs-dist": "5.4.624",
+    "sanitize-html": "^2.13.0"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.5",
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^22.0.0",
+    "@types/sanitize-html": "^2.13.0",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.5.3"
+  }
+}

@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { openTestDb, closeTestDb } from '../../../test/db/harness'
-import { bringUpSchema, CURRENT_VERSION } from './index'
+import { bringUpSchema, CURRENT_VERSION, MIGRATIONS } from './index'
+import { SCHEMA } from './schema'
 
 // Verifies a fresh database can be brought up cleanly and reaches the current
 // schema version — the fresh-install path, which no existing user DB exercises.
@@ -47,6 +48,7 @@ describe('database bring-up', () => {
       'candidate_embeddings',
       'annotation_themes',
       'annotation_theme_links',
+      'blob_sync',
     ]) {
       expect(tables).toContain(t)
     }
@@ -89,8 +91,17 @@ describe('database bring-up', () => {
         'deleted_at',
         'rating',
         'review',
+        'cloud_backup',
+        'cover_hash',
+        'blob_hash',
+        'file_hash',
       ]),
     )
+  })
+
+  it('creates idx_items_file_hash (import de-dup, migration 39)', () => {
+    const db = openTestDb()
+    expect(indexesOf(db)).toContain('idx_items_file_hash')
   })
 
   it('progress has all migration-added columns', () => {
@@ -346,6 +357,162 @@ describe('database bring-up', () => {
     expect(db.prepare(`SELECT COUNT(*) c FROM annotation_theme_links`).get()).toMatchObject({
       c: 0,
     })
+  })
+
+  // Migration 34 — Cloud Phase 2 blob-backup foundation (per-item opt-in + ledger).
+  it('items.cloud_backup defaults to 0 (local-only, the privacy-safe default)', () => {
+    const db = openTestDb()
+    db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified)
+       VALUES ('c1', 'T', NULL, NULL, 'article', 'c1.html', 1, NULL, NULL, 0, 0)`,
+    ).run()
+    // A row inserted without naming cloud_backup must land local-only.
+    expect(db.prepare(`SELECT cloud_backup FROM items WHERE id = 'c1'`).get()).toMatchObject({
+      cloud_backup: 0,
+    })
+  })
+
+  it('blob_sync has the expected columns and content_hash is the primary key', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'blob_sync')).toEqual(
+      expect.arrayContaining([
+        'content_hash',
+        'kind',
+        'state',
+        'last_attempt_at',
+        'error',
+        'updated_at',
+      ]),
+    )
+    const pk = (
+      db.prepare(`PRAGMA table_info(blob_sync)`).all() as { name: string; pk: number }[]
+    ).filter((c) => c.pk > 0)
+    expect(pk.map((c) => c.name)).toEqual(['content_hash'])
+  })
+
+  it('blob_sync defaults a new row to kind=content / state=pending', () => {
+    const db = openTestDb()
+    db.prepare(`INSERT INTO blob_sync (content_hash) VALUES ('h1')`).run()
+    expect(
+      db.prepare(`SELECT kind, state FROM blob_sync WHERE content_hash = 'h1'`).get(),
+    ).toMatchObject({ kind: 'content', state: 'pending' })
+  })
+
+  it('creates idx_blob_sync_state (outbox drain query)', () => {
+    const db = openTestDb()
+    expect(indexesOf(db)).toContain('idx_blob_sync_state')
+  })
+
+  // Migration 35 — the real R2 content-address (sha256 of packed bytes), distinct
+  // from the fast text fingerprint in content_hash.
+  it('items.blob_hash exists and defaults to NULL (set later by the uploader)', () => {
+    const db = openTestDb()
+    db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified)
+       VALUES ('b1', 'T', NULL, NULL, 'article', 'b1.html', 1, NULL, NULL, 0, 0)`,
+    ).run()
+    expect(db.prepare(`SELECT blob_hash FROM items WHERE id = 'b1'`).get()).toMatchObject({
+      blob_hash: null,
+    })
+  })
+
+  // Migration 36 — Cloud Phase 3, the uniform sync clock. Every syncable table
+  // gains updated_at (except items, which reuses date_modified) + deleted_at
+  // (except append-only reading_sessions) + a dirty push flag.
+  const SYNC_CLOCK_TABLES = [
+    'progress',
+    'tags',
+    'item_tags',
+    'collections',
+    'collection_items',
+    'annotations',
+    'annotation_themes',
+    'annotation_theme_links',
+    'goals',
+    'goal_items',
+  ]
+
+  it('adds updated_at/deleted_at/dirty to every syncable table', () => {
+    const db = openTestDb()
+    for (const t of SYNC_CLOCK_TABLES) {
+      const cols = colsOf(db, t)
+      expect(cols, `${t}.updated_at`).toContain('updated_at')
+      expect(cols, `${t}.deleted_at`).toContain('deleted_at')
+      expect(cols, `${t}.dirty`).toContain('dirty')
+    }
+    // items gets its own updated_at (backfilled from date_modified) + dirty, and
+    // already has deleted_at (mig 15).
+    expect(colsOf(db, 'items')).toContain('updated_at')
+    expect(colsOf(db, 'items')).toContain('dirty')
+  })
+
+  it('reading_sessions is append-only — a dirty flag but no updated_at/deleted_at', () => {
+    const db = openTestDb()
+    const cols = colsOf(db, 'reading_sessions')
+    expect(cols).toContain('dirty')
+    expect(cols).not.toContain('updated_at')
+    expect(cols).not.toContain('deleted_at')
+  })
+
+  it('dirty defaults to 1 so a new row is queued for its first push', () => {
+    const db = openTestDb()
+    db.prepare(`INSERT INTO tags (id, name) VALUES ('t-dirty', 'sci-fi')`).run()
+    expect(db.prepare(`SELECT dirty FROM tags WHERE id = 't-dirty'`).get()).toMatchObject({
+      dirty: 1,
+    })
+  })
+
+  // Build a database at exactly user_version 35 (pre-Phase-3) the way a real
+  // install reaches it — SCHEMA baseline + migrations 2..35 in order — so we can
+  // exercise migration 36's backfill against pre-existing rows.
+  const buildAtV35 = (): Database.Database => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(SCHEMA)
+    for (let v = 2; v <= 35; v++) {
+      if (MIGRATIONS[v]) db.exec(MIGRATIONS[v])
+    }
+    db.pragma('user_version = 35')
+    return db
+  }
+
+  it('backfills updated_at from each table’s best existing timestamp and marks rows dirty', () => {
+    const db = buildAtV35()
+    db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified)
+       VALUES ('i1', 'T', NULL, NULL, 'article', 'i1.html', 1, NULL, NULL, 100, 100)`,
+    ).run()
+    db.prepare(`INSERT INTO progress (item_id, last_read_at) VALUES ('i1', 555)`).run()
+    db.prepare(`INSERT INTO collections (id, name, date_created) VALUES ('c1', 'C', 777)`).run()
+    db.prepare(
+      `INSERT INTO annotations (id, item_id, type, created_at) VALUES ('a1', 'i1', 'note', 888)`,
+    ).run()
+    // tags has no pre-existing timestamp → backfills to migration-time "now".
+    db.prepare(`INSERT INTO tags (id, name) VALUES ('t1', 'sci-fi')`).run()
+
+    bringUpSchema(db) // runs migration 36 (+ later) only
+    expect(db.pragma('user_version', { simple: true })).toBe(CURRENT_VERSION)
+
+    // items.updated_at backfills from date_modified.
+    expect(db.prepare(`SELECT updated_at FROM items WHERE id = 'i1'`).get()).toMatchObject({
+      updated_at: 100,
+    })
+    expect(
+      db.prepare(`SELECT updated_at, dirty FROM progress WHERE item_id = 'i1'`).get(),
+    ).toMatchObject({ updated_at: 555, dirty: 1 })
+    expect(db.prepare(`SELECT updated_at FROM collections WHERE id = 'c1'`).get()).toMatchObject({
+      updated_at: 777,
+    })
+    expect(db.prepare(`SELECT updated_at FROM annotations WHERE id = 'a1'`).get()).toMatchObject({
+      updated_at: 888,
+    })
+    const tag = db.prepare(`SELECT updated_at, dirty FROM tags WHERE id = 't1'`).get() as {
+      updated_at: number
+      dirty: number
+    }
+    expect(tag.updated_at).toBeGreaterThan(0)
+    expect(tag.dirty).toBe(1)
+    db.close()
   })
 
   it('applies migrations incrementally from an empty (pre-schema) database', () => {

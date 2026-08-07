@@ -18,6 +18,10 @@ export default tseslint.config(
       'test-results/**',
       'playwright-report/**',
       '**/*.tsbuildinfo',
+      // Supabase Edge Functions are Deno, not Node/browser — different globals
+      // (`Deno`) and `jsr:`/`npm:` import specifiers. Linted/typechecked by Deno
+      // tooling, not this app's ESLint.
+      'server/supabase/functions/**',
     ],
   },
 

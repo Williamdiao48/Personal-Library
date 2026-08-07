@@ -69,6 +69,10 @@ interface Props {
   onRatingChange: (rating: number | null) => void
   onWriteReview: () => void
   onRemoveFromCollection?: () => void
+  // Present only when cloud backup is eligible (signed in + master switch on).
+  // Undefined hides the action entirely; the item's cloud_backup flag decides
+  // whether it reads "Back up to cloud" or the already-backed-up indicator.
+  onBackupToCloud?: () => Promise<void>
 }
 
 function ItemCard({
@@ -93,11 +97,13 @@ function ItemCard({
   onRatingChange,
   onWriteReview,
   onRemoveFromCollection,
+  onBackupToCloud,
 }: Props) {
   const [confirming, setConfirming] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [backingUp, setBackingUp] = useState(false)
   const [statusMenuOpen, setStatusMenuOpen] = useState(false)
   const [authorEditing, setAuthorEditing] = useState(false)
   const [authorDraft, setAuthorDraft] = useState('')
@@ -212,6 +218,17 @@ function ItemCard({
       await onRefresh!()
     } finally {
       setRefreshing(false)
+    }
+  }
+
+  async function handleBackupToCloud(e: React.MouseEvent) {
+    e.stopPropagation()
+    setMenuOpen(false)
+    setBackingUp(true)
+    try {
+      await onBackupToCloud!()
+    } finally {
+      setBackingUp(false)
     }
   }
 
@@ -604,6 +621,42 @@ function ItemCard({
                   {refreshing ? 'Refreshing…' : 'Refresh from source'}
                 </button>
               )}
+              {onBackupToCloud &&
+                (() => {
+                  // Status is driven by the item's REAL backup state (blob_sync via
+                  // cloud_state), not just the cloud_backup intent flag — so a failed
+                  // upload reads "Retry", not a false "✓ Backed up".
+                  if (backingUp)
+                    return (
+                      <span className="item-card-dropdown-item item-card-dropdown-item--static">
+                        Backing up…
+                      </span>
+                    )
+                  if (item.cloud_backup !== 1)
+                    return (
+                      <button className="item-card-dropdown-item" onClick={handleBackupToCloud}>
+                        Back up to cloud
+                      </button>
+                    )
+                  if (item.cloud_state === 'synced')
+                    return (
+                      <span className="item-card-dropdown-item item-card-dropdown-item--static">
+                        ✓ Backed up to cloud
+                      </span>
+                    )
+                  if (item.cloud_state === 'error')
+                    return (
+                      <button className="item-card-dropdown-item" onClick={handleBackupToCloud}>
+                        Backup failed — Retry
+                      </button>
+                    )
+                  // pending / null → enqueued, upload in flight or awaiting a drain.
+                  return (
+                    <span className="item-card-dropdown-item item-card-dropdown-item--static">
+                      Backing up…
+                    </span>
+                  )
+                })()}
               <button
                 className="item-card-dropdown-item item-card-dropdown-item--danger"
                 onClick={handleDeleteClick}
@@ -661,6 +714,8 @@ export default memo(ItemCard, (prev, next) => {
     pi.status === ni.status &&
     pi.rating === ni.rating &&
     pi.review === ni.review &&
+    pi.cloud_backup === ni.cloud_backup &&
+    pi.cloud_state === ni.cloud_state &&
     pi.date_modified === ni.date_modified &&
     prev.tags === next.tags &&
     prev.isSelected === next.isSelected &&

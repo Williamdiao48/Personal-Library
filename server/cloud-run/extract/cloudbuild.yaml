@@ -1,0 +1,10 @@
+# Cloud Build recipe for the Phase 4 extraction container.
+# Consumed by: gcloud builds submit --config server/cloud-run/extract/cloudbuild.yaml
+#   --substitutions=_IMAGE="$IMAGE" .
+# The build CONTEXT is the repo root (the trailing '.'), because the image bundles
+# the shared electron/main/capture extractor; the Dockerfile lives in a subdir so
+# we point at it with -f.
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'server/cloud-run/extract/Dockerfile', '-t', '${_IMAGE}', '.']
+images: ['${_IMAGE}']

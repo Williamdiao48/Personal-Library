@@ -2,7 +2,7 @@ import { JSDOM } from 'jsdom'
 import { Readability } from '@mozilla/readability'
 import { app } from 'electron'
 import { join, extname, basename } from 'path'
-import { mkdirSync, writeFileSync, readFileSync, copyFileSync, unlinkSync } from 'fs'
+import { mkdirSync, writeFileSync, readFileSync, copyFileSync, unlinkSync, existsSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { getDb } from '../db'
 import { sanitize } from './sanitizer'
@@ -18,10 +18,10 @@ import { captureUniversal } from './sites/universal'
 import { safeContentPath } from '../security/paths'
 import { assertImportFile } from '../security/validation'
 import { assertHttpUrl, safeFetch } from '../security/net-guard'
-import { parseEpub } from '../workers/parse-host'
-import { extractPdfText } from './pdfText'
+import { resolveEpubParse, resolvePdfParse } from '../cloud/processing'
 import { indexFtsText, readStoredFtsText } from '../db/ftsText'
 import { computeContentHash } from '../util/contentHash'
+import { computeFileHash } from './fileHash'
 import { persistSourceTags, siteKeyFromUrl } from '../recommender/sourceTags'
 
 export interface CaptureResult {
@@ -29,6 +29,60 @@ export interface CaptureResult {
   title: string
   author: string | null
   wordCount: number | null
+  // Set when a file import matched an existing library item (same raw-file
+  // sha256) and was collapsed onto it — no new item was created; `id` is the
+  // existing item's. The renderer surfaces this ("Already in your library").
+  duplicate?: boolean
+}
+
+// A pre-existing library item that a re-imported file collapsed onto, looked up
+// by items.file_hash. Only LIVE items dedup: a byte-identical file whose item is
+// in trash re-imports fresh (the user deleted it — a new copy is the intent).
+//
+// Cross-device: Phase-3 sync replicates items across a user's devices, so the
+// matched item can be one first imported on ANOTHER device — whose bytes aren't on
+// THIS device yet (content arrives via pull-on-open, and only if it was backed up
+// to R2). When the matched item's local file is missing, we adopt the just-imported
+// bytes into its path so the de-duped book is immediately openable here (the user
+// clearly has the file — they just picked it). `importPath` is that picked file.
+function resolveFileDuplicate(fileHash: string, importPath: string): CaptureResult | null {
+  const dup = getDb()
+    .prepare(
+      `SELECT id, title, author, word_count, file_path FROM items
+       WHERE file_hash = ? AND deleted_at IS NULL LIMIT 1`,
+    )
+    .get(fileHash) as
+    | {
+        id: string
+        title: string
+        author: string | null
+        word_count: number | null
+        file_path: string
+      }
+    | undefined
+  if (!dup) return null
+
+  // Adopt the imported bytes if this device lacks the matched item's content
+  // (cross-device dedup against a not-yet-downloaded book). Best-effort: a failed
+  // copy must not block the dedup — the item stays as-is (pull-on-open remains an
+  // option if it was backed up). dedup only matches epub/pdf items, so file_path
+  // is a single content file (no multi-chapter handling).
+  const localPath = safeContentPath(dup.file_path)
+  if (!existsSync(localPath)) {
+    try {
+      copyFileSync(importPath, localPath)
+    } catch {
+      // leave the item's bytes unresolved; the duplicate result still stands.
+    }
+  }
+
+  return {
+    id: dup.id,
+    title: dup.title,
+    author: dup.author,
+    wordCount: dup.word_count,
+    duplicate: true,
+  }
 }
 
 export interface ChapterRange {
@@ -102,18 +156,23 @@ export async function captureUrl(
   url: string,
   onProgress?: (msg: string) => void,
   range?: ChapterRange,
+  cloudBackup = false,
 ): Promise<CaptureResult> {
   const content = await dispatchCapture(url, onProgress, range)
-  return saveToLibrary(url, content, content.coverUrl ?? null, onProgress, range)
+  return saveToLibrary(url, content, content.coverUrl ?? null, onProgress, range, cloudBackup)
 }
 
-// Persists assembled content + metadata to disk and the database.
+// Persists assembled content + metadata to disk and the database. `cloudBackup`
+// is the per-item opt-in (Phase 2 Decision 8): it only sets the local
+// items.cloud_backup flag — the uploader is what later acts on it. Defaults to
+// false so every non-cloud path (protocol capture, tests) stays local-only.
 async function saveToLibrary(
   sourceUrl: string,
   content: SiteContent,
   ogImageUrl: string | null = null,
   onProgress?: (msg: string) => void,
   range?: ChapterRange,
+  cloudBackup = false,
 ): Promise<CaptureResult> {
   const { title, author, html, textContent } = content
 
@@ -152,8 +211,8 @@ async function saveToLibrary(
 
       db.prepare(
         `
-        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, content_hash, date_saved, date_modified, chapter_start, chapter_end)
-        VALUES (?, ?, ?, ?, 'article', ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, content_hash, date_saved, date_modified, chapter_start, chapter_end, cloud_backup)
+        VALUES (?, ?, ?, ?, 'article', ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       ).run(
         id,
@@ -168,6 +227,7 @@ async function saveToLibrary(
         now,
         range?.start ?? null,
         range?.end ?? null,
+        cloudBackup ? 1 : 0,
       )
 
       db.prepare(
@@ -407,20 +467,29 @@ export async function appendChapters(
 
 // ── File import ────────────────────────────────────────────────────────────
 
-export async function captureFile(filePath: string): Promise<CaptureResult> {
+export async function captureFile(filePath: string, cloudBackup = false): Promise<CaptureResult> {
   const ext = extname(filePath).slice(1).toLowerCase()
-  if (ext === 'epub') return captureEpub(filePath)
-  if (ext === 'pdf') return capturePdf(filePath)
+  if (ext === 'epub') return captureEpub(filePath, cloudBackup)
+  if (ext === 'pdf') return capturePdf(filePath, cloudBackup)
   throw new Error(`Unsupported file type: .${ext}`)
 }
 
-async function captureEpub(filePath: string): Promise<CaptureResult> {
+async function captureEpub(filePath: string, cloudBackup = false): Promise<CaptureResult> {
   // Import-time gate: size cap + ZIP magic before any parse or copy (F2).
   await assertImportFile(filePath, 'epub')
 
-  // Parse metadata + text in the sandboxed worker (F7). A parse crash/hang
-  // rejects here rather than taking down the main process; we then import the
-  // (still-copied) file with fallback metadata and null word count.
+  // De-dup on the raw file bytes BEFORE the expensive parse/copy/upload: an
+  // identical file already in the library collapses onto that item, so a
+  // re-import costs a single hash + indexed lookup, not another cloud round-trip.
+  const fileHash = computeFileHash(readFileSync(filePath))
+  const existing = resolveFileDuplicate(fileHash, filePath)
+  if (existing) return existing
+
+  // Parse metadata + text off-device when the user opted into cloud processing
+  // (Phase 4) — the untrusted file is extracted in an isolated Cloud Run
+  // container — otherwise in the sandboxed worker (F7). Either way a parse
+  // crash/hang/error rejects here rather than taking down the main process; we
+  // then import the (still-copied) file with fallback metadata and null word count.
   let meta: {
     title: string | null
     author: string | null
@@ -430,7 +499,7 @@ async function captureEpub(filePath: string): Promise<CaptureResult> {
   let wordCount: number | null = null
   let plainText = ''
   try {
-    const parsed = await parseEpub(filePath)
+    const parsed = await resolveEpubParse(filePath)
     meta = {
       title: parsed.title,
       author: parsed.author,
@@ -468,10 +537,21 @@ async function captureEpub(filePath: string): Promise<CaptureResult> {
     db.transaction(() => {
       db.prepare(
         `
-        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, date_saved, date_modified)
-        VALUES (?, ?, ?, NULL, 'epub', ?, ?, ?, ?, ?)
+        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, file_hash, date_saved, date_modified, cloud_backup)
+        VALUES (?, ?, ?, NULL, 'epub', ?, ?, ?, ?, ?, ?, ?)
       `,
-      ).run(id, title, author, destFileName, coverPath, wordCount, now, now)
+      ).run(
+        id,
+        title,
+        author,
+        destFileName,
+        coverPath,
+        wordCount,
+        fileHash,
+        now,
+        now,
+        cloudBackup ? 1 : 0,
+      )
 
       db.prepare(
         `
@@ -496,9 +576,14 @@ async function captureEpub(filePath: string): Promise<CaptureResult> {
   return { id, title, author, wordCount }
 }
 
-async function capturePdf(filePath: string): Promise<CaptureResult> {
+async function capturePdf(filePath: string, cloudBackup = false): Promise<CaptureResult> {
   // Import-time gate: size cap + %PDF- magic before any parse or copy (F2).
   await assertImportFile(filePath, 'pdf')
+
+  // De-dup on the raw file bytes before parse/copy/upload (see captureEpub).
+  const fileHash = computeFileHash(readFileSync(filePath))
+  const existing = resolveFileDuplicate(fileHash, filePath)
+  if (existing) return existing
 
   const id = randomUUID()
   const contentDir = getContentDir()
@@ -510,31 +595,23 @@ async function capturePdf(filePath: string): Promise<CaptureResult> {
   const title = basename(filePath, '.pdf')
   const now = Date.now()
 
-  // Extract text for word count and FTS — non-fatal if PDF is image-only or
-  // encrypted. Runs in main (not the F7 worker): the bundled pdfjs-dist needs no
-  // DOM globals for text extraction, but keeping it here mirrors the reader and
-  // avoids paying the engine load in the parse worker. F3-hardened flags live in
-  // extractPdfText (CVE-2024-4367 is already fixed in the bundled pdfjs 5.4.x;
-  // the flags are defense-in-depth against future font/eval/XFA issues).
-  let wordCount: number | null = null
-  let plainText = ''
-  try {
-    const buffer = readFileSync(filePath)
-    plainText = await extractPdfText(buffer)
-    wordCount = plainText.split(/\s+/).filter(Boolean).length
-  } catch {
-    // Proceed with null word count for scanned/encrypted PDFs
-  }
+  // Extract text for word count and FTS off-device when the user opted into cloud
+  // processing (Phase 4) — the untrusted PDF is parsed in an isolated Cloud Run
+  // container — otherwise via the shared local pdf.js extractor (which runs in
+  // main; pdf.js text extraction needs no F7 worker). Both paths converge on the
+  // same F3-hardened extractPdf, and both are best-effort: an image-only/encrypted
+  // PDF yields empty text + null word count rather than aborting the import.
+  const { plainText, wordCount } = await resolvePdfParse(filePath)
 
   const db = getDb()
   try {
     db.transaction(() => {
       db.prepare(
         `
-        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, date_saved, date_modified)
-        VALUES (?, ?, NULL, NULL, 'pdf', ?, NULL, ?, ?, ?)
+        INSERT INTO items (id, title, author, source_url, content_type, file_path, cover_path, word_count, file_hash, date_saved, date_modified, cloud_backup)
+        VALUES (?, ?, NULL, NULL, 'pdf', ?, NULL, ?, ?, ?, ?, ?)
       `,
-      ).run(id, title, destFileName, wordCount, now, now)
+      ).run(id, title, destFileName, wordCount, fileHash, now, now, cloudBackup ? 1 : 0)
 
       db.prepare(
         `

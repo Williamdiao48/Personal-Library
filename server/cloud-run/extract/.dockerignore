@@ -1,0 +1,6 @@
+# Build context is the repo root; keep the image lean and reproducible.
+**/node_modules
+**/dist
+**/coverage
+**/*.test.ts
+.git
