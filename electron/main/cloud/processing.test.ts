@@ -126,6 +126,28 @@ describe('cloudExtractEpub', () => {
     expect(result.wordCount).toBeNull()
   })
 
+  it('drops an over-cap inline cover (untrusted container output, SEC-4)', async () => {
+    // >10 MiB decoded — beyond COVER_MAX_BYTES; must be dropped, not materialized.
+    const huge = Buffer.alloc(11 * 1024 * 1024, 0x41).toString('base64')
+    h.invoke.mockResolvedValue({
+      data: {
+        title: 'Cloud Title',
+        author: null,
+        coverBase64: huge,
+        coverExt: 'png',
+        plainText: 'cloud text',
+        wordCount: 1,
+      },
+      error: null,
+    })
+    const result = await cloudExtractEpub('/tmp/book.epub')
+    expect(result.coverBuffer).toBeNull()
+    expect(result.coverExt).toBeNull()
+    // The rest of the extraction still comes through.
+    expect(result.title).toBe('Cloud Title')
+    expect(result.plainText).toBe('cloud text')
+  })
+
   it('throws when the source upload fails', async () => {
     fetchMock.mockResolvedValue({
       ok: false,

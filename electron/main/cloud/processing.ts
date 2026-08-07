@@ -4,6 +4,7 @@ import { presignBlobUrl } from './presign'
 import { sha256Hex } from './blobHash'
 import { parseEpub } from '../workers/parse-host'
 import { extractPdf, type PdfParseResult } from '../capture/extract'
+import { COVER_MAX_BYTES } from '../security/validation'
 import type { EpubParseResult } from '../workers/parse-protocol'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -170,11 +171,21 @@ async function reapSourceBlob(contentHash: string): Promise<void> {
  */
 export async function cloudExtractEpub(filePath: string): Promise<EpubParseResult> {
   const res = await cloudExtract(filePath, 'epub')
+  // The inline cover is untrusted container output, outside the local zip-inflate
+  // caps. Bound it (SEC-4): an over-cap cover is dropped, not honored — the import
+  // proceeds cover-less rather than materializing an unbounded buffer. The ext is
+  // re-validated authoritatively at the capture-site write (normalizeCoverExt).
+  let coverBuffer = res.coverBase64 ? Buffer.from(res.coverBase64, 'base64') : null
+  let coverExt = res.coverExt ?? null
+  if (coverBuffer && coverBuffer.length > COVER_MAX_BYTES) {
+    coverBuffer = null
+    coverExt = null
+  }
   return {
     title: res.title ?? null,
     author: res.author ?? null,
-    coverBuffer: res.coverBase64 ? Buffer.from(res.coverBase64, 'base64') : null,
-    coverExt: res.coverExt ?? null,
+    coverBuffer,
+    coverExt,
     plainText: res.plainText,
     wordCount: res.wordCount ?? null,
   }

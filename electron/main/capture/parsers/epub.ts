@@ -1,6 +1,10 @@
 import AdmZip from 'adm-zip'
 import { extname } from 'path'
-import { readEntryTextCapped, assertEntryInflateOk } from '../../security/validation'
+import {
+  readEntryTextCapped,
+  assertEntryInflateOk,
+  normalizeCoverExt,
+} from '../../security/validation'
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -60,9 +64,7 @@ export function parseEpubMetadata(filePath: string): EpubMetadata {
       if (entry) {
         assertEntryInflateOk(entry)
         coverBuffer = entry.getData()
-        const rawExt = extname(coverHref).slice(1).toLowerCase()
-        const allowed = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp'])
-        coverExt = allowed.has(rawExt) ? (rawExt === 'jpeg' ? 'jpg' : rawExt) : 'jpg'
+        coverExt = normalizeCoverExt(extname(coverHref).slice(1))
       }
     }
 

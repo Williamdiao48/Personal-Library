@@ -16,7 +16,7 @@ import { captureScribbleHub, getScribbleHubChapterCount } from './sites/scribble
 import { captureXenForo, getXenForoChapterCount } from './sites/forums'
 import { captureUniversal } from './sites/universal'
 import { safeContentPath } from '../security/paths'
-import { assertImportFile } from '../security/validation'
+import { assertImportFile, normalizeCoverExt } from '../security/validation'
 import { assertHttpUrl, safeFetch } from '../security/net-guard'
 import { resolveEpubParse, resolvePdfParse } from '../cloud/processing'
 import { indexFtsText, readStoredFtsText } from '../db/ftsText'
@@ -522,8 +522,11 @@ async function captureEpub(filePath: string, cloudBackup = false): Promise<Captu
   let coverPath: string | null = null
   let coverFilePath: string | null = null
   if (meta.coverBuffer && meta.coverExt) {
-    const coverFile = `${id}-cover.${meta.coverExt}`
-    coverFilePath = join(contentDir, coverFile)
+    // coverExt is parser-supplied (untrusted — esp. the Phase-4 container's JSON
+    // response), so canonicalize it to the allow-list and resolve the write via
+    // safeContentPath: a hostile ext can't traverse out of content/ (SEC-4).
+    const coverFile = `${id}-cover.${normalizeCoverExt(meta.coverExt)}`
+    coverFilePath = safeContentPath(coverFile)
     writeFileSync(coverFilePath, meta.coverBuffer)
     coverPath = `content/${coverFile}`
   }

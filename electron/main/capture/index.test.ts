@@ -30,7 +30,12 @@ vi.mock('./fetch', () => ({ fetchPage: vi.fn() }))
 // Keep the scheme guard as a no-op (its own logic is covered in net-guard.test.ts
 // / capture.test.ts); stub safeFetch so cover downloads never hit the network.
 vi.mock('../security/net-guard', () => ({ assertHttpUrl: vi.fn(), safeFetch: vi.fn() }))
-vi.mock('../security/validation', () => ({ assertImportFile: vi.fn(() => Promise.resolve()) }))
+// Keep the real module (esp. normalizeCoverExt, exercised by the cover write);
+// only the import-gate is stubbed so the dummy fixtures pass the magic/size check.
+vi.mock('../security/validation', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../security/validation')>()),
+  assertImportFile: vi.fn(() => Promise.resolve()),
+}))
 vi.mock('../workers/parse-host', () => ({ parseEpub: vi.fn() }))
 // Stub the pdfjs-dist text extractor (real pdf.js is ESM + heavy; word-count
 // behavior is what matters here). "pdf words extracted" → 3 words.
@@ -518,6 +523,43 @@ describe('captureFile', () => {
     const row = db.prepare('SELECT cover_path FROM items WHERE id = ?').get(res.id) as any
     expect(row.cover_path).toBe(`content/${res.id}-cover.jpg`)
     expect(existsSync(join(CONTENT, `${res.id}-cover.jpg`))).toBe(true)
+  })
+
+  it('neutralizes a hostile coverExt, writing safely inside content/ (SEC-4)', async () => {
+    // A compromised Phase-4 container could return a traversal coverExt; the
+    // capture site must normalize it to the allow-list and write via safeContentPath.
+    vi.mocked(parseEpub).mockResolvedValue({
+      title: 'Evil Cover',
+      author: null,
+      coverBuffer: Buffer.from([1, 2, 3]),
+      coverExt: '../../../../evil',
+      plainText: 'text',
+      wordCount: 1,
+    })
+
+    const res = await captureFile(epubFixture)
+
+    // Ext collapsed to the safe fallback; the file lands inside content/.
+    const row = db.prepare('SELECT cover_path FROM items WHERE id = ?').get(res.id) as any
+    expect(row.cover_path).toBe(`content/${res.id}-cover.jpg`)
+    expect(existsSync(join(CONTENT, `${res.id}-cover.jpg`))).toBe(true)
+    // Nothing escaped the sandbox to the traversal target.
+    expect(existsSync(join(USERDATA, 'evil'))).toBe(false)
+    expect(existsSync('/tmp/evil')).toBe(false)
+  })
+
+  it('coerces a non-allow-listed coverExt (svg) to jpg', async () => {
+    vi.mocked(parseEpub).mockResolvedValue({
+      title: 'Svg Cover',
+      author: null,
+      coverBuffer: Buffer.from([1, 2, 3]),
+      coverExt: 'svg',
+      plainText: 'text',
+      wordCount: 1,
+    })
+    const res = await captureFile(epubFixture)
+    const row = db.prepare('SELECT cover_path FROM items WHERE id = ?').get(res.id) as any
+    expect(row.cover_path).toBe(`content/${res.id}-cover.jpg`)
   })
 
   it('imports the epub with fallback metadata when the parse worker fails', async () => {
