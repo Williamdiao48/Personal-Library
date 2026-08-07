@@ -11,7 +11,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 33
+export const CURRENT_VERSION = 39
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -312,6 +312,169 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   // NULL and are swept on first sweep — they just re-embed cheaply on next use.
   // ALTER-ADD, MIGRATIONS only (never in SCHEMA baseline, per the fresh-install gotcha).
   33: `ALTER TABLE candidate_embeddings ADD COLUMN cached_at INTEGER;`,
+  // Cloud Phase 2 — blob backup foundation. Per-item cloud opt-in + blob sync
+  // state, both DEVICE-LOCAL (never synced to Postgres in Phase 3).
+  //   • items.cloud_backup — the privacy gate (Decision 8): 0 = local-only (the
+  //     default; every existing row backfills to 0), 1 = eligible for R2 upload.
+  //     The uploader only ever enqueues rows where cloud_backup = 1.
+  //   • items.cover_hash — sha256 of the cover bytes, for the covers R2 key.
+  //   • blob_sync — this device's view of which blobs it has uploaded. Keyed by
+  //     the R2 object hash (identical bytes = one key = one row → dedupe). Not
+  //     item- or user-scoped; it's a local outbox/ledger, not synced data.
+  // NOTE: the R2 content key is items.blob_hash (migration 35, a real sha256 of
+  // the packed content bytes) — NOT items.content_hash, which is a fast 32-bit
+  // TEXT fingerprint (util/contentHash.ts) used for refresh/embedding staleness,
+  // is HTML-only, and is unsuitable as an object key.
+  // ALTER-ADD + new table, MIGRATIONS only (never in SCHEMA baseline, per the
+  // fresh-install duplicate-column gotcha).
+  34: `
+    ALTER TABLE items ADD COLUMN cloud_backup INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE items ADD COLUMN cover_hash TEXT;
+    CREATE TABLE IF NOT EXISTS blob_sync (
+      content_hash    TEXT PRIMARY KEY,
+      kind            TEXT NOT NULL DEFAULT 'content',  -- 'content' | 'cover'
+      state           TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'synced' | 'error'
+      last_attempt_at INTEGER,
+      error           TEXT,
+      updated_at      INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_blob_sync_state ON blob_sync (state);
+  `,
+  // Cloud Phase 2 — the real R2 content-address. items.content_hash is a fast
+  // 32-bit text fingerprint (HTML-only, for refresh/embedding staleness), NOT a
+  // byte hash, so it can't key an object store. blob_hash is sha256 of the item's
+  // PACKED content bytes (one archive per item — single-file items are a 1-entry
+  // archive), computed by the uploader for cloud-opted items. Device-local; the
+  // synced items row (Phase 3) carries it so another device resolves bytes.
+  // ALTER-ADD, MIGRATIONS only (never in SCHEMA baseline, per the fresh-install gotcha).
+  35: `ALTER TABLE items ADD COLUMN blob_hash TEXT;`,
+  // Cloud Phase 3 — the uniform sync clock. Every syncable table gains the three
+  // columns the LWW sync engine needs:
+  //   • updated_at INTEGER — client-ms logical clock, bumped on every local write;
+  //     the LWW comparand on pull-apply. `items` gets its OWN updated_at (backfilled
+  //     from date_modified) — NOT reusing date_modified, because the server force-
+  //     stamps updated_at and LWW must compare local-vs-server on the same clock;
+  //     date_modified stays a display/refresh field. `reading_sessions` is append-
+  //     only (Decision 4) so it needs no clock or tombstone — just a push flag.
+  //   • deleted_at INTEGER — tombstone. Converts hard-deletes into propagating
+  //     soft-deletes (Chunk 2 rewires the delete paths). `items` already has it
+  //     (mig 15). Omitted on append-only reading_sessions.
+  //   • dirty INTEGER NOT NULL DEFAULT 1 — push flag: 1 = needs upload, cleared to
+  //     0 after a successful push read-back (and set 0 on pull-apply so a just-
+  //     pulled row isn't echoed back). DEFAULT 1 means every EXISTING row is dirty,
+  //     so the first sync after sign-in pushes the whole current library up.
+  // Push dirtiness is a flag, NOT a wall-clock cursor: the server force-stamps
+  // updated_at (Phase-1 set_updated_at trigger), so a lagging client clock could
+  // sort a fresh edit below a server-time cursor and never push it. The flag is
+  // clock-independent. Backfill updated_at from each table's best existing
+  // timestamp so pre-sync LWW ordering is sane. collection_items.sort_order already
+  // exists (mig 16). ALTER-ADD, MIGRATIONS only (never in SCHEMA baseline, per the
+  // fresh-install duplicate-column gotcha).
+  36: `
+    ALTER TABLE items ADD COLUMN updated_at INTEGER;
+    ALTER TABLE items ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE items SET updated_at = date_modified;
+
+    ALTER TABLE progress ADD COLUMN updated_at INTEGER;
+    ALTER TABLE progress ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE progress ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE progress SET updated_at =
+      COALESCE(last_read_at, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+
+    ALTER TABLE tags ADD COLUMN updated_at INTEGER;
+    ALTER TABLE tags ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE tags ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE tags SET updated_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER);
+
+    ALTER TABLE item_tags ADD COLUMN updated_at INTEGER;
+    ALTER TABLE item_tags ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE item_tags ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE item_tags SET updated_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER);
+
+    ALTER TABLE collections ADD COLUMN updated_at INTEGER;
+    ALTER TABLE collections ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE collections ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE collections SET updated_at =
+      COALESCE(date_created, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+
+    ALTER TABLE collection_items ADD COLUMN updated_at INTEGER;
+    ALTER TABLE collection_items ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE collection_items ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE collection_items SET updated_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER);
+
+    ALTER TABLE annotations ADD COLUMN updated_at INTEGER;
+    ALTER TABLE annotations ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE annotations ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE annotations SET updated_at =
+      COALESCE(created_at, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+
+    ALTER TABLE annotation_themes ADD COLUMN updated_at INTEGER;
+    ALTER TABLE annotation_themes ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE annotation_themes ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE annotation_themes SET updated_at =
+      COALESCE(created_at, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+
+    ALTER TABLE annotation_theme_links ADD COLUMN updated_at INTEGER;
+    ALTER TABLE annotation_theme_links ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE annotation_theme_links ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE annotation_theme_links SET updated_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER);
+
+    ALTER TABLE goals ADD COLUMN updated_at INTEGER;
+    ALTER TABLE goals ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE goals ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE goals SET updated_at =
+      COALESCE(created_at, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+
+    ALTER TABLE goal_items ADD COLUMN updated_at INTEGER;
+    ALTER TABLE goal_items ADD COLUMN deleted_at INTEGER;
+    ALTER TABLE goal_items ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+    UPDATE goal_items SET updated_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER);
+
+    ALTER TABLE reading_sessions ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1;
+  `,
+  // Cloud Phase 3 — permanent-delete marker. Under sync, emptyTrash /
+  // permanentlyDelete / the 30-day purge can no longer physically DELETE the items
+  // row: the synced tombstone (deleted_at) must survive so the deletion propagates
+  // (an item synced, then trashed+emptied OFFLINE, would otherwise resurrect on the
+  // next pull). purged_at marks such a row as "bytes reclaimed, keep as pure
+  // tombstone" so getTrashed can exclude it (a deleted_at row with purged_at set is
+  // gone-for-good, not recoverable trash). LOCAL-ONLY — never synced to Postgres;
+  // the cloud tombstone is deleted_at alone. ALTER-ADD, MIGRATIONS only (never in
+  // SCHEMA baseline, per the fresh-install duplicate-column gotcha).
+  37: `ALTER TABLE items ADD COLUMN purged_at INTEGER;`,
+  // Cloud Phase 3 — the sync engine's device-local bookkeeping. NEITHER table is
+  // synced to Postgres (they're this device's private cursor + identity).
+  //   • sync_meta — one row holding this install's stable device_id (LWW tiebreak
+  //     debugging + "which device last wrote"). Not a security boundary (RLS is).
+  //   • sync_cursors — the per-table pull high-water mark: the max server updated_at
+  //     this device has durably applied. Next pull = WHERE updated_at > pull_cursor.
+  //     Advanced only AFTER a batch is applied in a txn, so a crash re-pulls rather
+  //     than skips (over-fetch is safe — apply is idempotent via LWW).
+  // New tables — MIGRATIONS only, never in schema.ts SCHEMA (fresh-install gotcha).
+  38: `
+    CREATE TABLE IF NOT EXISTS sync_meta (
+      id        INTEGER PRIMARY KEY CHECK (id = 1),
+      device_id TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sync_cursors (
+      table_name  TEXT PRIMARY KEY,
+      pull_cursor INTEGER NOT NULL DEFAULT 0
+    );
+  `,
+  // Import de-duplication — a real sha256 of the RAW imported file bytes (the
+  // epub/pdf exactly as the user picked it), so re-importing the identical file
+  // is caught before any parse/copy/upload (capture/fileHash.ts). Distinct from:
+  //   • items.content_hash — a fast 32-bit HTML-only text fingerprint (staleness).
+  //   • items.blob_hash — sha256 of the PACKED archive (includes the per-item
+  //     <id>.epub filename → differs across imports), cloud-only.
+  // Neither is a stable raw-file identity, so this is its own column. LOCAL-ONLY —
+  // not in SYNC_SPECS (a device dedups against its own on-disk files); existing
+  // rows backfill lazily at startup (backfillFileHashes). ALTER-ADD, MIGRATIONS
+  // only (never in SCHEMA baseline, per the fresh-install duplicate-column gotcha).
+  39: `
+    ALTER TABLE items ADD COLUMN file_hash TEXT;
+    CREATE INDEX IF NOT EXISTS idx_items_file_hash ON items (file_hash);
+  `,
 }
 
 export function initDatabase(): void {
@@ -333,7 +496,7 @@ export function initDatabase(): void {
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
   const stale = db
     .prepare(
-      `SELECT rowid, id, title, author, content_type, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL AND deleted_at < ?`,
+      `SELECT rowid, id, title, author, content_type, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL AND deleted_at < ? AND purged_at IS NULL`,
     )
     .all(cutoff) as (FtsItem & { rowid: number; cover_path: string | null })[]
   for (const item of stale) {
@@ -349,7 +512,9 @@ export function initDatabase(): void {
         unlinkSync(safeUserDataPath(item.cover_path))
       } catch {}
     }
-    db.prepare('DELETE FROM items WHERE id = ?').run(item.id)
+    // Keep the tombstone (deleted_at) so the deletion still syncs; purged_at marks
+    // the bytes reclaimed. Physically deleting would risk resurrect-on-pull.
+    db.prepare('UPDATE items SET purged_at = ?, dirty = 1 WHERE id = ?').run(Date.now(), item.id)
   }
 
   // Bound the recommendation-candidate caches: evict cache/embedding rows untouched

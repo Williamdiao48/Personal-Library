@@ -16,9 +16,12 @@ beforeEach(() => {
 afterEach(() => rmSync(contentDir, { recursive: true, force: true }))
 
 describe('reader IPC — path-traversal guards', () => {
-  it('rejects traversal on loadContent', () => {
-    // loadContent is synchronous — safeContentPath throws before readFile runs.
-    expect(() => invoke('reader:loadContent', '../../../etc/passwd')).toThrow(/content path/i)
+  it('rejects traversal on loadContent', async () => {
+    // loadContent is async now (pull-on-open) but the safeContentPath guard still
+    // fires first — inside ensureLocalContent — before any read or network.
+    await expect(invoke('reader:loadContent', '../../../etc/passwd')).rejects.toThrow(
+      /content path/i,
+    )
   })
 
   it('rejects traversal on loadChapter and loadBinaryContent', async () => {

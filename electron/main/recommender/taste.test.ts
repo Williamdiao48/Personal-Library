@@ -66,6 +66,25 @@ describe('buildTasteCentroids', () => {
     const [taste] = buildTasteCentroids(sigs, vecs)
     expect(cosine(taste, v(1, 0))).toBeCloseTo(1, 6) // only 'a' contributed
   })
+
+  it('a large two-facet library → k>1 centroids, one per facet', () => {
+    // 12 liked items in two well-separated groups → the clusterer splits them so each
+    // facet is judged against its own centroid instead of a blurred east+north average.
+    const east = v(1, 0)
+    const north = v(0, 1)
+    const sigs: ItemWithSignals[] = []
+    const vecs = new Map<string, Float32Array>()
+    for (let i = 0; i < 6; i++) {
+      sigs.push(sig({ id: `e${i}`, rating: 5 }))
+      vecs.set(`e${i}`, east)
+      sigs.push(sig({ id: `n${i}`, rating: 5 }))
+      vecs.set(`n${i}`, north)
+    }
+    const centroids = buildTasteCentroids(sigs, vecs) // n=12 → k=2
+    expect(centroids.length).toBeGreaterThan(1)
+    expect(Math.max(...centroids.map((c) => cosine(c, east)))).toBeGreaterThan(0.95)
+    expect(Math.max(...centroids.map((c) => cosine(c, north)))).toBeGreaterThan(0.95)
+  })
 })
 
 // ── Pure: classifyTier ───────────────────────────────────────────────────────

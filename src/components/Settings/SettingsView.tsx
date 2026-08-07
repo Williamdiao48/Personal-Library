@@ -1,13 +1,16 @@
-import { useState, useId } from 'react'
+import { useState, useId, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSettings } from '../../contexts/SettingsContext'
 import { useUpdater } from '../../contexts/UpdaterContext'
+import { useAuth } from '../../contexts/AuthContext'
 import type { Theme, GridDensity, SortBy, CustomTheme } from '../../contexts/SettingsContext'
+import type { SyncStatus } from '../../types'
 import CustomSelect from '../ui/CustomSelect'
 import { HIGHLIGHT_COLORS } from '../../constants/highlightColors'
 import { backupService } from '../../services/backup'
 import { llmService } from '../../services/llm'
 import { discoverService } from '../../services/discover'
+import { syncService } from '../../services/sync'
 import { deriveCustomTheme, isValidHex } from '../../utils/themeDerive'
 import '../../styles/settings.css'
 
@@ -388,6 +391,286 @@ function LlmRerankSettings() {
           )}
         </>
       )}
+    </>
+  )
+}
+
+// ── Account (opt-in cloud) ───────────────────────────────────────────────────
+// Phase 1: sign in / create account / sign out. Nothing syncs yet — this only
+// establishes identity. When the build has no Supabase creds, the section shows
+// a short note instead of a form.
+
+const MIN_PASSWORD_LENGTH = 8
+
+// ── Library sync (Phase 3) ───────────────────────────────────────────────────
+// Only rendered inside the signed-in Account block. The toggle is the master
+// switch (mirrored to main via App's effect); the row shows live status + a manual
+// "Sync now". Status is hydrated on mount and pushed live over 'sync:status'.
+
+function relativeTime(ms: number): string {
+  const secs = Math.round((Date.now() - ms) / 1000)
+  if (secs < 60) return 'just now'
+  const mins = Math.round(secs / 60)
+  if (mins < 60) return `${mins} min ago`
+  const hrs = Math.round(mins / 60)
+  if (hrs < 24) return `${hrs} hr ago`
+  return `${Math.round(hrs / 24)} d ago`
+}
+
+function SyncSettings() {
+  const { settings, updateSettings } = useSettings()
+  const [status, setStatus] = useState<SyncStatus | null>(null)
+
+  useEffect(() => {
+    if (!window.api?.sync) return
+    void Promise.resolve(syncService.getStatus())
+      .then(setStatus)
+      .catch(() => {})
+    return syncService.onStatus(setStatus)
+  }, [])
+
+  const running = status?.running ?? false
+  const detail = status?.lastError
+    ? `Last sync failed: ${status.lastError}`
+    : running
+      ? 'Syncing…'
+      : status?.lastSyncedAt
+        ? `Last synced ${relativeTime(status.lastSyncedAt)}`
+        : 'Not synced yet this session.'
+
+  return (
+    <div className="settings-row settings-row--top">
+      <div className="settings-row-stack">
+        <label className="settings-row-label" htmlFor="toggle-sync">
+          Sync library across devices
+        </label>
+        <span className="settings-row-hint">
+          Keeps your items, tags, collections, reading progress, and annotations in step across your
+          signed-in devices. Off keeps this device’s library unchanged.
+        </span>
+        {settings.enableSync && (
+          <span
+            className={`settings-feedback${status?.lastError ? ' settings-feedback--err' : ''}`}
+          >
+            {detail}
+          </span>
+        )}
+      </div>
+      <div className="settings-sync-controls">
+        <Toggle
+          id="toggle-sync"
+          checked={settings.enableSync}
+          onChange={(v) => updateSettings({ enableSync: v })}
+        />
+        {settings.enableSync && (
+          <button
+            className="settings-action-btn settings-action-btn--ghost"
+            onClick={() =>
+              void Promise.resolve(syncService.now())
+                .then(setStatus)
+                .catch(() => {})
+            }
+            disabled={running}
+          >
+            {running ? 'Syncing…' : 'Sync now'}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function AccountSettings() {
+  const { user, configured, loading, signIn, signUp, signOut } = useAuth()
+  const { settings, updateSettings } = useSettings()
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const emailId = useId()
+  const pwId = useId()
+
+  if (loading) return null
+
+  if (!configured) {
+    return (
+      <span className="settings-row-hint">
+        Cloud sync isn’t configured in this build. The app runs fully offline; an account is
+        optional and only enables backup and multi-device sync (coming soon).
+      </span>
+    )
+  }
+
+  if (user) {
+    return (
+      <>
+        <div className="settings-row settings-row--top">
+          <div className="settings-row-stack">
+            <span className="settings-row-label">Signed in</span>
+            <span className="settings-row-hint">{user.email ?? user.id}</span>
+          </div>
+          <button
+            className="settings-action-btn settings-action-btn--ghost"
+            onClick={() => void signOut()}
+          >
+            Sign out
+          </button>
+        </div>
+
+        <div className="settings-row settings-row--top">
+          <div className="settings-row-stack">
+            <label className="settings-row-label" htmlFor="toggle-cloud-backup">
+              Back up books to the cloud
+            </label>
+            <span className="settings-row-hint">
+              When on, you choose per book (at capture) whether its file is backed up. Off keeps
+              everything on this device — nothing is ever uploaded.
+            </span>
+          </div>
+          <Toggle
+            id="toggle-cloud-backup"
+            checked={settings.cloudBackupEnabled}
+            onChange={(v) => updateSettings({ cloudBackupEnabled: v })}
+          />
+        </div>
+
+        <SyncSettings />
+
+        <div className="settings-row settings-row--top">
+          <div className="settings-row-stack">
+            <label className="settings-row-label" htmlFor="toggle-cloud-processing">
+              Process files in the cloud
+            </label>
+            <span className="settings-row-hint">
+              When on, imported EPUBs are extracted in an isolated cloud container instead of on
+              this device — so an untrusted file is never parsed locally. Falls back to on-device
+              parsing when offline.
+            </span>
+          </div>
+          <Toggle
+            id="toggle-cloud-processing"
+            checked={settings.enableCloudProcessing}
+            onChange={(v) => updateSettings({ enableCloudProcessing: v })}
+          />
+        </div>
+      </>
+    )
+  }
+
+  const canSubmit =
+    email.trim().length > 0 &&
+    password.length >= (mode === 'signup' ? MIN_PASSWORD_LENGTH : 1) &&
+    !busy
+
+  async function handleSubmit() {
+    if (!canSubmit) return
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const res =
+        mode === 'signup'
+          ? await signUp(email.trim(), password)
+          : await signIn(email.trim(), password)
+      if (!res.ok) {
+        setError(res.error ?? 'Something went wrong. Please try again.')
+      } else if (res.needsConfirmation) {
+        setNotice('Account created. Check your email to confirm, then sign in.')
+        setMode('signin')
+        setPassword('')
+      }
+      // On success the AuthContext flips to the signed-in view automatically.
+    } catch (err: any) {
+      setError(err?.message ?? 'Something went wrong. Please try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="settings-row">
+        <div className="settings-segment" role="group" aria-label="Account action">
+          <button
+            className={`settings-segment-btn${mode === 'signin' ? ' selected' : ''}`}
+            onClick={() => {
+              setMode('signin')
+              setError('')
+            }}
+            aria-pressed={mode === 'signin'}
+          >
+            Sign in
+          </button>
+          <button
+            className={`settings-segment-btn${mode === 'signup' ? ' selected' : ''}`}
+            onClick={() => {
+              setMode('signup')
+              setError('')
+            }}
+            aria-pressed={mode === 'signup'}
+          >
+            Create account
+          </button>
+        </div>
+      </div>
+
+      <div className="settings-row">
+        <label className="settings-row-label" htmlFor={emailId}>
+          Email
+        </label>
+        <input
+          id={emailId}
+          type="email"
+          autoComplete="email"
+          className="settings-color-label-input"
+          value={email}
+          placeholder="you@example.com"
+          onChange={(e) => setEmail(e.target.value)}
+        />
+      </div>
+
+      <div className="settings-row">
+        <label className="settings-row-label" htmlFor={pwId}>
+          Password
+        </label>
+        <input
+          id={pwId}
+          type="password"
+          autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+          className="settings-color-label-input"
+          value={password}
+          placeholder={
+            mode === 'signup' ? `At least ${MIN_PASSWORD_LENGTH} characters` : '••••••••'
+          }
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void handleSubmit()
+          }}
+        />
+      </div>
+
+      <div className="settings-row settings-row--top">
+        <div className="settings-row-stack">
+          {mode === 'signup' && (
+            <span className="settings-row-hint">
+              Passwords must be at least {MIN_PASSWORD_LENGTH} characters.
+            </span>
+          )}
+          {error && <span className="settings-feedback settings-feedback--err">{error}</span>}
+          {notice && <span className="settings-feedback settings-feedback--ok">{notice}</span>}
+        </div>
+        <button className="settings-action-btn" onClick={handleSubmit} disabled={!canSubmit}>
+          {busy
+            ? mode === 'signup'
+              ? 'Creating…'
+              : 'Signing in…'
+            : mode === 'signup'
+              ? 'Create account'
+              : 'Sign in'}
+        </button>
+      </div>
     </>
   )
 }
@@ -776,6 +1059,12 @@ export default function SettingsView() {
               </button>
             )}
           </div>
+        </section>
+
+        {/* ── Account (opt-in cloud) ── */}
+        <section className="settings-section">
+          <h3 className="settings-section-title">Account</h3>
+          <AccountSettings />
         </section>
 
         {import.meta.env.DEV && (

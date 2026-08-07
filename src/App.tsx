@@ -3,9 +3,12 @@ import { Routes, Route } from 'react-router-dom'
 import { SettingsProvider, useSettings } from './contexts/SettingsContext'
 import { discoverService } from './services/discover'
 import { llmService } from './services/llm'
+import { syncService } from './services/sync'
+import { processingService } from './services/processing'
 import { ToastProvider, useToast } from './contexts/ToastContext'
 import { UpdaterProvider, useUpdater } from './contexts/UpdaterContext'
 import { CaptureJobsProvider } from './contexts/CaptureJobsContext'
+import { AuthProvider } from './contexts/AuthContext'
 import LibraryView from './components/Library/LibraryView'
 import ReaderView from './components/Reader/ReaderView'
 import StatsView from './components/Stats/StatsView'
@@ -94,6 +97,23 @@ function DiscoverBackfillSync() {
       baseUrl: settings.llmBaseUrl,
     })
   }, [settings.llmRerankEnabled, settings.llmModel, settings.llmBaseUrl])
+
+  // Mirror the library-sync master switch to main (source of truth is localStorage,
+  // re-synced on boot + on change). Main gates every sync round on it + arms the
+  // poll; actual sync additionally requires being signed in.
+  useEffect(() => {
+    if (!window.api?.sync) return
+    void syncService.setEnabled(settings.enableSync)
+  }, [settings.enableSync])
+
+  // Mirror the cloud-processing master switch to main (source of truth is
+  // localStorage, re-synced on boot + on change). Main reads it at each EPUB
+  // import to decide off-device vs. local parsing; actual cloud use additionally
+  // requires being signed in.
+  useEffect(() => {
+    if (!window.api?.processing) return
+    void processingService.setEnabled(settings.enableCloudProcessing)
+  }, [settings.enableCloudProcessing])
   return null
 }
 
@@ -105,20 +125,22 @@ export default function App() {
         <UpdaterProvider>
           <ToastProvider>
             <UpdaterListener />
-            <CaptureJobsProvider>
-              <Routes>
-                <Route path="/" element={<LibraryView />} />
-                <Route path="/read/:id" element={<ReaderView />} />
-                <Route path="/stats" element={<StatsView />} />
-                <Route path="/settings" element={<SettingsView />} />
-                <Route path="/trash" element={<TrashView />} />
-                <Route path="/collection/:id" element={<CollectionView />} />
-                <Route path="/tags" element={<TagsView />} />
-                <Route path="/authors" element={<AuthorsView />} />
-                <Route path="/discover" element={<DiscoverView />} />
-                <Route path="/annotations" element={<AnnotationsView />} />
-              </Routes>
-            </CaptureJobsProvider>
+            <AuthProvider>
+              <CaptureJobsProvider>
+                <Routes>
+                  <Route path="/" element={<LibraryView />} />
+                  <Route path="/read/:id" element={<ReaderView />} />
+                  <Route path="/stats" element={<StatsView />} />
+                  <Route path="/settings" element={<SettingsView />} />
+                  <Route path="/trash" element={<TrashView />} />
+                  <Route path="/collection/:id" element={<CollectionView />} />
+                  <Route path="/tags" element={<TagsView />} />
+                  <Route path="/authors" element={<AuthorsView />} />
+                  <Route path="/discover" element={<DiscoverView />} />
+                  <Route path="/annotations" element={<AnnotationsView />} />
+                </Routes>
+              </CaptureJobsProvider>
+            </AuthProvider>
           </ToastProvider>
         </UpdaterProvider>
       </SettingsProvider>

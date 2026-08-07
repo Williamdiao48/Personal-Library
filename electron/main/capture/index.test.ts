@@ -49,6 +49,7 @@ import { captureUniversal } from './sites/universal'
 import { fetchPage } from './fetch'
 import { safeFetch } from '../security/net-guard'
 import { parseEpub } from '../workers/parse-host'
+import { computeFileHash } from './fileHash'
 import * as ftsText from '../db/ftsText'
 import { openTestDb, closeTestDb, seedItem, type TestDb } from '../../../test/db/harness'
 
@@ -177,6 +178,25 @@ describe('captureUrl — single-article persistence', () => {
       .get(res.id) as any
     expect(row.chapter_start).toBe(2)
     expect(row.chapter_end).toBe(5)
+  })
+
+  it('defaults cloud_backup to 0 (local-only) and honors the opt-in flag (Phase 2)', async () => {
+    vi.mocked(captureRoyalRoad).mockResolvedValue(siteContent())
+    const local = await captureUrl('https://www.royalroad.com/fiction/1')
+    expect(
+      (db.prepare('SELECT cloud_backup FROM items WHERE id = ?').get(local.id) as any).cloud_backup,
+    ).toBe(0)
+
+    vi.mocked(captureRoyalRoad).mockResolvedValue(siteContent())
+    const cloud = await captureUrl(
+      'https://www.royalroad.com/fiction/1',
+      undefined,
+      undefined,
+      true,
+    )
+    expect(
+      (db.prepare('SELECT cloud_backup FROM items WHERE id = ?').get(cloud.id) as any).cloud_backup,
+    ).toBe(1)
   })
 })
 
@@ -523,5 +543,119 @@ describe('captureFile', () => {
 
   it('rejects an unsupported extension', async () => {
     await expect(captureFile('/tmp/whatever.txt')).rejects.toThrow('Unsupported file type')
+  })
+
+  // ── Import de-duplication (file_hash) ──────────────────────────────────────
+  it('stores a file_hash on import', async () => {
+    vi.mocked(parseEpub).mockResolvedValue({
+      title: 'Hashed',
+      author: null,
+      coverBuffer: null,
+      coverExt: null,
+      plainText: 't',
+      wordCount: 1,
+    })
+    const res = await captureFile(epubFixture)
+    const row = db.prepare('SELECT file_hash FROM items WHERE id = ?').get(res.id) as any
+    expect(row.file_hash).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('de-dupes a re-imported identical file onto the existing item, before re-parsing', async () => {
+    vi.mocked(parseEpub).mockResolvedValue({
+      title: 'Dup Epub',
+      author: 'A',
+      coverBuffer: null,
+      coverExt: null,
+      plainText: 'x',
+      wordCount: 1,
+    })
+
+    const first = await captureFile(epubFixture)
+    expect(first.duplicate).toBeFalsy()
+
+    const second = await captureFile(epubFixture)
+    expect(second.duplicate).toBe(true)
+    expect(second.id).toBe(first.id) // collapsed onto the existing item
+
+    // One row only, and the parse ran solely for the first import — the dup
+    // short-circuits upstream of the (expensive) parse + copy.
+    const { c } = db.prepare('SELECT COUNT(*) c FROM items').get() as any
+    expect(c).toBe(1)
+    expect(parseEpub).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps byte-distinct files as separate items', async () => {
+    vi.mocked(parseEpub).mockResolvedValue({
+      title: 'E',
+      author: null,
+      coverBuffer: null,
+      coverExt: null,
+      plainText: 't',
+      wordCount: 1,
+    })
+    const other = join(FIX, 'other.epub')
+    writeFileSync(other, 'PK\x03\x04 a DIFFERENT epub payload')
+
+    const a = await captureFile(epubFixture)
+    const b = await captureFile(other)
+    expect(b.duplicate).toBeFalsy()
+    expect(b.id).not.toBe(a.id)
+    const { c } = db.prepare('SELECT COUNT(*) c FROM items').get() as any
+    expect(c).toBe(2)
+  })
+
+  it('re-imports a TRASHED identical file as a fresh item (dedup ignores tombstones)', async () => {
+    vi.mocked(parseEpub).mockResolvedValue({
+      title: 'Trashable',
+      author: null,
+      coverBuffer: null,
+      coverExt: null,
+      plainText: 't',
+      wordCount: 1,
+    })
+    const first = await captureFile(epubFixture)
+    db.prepare('UPDATE items SET deleted_at = ? WHERE id = ?').run(Date.now(), first.id)
+
+    const second = await captureFile(epubFixture)
+    expect(second.duplicate).toBeFalsy()
+    expect(second.id).not.toBe(first.id)
+  })
+
+  // ── Cross-device byte adoption ──────────────────────────────────────────────
+  // A synced-in item (imported on another device) can match by file_hash while its
+  // bytes aren't on THIS device yet. Deduping onto it must also make it openable.
+  it('adopts the imported bytes when a cross-device dup lacks local content', async () => {
+    const hash = computeFileHash(readFileSync(epubFixture))
+    const id = seedItem(db, { content_type: 'epub', file_path: 'remote.epub' })
+    db.prepare('UPDATE items SET file_hash = ? WHERE id = ?').run(hash, id)
+    // No file at content/remote.epub — the item synced from another device, bytes
+    // not pulled yet.
+    expect(existsSync(join(CONTENT, 'remote.epub'))).toBe(false)
+
+    const res = await captureFile(epubFixture)
+
+    expect(res.duplicate).toBe(true)
+    expect(res.id).toBe(id) // collapsed onto the synced-in item
+    // Bytes adopted into the item's path so it's immediately openable here.
+    expect(existsSync(join(CONTENT, 'remote.epub'))).toBe(true)
+    expect(readFileSync(join(CONTENT, 'remote.epub'))).toEqual(readFileSync(epubFixture))
+    // Still a single item, and the dup short-circuited upstream of the parse.
+    const { c } = db.prepare('SELECT COUNT(*) c FROM items').get() as any
+    expect(c).toBe(1)
+    expect(parseEpub).not.toHaveBeenCalled()
+  })
+
+  it('does not overwrite existing local bytes on dedup (adoption only fills a gap)', async () => {
+    const hash = computeFileHash(readFileSync(epubFixture))
+    const id = seedItem(db, { content_type: 'epub', file_path: 'present.epub' })
+    db.prepare('UPDATE items SET file_hash = ? WHERE id = ?').run(hash, id)
+    writeFileSync(join(CONTENT, 'present.epub'), 'ORIGINAL LOCAL BYTES')
+
+    const res = await captureFile(epubFixture)
+
+    expect(res.duplicate).toBe(true)
+    expect(res.id).toBe(id)
+    // The already-present file is left untouched (not clobbered by the import).
+    expect(readFileSync(join(CONTENT, 'present.epub')).toString()).toBe('ORIGINAL LOCAL BYTES')
   })
 })

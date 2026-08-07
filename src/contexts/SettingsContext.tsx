@@ -70,6 +70,22 @@ export interface AppSettings {
   // Annotations hub sort (book sections are always the grouping). Persisted (like
   // defaultSort); the in-view search/color/theme/book/date filters stay ephemeral.
   annotationSortBy: AnnotationSortBy
+  // Cloud backup (Phase 2) — the master privacy switch. OFF by default: even when
+  // signed in, nothing uploads until the user turns this on. Gates whether the
+  // per-capture backup toggle is shown at all.
+  cloudBackupEnabled: boolean
+  // Remembers the user's last per-capture choice (Decision 8): the capture toggle
+  // starts here. Initial false = local-only.
+  cloudBackupDefault: boolean
+  // Library/metadata sync (Phase 3) — the master switch. OFF by default; even when
+  // signed in, no sync round runs until the user turns this on. Mirrored to the
+  // main process (like enableDiscover) on boot + on toggle.
+  enableSync: boolean
+  // Cloud processing (Phase 4) — extract untrusted files off-device in an isolated
+  // container instead of on this machine. OFF by default; requires being signed in.
+  // Best-effort: falls back to local parsing when unavailable. Mirrored to the main
+  // process (like enableSync) on boot + on toggle.
+  enableCloudProcessing: boolean
 }
 
 const CUSTOM_THEME_VARS: Array<[keyof CustomTheme, string]> = [
@@ -99,6 +115,10 @@ const DEFAULTS: AppSettings = {
   highlightLabels: DEFAULT_HIGHLIGHT_LABELS,
   highlightLabelsEnabled: true,
   annotationSortBy: 'title',
+  cloudBackupEnabled: false,
+  cloudBackupDefault: false,
+  enableSync: false,
+  enableCloudProcessing: false,
 }
 
 const STORAGE_KEY = 'app-settings'

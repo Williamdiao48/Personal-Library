@@ -24,10 +24,10 @@ playwright-report/
 # (see scripts/dictionary/build.mjs).
 !resources/dictionary/dictionary.db
 
-# Environment / secrets
+# Environment / secrets — never commit ANY env file, including .env.example
+# templates (user rule 2026-07-27). Scaffold example files locally; don't track.
 .env
 .env.*
-!.env.example
 
 # Logs
 *.log
@@ -68,3 +68,8 @@ spikes/
 # library. Named *.harness.test.ts so vitest can run them by path, but never
 # committed (they embed with the real model and read the user's real content).
 *.harness.test.ts
+
+# Throwaway exit-gate spikes against REAL cloud infra (network/creds required).
+# Named *.spike.test.ts so vitest can run them by path, but never committed or
+# run in CI (env-gated). See docs/internal/planning/cloud/ (Phase 3 Chunk 6).
+*.spike.test.ts

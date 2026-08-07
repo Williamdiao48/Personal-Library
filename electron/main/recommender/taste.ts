@@ -2,6 +2,7 @@ import { loadItemSignals, type ItemWithSignals } from './signals'
 import { affinity } from './affinity'
 import { loadVectors } from './store'
 import { normalize, scale, sub, weightedMeanNormalized } from './vectorMath'
+import { clusterLikedCentroids } from './tasteCluster'
 
 // C3.5 — the taste vector (§7.3 graded Rocchio) + the cold-start tier classifier
 // (§8) + the orchestrator that reads signals and vectors and assembles both. The
@@ -36,31 +37,35 @@ export const TASTE = {
 } as const
 
 /**
- * Graded Rocchio taste centroid(s) (§7.3): the weighted liked centroid minus
- * β·the weighted disliked centroid, L2-normalized. Items missing from `vecs`
- * (un-embedded, mid-backfill) are skipped. Empty liked set → `[]` (cold start).
- * Returns a length-1 array (k=1, D5); the rerank scores `max` over centroids so
- * upgrading to k>1 is an internal change with no consumer churn.
+ * Graded Rocchio taste centroid(s) (§7.3), now **multi-facet**: the liked vectors are
+ * clustered into k≥1 per-facet centroids (`clusterLikedCentroids`; k scales with the
+ * liked count, so small libraries stay k=1 — byte-identical to the old single
+ * centroid), and each has β·the weighted disliked centroid subtracted, L2-normalized.
+ * Items missing from `vecs` (un-embedded, mid-backfill) are skipped. Empty liked set →
+ * `[]` (cold start). The rerank scores `max` over the returned centroids, so a reader's
+ * minor taste facet is judged against ITS OWN centroid instead of a blurred average.
  */
 export function buildTasteCentroids(
   sigs: ItemWithSignals[],
   vecs: Map<string, Float32Array>,
 ): Float32Array[] {
-  const liked: { e: Float32Array; w: number }[] = []
+  const liked: { e: Float32Array; w: number; key: string }[] = []
   const disliked: { e: Float32Array; w: number }[] = []
   for (const s of sigs) {
     const e = vecs.get(s.id)
     if (!e) continue // skip un-embedded items
     const a = affinity(s)
-    if (a > 0) liked.push({ e, w: a })
+    if (a > 0) liked.push({ e, w: a, key: s.id })
     else if (a < 0) disliked.push({ e, w: -a })
   }
   if (liked.length === 0) return [] // cold-start guard (§8)
 
-  const cPos = weightedMeanNormalized(liked)
+  const posCentroids = clusterLikedCentroids(liked) // k≥1 per-facet centroids
   const cNeg = disliked.length ? weightedMeanNormalized(disliked) : null
-  const taste = cNeg ? normalize(sub(scale(cPos, TASTE.ALPHA), scale(cNeg, TASTE.BETA))) : cPos
-  return [taste]
+  if (!cNeg) return posCentroids
+  // Subtract the disliked centroid from EACH facet (β<α: don't over-penalize), so the
+  // "push away from disliked content" applies to every facet, then renormalize.
+  return posCentroids.map((c) => normalize(sub(scale(c, TASTE.ALPHA), scale(cNeg, TASTE.BETA))))
 }
 
 /**

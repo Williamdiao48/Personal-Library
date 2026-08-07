@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { installMockApi } from '../../test/renderer/mockWindowApi'
 import { captureService } from './capture'
 import { readerService } from './reader'
@@ -8,6 +8,9 @@ import { convertService } from './convert'
 import { backupService } from './backup'
 import { annotationsService, annotationThemesService } from './annotationsService'
 import { discoverService } from './discover'
+import { cloudService } from './cloud'
+import { syncService } from './sync'
+import { processingService } from './processing'
 
 // The service layer is a thin pass-through to window.api. These tests lock the
 // wiring for every non-library service — right namespace, right method, right
@@ -22,9 +25,11 @@ beforeEach(() => {
 })
 
 describe('captureService delegation', () => {
-  it('start forwards url + optional range', () => {
+  it('start forwards url + optional range + cloudBackup', () => {
     captureService.start('https://x', 1, 3)
-    expect(api.capture.start).toHaveBeenCalledWith('https://x', 1, 3)
+    expect(api.capture.start).toHaveBeenCalledWith('https://x', 1, 3, undefined)
+    captureService.start('https://x', 1, 3, true)
+    expect(api.capture.start).toHaveBeenCalledWith('https://x', 1, 3, true)
   })
   it('fromFile → api.capture.fromFile', () => {
     captureService.fromFile()
@@ -33,6 +38,18 @@ describe('captureService delegation', () => {
   it('append forwards itemId + end', () => {
     captureService.append('i1', 5)
     expect(api.capture.append).toHaveBeenCalledWith('i1', 5)
+  })
+})
+
+describe('cloudService delegation', () => {
+  it('backupItem → api.cloud.backupItem', () => {
+    cloudService.backupItem('i1')
+    expect(api.cloud.backupItem).toHaveBeenCalledWith('i1')
+  })
+  it('onBlobState → api.cloud.onBlobState', () => {
+    const cb = vi.fn()
+    cloudService.onBlobState(cb)
+    expect(api.cloud.onBlobState).toHaveBeenCalledWith(cb)
   })
 })
 
@@ -194,6 +211,33 @@ describe('annotationThemesService delegation', () => {
   it('delete forwards the id', () => {
     annotationThemesService.delete('t1')
     expect(api.annotationThemes.delete).toHaveBeenCalledWith('t1')
+  })
+})
+
+describe('syncService delegation', () => {
+  it('setEnabled forwards the flag', () => {
+    syncService.setEnabled(true)
+    expect(api.sync.setEnabled).toHaveBeenCalledWith(true)
+  })
+  it('getStatus → api.sync.getStatus', () => {
+    syncService.getStatus()
+    expect(api.sync.getStatus).toHaveBeenCalledTimes(1)
+  })
+  it('now → api.sync.now', () => {
+    syncService.now()
+    expect(api.sync.now).toHaveBeenCalledTimes(1)
+  })
+  it('onStatus forwards the callback', () => {
+    const cb = vi.fn()
+    syncService.onStatus(cb)
+    expect(api.sync.onStatus).toHaveBeenCalledWith(cb)
+  })
+})
+
+describe('processingService delegation', () => {
+  it('setEnabled forwards the flag', () => {
+    processingService.setEnabled(true)
+    expect(api.processing.setEnabled).toHaveBeenCalledWith(true)
   })
 })
 

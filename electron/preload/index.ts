@@ -51,9 +51,9 @@ contextBridge.exposeInMainWorld('api', {
   capture: {
     // Fire-and-forget: returns a jobId immediately. Progress/completion/errors
     // are delivered asynchronously via onCaptureProgress/Complete/Error.
-    start: (url: string, start?: number, end?: number) =>
-      ipcRenderer.invoke('capture:start', url, start, end),
-    fromFile: () => ipcRenderer.invoke('capture:fromFile'),
+    start: (url: string, start?: number, end?: number, cloudBackup?: boolean) =>
+      ipcRenderer.invoke('capture:start', url, start, end, cloudBackup),
+    fromFile: (cloudBackup?: boolean) => ipcRenderer.invoke('capture:fromFile', cloudBackup),
     append: (itemId: string, end: number) => ipcRenderer.invoke('capture:append', itemId, end),
   },
 
@@ -237,6 +237,62 @@ contextBridge.exposeInMainWorld('api', {
   },
   dictionary: {
     lookup: (word: string) => ipcRenderer.invoke('dictionary:lookup', word),
+  },
+
+  // Cloud auth (opt-in; no-ops gracefully when the build isn't cloud-configured).
+  // Tokens live only in main — the renderer only ever sees { id, email }.
+  auth: {
+    isConfigured: () => ipcRenderer.invoke('auth:isConfigured'),
+    getSession: () => ipcRenderer.invoke('auth:getSession'),
+    signUp: (email: string, password: string) => ipcRenderer.invoke('auth:signUp', email, password),
+    signIn: (email: string, password: string) => ipcRenderer.invoke('auth:signIn', email, password),
+    signOut: () => ipcRenderer.invoke('auth:signOut'),
+    onStateChange: (
+      callback: (state: { user: { id: string; email: string | null } | null }) => void,
+    ) => {
+      const handler = (
+        _e: Electron.IpcRendererEvent,
+        state: { user: { id: string; email: string | null } | null },
+      ) => callback(state)
+      ipcRenderer.on('auth:stateChange', handler)
+      return () => ipcRenderer.removeListener('auth:stateChange', handler)
+    },
+  },
+
+  // Cloud actions (Phase 2). backupItem opts an existing library item into cloud
+  // backup — flips its gate and enqueues its blobs for the uploader to drain.
+  cloud: {
+    backupItem: (id: string) => ipcRenderer.invoke('cloud:backupItem', id),
+    onBlobState: (callback: (ev: { hash: string; state: 'synced' | 'error' }) => void) => {
+      const handler = (
+        _e: Electron.IpcRendererEvent,
+        ev: { hash: string; state: 'synced' | 'error' },
+      ) => callback(ev)
+      ipcRenderer.on('cloud:blobState', handler)
+      return () => ipcRenderer.removeListener('cloud:blobState', handler)
+    },
+  },
+
+  // Library/metadata sync (Phase 3). The master switch is renderer-owned and
+  // pushed via setEnabled (mirrors discover.setEnabled); status is pulled on mount
+  // and pushed live via 'sync:status'.
+  sync: {
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('sync:setEnabled', enabled),
+    getStatus: () => ipcRenderer.invoke('sync:getStatus'),
+    now: () => ipcRenderer.invoke('sync:now'),
+    onStatus: (callback: (status: import('../../src/types').SyncStatus) => void) => {
+      const handler = (_e: unknown, status: import('../../src/types').SyncStatus) =>
+        callback(status)
+      ipcRenderer.on('sync:status', handler)
+      return () => ipcRenderer.removeListener('sync:status', handler)
+    },
+  },
+
+  // Cloud processing (Phase 4) — off-device extraction of untrusted files. The
+  // master switch is renderer-owned and pushed via setEnabled (mirrors
+  // discover/sync.setEnabled); there is no background work to report.
+  processing: {
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('processing:setEnabled', enabled),
   },
 
   // Local LLM (Ollama) book reranker — opt-in refinement of book recommendations.
