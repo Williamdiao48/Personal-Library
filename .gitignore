@@ -29,6 +29,16 @@ playwright-report/
 .env
 .env.*
 
+# Cloud service-account / credential key files. The Phase 4 GCP runbook mints
+# sa-key.json in the repo root before it's stored as a Supabase secret + rm'd;
+# this is belt-and-suspenders so a stray key can never be staged (the rm is the
+# primary safeguard). Narrow patterns so package.json/tsconfig.json are unaffected.
+sa-key.json
+*-key.json
+*service-account*.json
+gcp-*.json
+*.pem
+
 # Logs
 *.log
 npm-debug.log*
@@ -45,6 +55,10 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Claude Code local config — slash commands (.claude/commands/), local settings,
+# scheduled tasks. Personal workflow tooling; kept local, never published.
+.claude/
 
 # electron-builder cache
 .cache/
