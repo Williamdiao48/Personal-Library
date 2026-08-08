@@ -515,6 +515,47 @@ describe('database bring-up', () => {
     db.close()
   })
 
+  // Migration 40 — re-dirty already-backed-up items so a blob_hash/cover_hash the
+  // uploader recorded AFTER the row's metadata synced still propagates to other
+  // devices (heals the stranded-hash → cross-device pull-on-open ENOENT). Build at
+  // v39 the way a real install reaches it, then confirm bring-up re-dirties only
+  // backed-up live rows and leaves local-only rows untouched.
+  const buildAtV39 = (): Database.Database => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(SCHEMA)
+    for (let v = 2; v <= 39; v++) {
+      if (MIGRATIONS[v]) db.exec(MIGRATIONS[v])
+    }
+    db.pragma('user_version = 39')
+    return db
+  }
+
+  it('re-dirties already-synced backed-up items but not local-only ones (migration 40)', () => {
+    const db = buildAtV39()
+    const insert = db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified, blob_hash)
+       VALUES (?, 'T', NULL, NULL, ?, ?, 1, NULL, NULL, 0, 0, ?)`,
+    )
+    insert.run('backed', 'epub', 'backed.epub', 'bh') // cloud-backed
+    insert.run('local', 'article', 'local.html', null) // local-only
+    // Both already pushed their metadata (the sync engine clears dirty on push).
+    db.prepare(`UPDATE items SET dirty = 0`).run()
+
+    bringUpSchema(db) // runs migration 40
+    expect(db.pragma('user_version', { simple: true })).toBe(CURRENT_VERSION)
+
+    // The backed-up row is re-dirtied so its stranded blob_hash finally pushes...
+    expect(db.prepare(`SELECT dirty FROM items WHERE id = 'backed'`).get()).toMatchObject({
+      dirty: 1,
+    })
+    // ...while a local-only synced row is left alone (no needless re-push).
+    expect(db.prepare(`SELECT dirty FROM items WHERE id = 'local'`).get()).toMatchObject({
+      dirty: 0,
+    })
+    db.close()
+  })
+
   it('applies migrations incrementally from an empty (pre-schema) database', () => {
     // A DB at user_version 0 with NO tables must migrate cleanly to head — this is
     // the path a brand-new install actually takes.

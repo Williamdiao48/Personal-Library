@@ -74,13 +74,18 @@ export async function enqueueItemBackup(itemId: string): Promise<void> {
     .get(itemId) as ItemBlobRow | undefined
   if (!item) return
 
+  // Re-dirty the row (dirty = 1): backup usually completes AFTER the item's
+  // metadata has already synced (which clears dirty), and blob_hash/cover_hash ARE
+  // synced columns. Without re-dirtying, the freshly-recorded hash never pushes, so
+  // another device keeps blob_hash = NULL and pull-on-open ENOENTs the book forever.
+  // Same reasoning as backfillFileHashes; the server restamps updated_at on push.
   const content = buildContentBlob(item)
-  db.prepare(`UPDATE items SET blob_hash = ? WHERE id = ?`).run(content.hash, itemId)
+  db.prepare(`UPDATE items SET blob_hash = ?, dirty = 1 WHERE id = ?`).run(content.hash, itemId)
   enqueueBlob(content.hash, 'content')
 
   const cover = buildCoverBlob(item)
   if (cover) {
-    db.prepare(`UPDATE items SET cover_hash = ? WHERE id = ?`).run(cover.hash, itemId)
+    db.prepare(`UPDATE items SET cover_hash = ?, dirty = 1 WHERE id = ?`).run(cover.hash, itemId)
     enqueueBlob(cover.hash, 'cover')
   }
 

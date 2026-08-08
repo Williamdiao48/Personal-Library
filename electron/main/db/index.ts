@@ -11,7 +11,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 39
+export const CURRENT_VERSION = 40
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -474,6 +474,18 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   39: `
     ALTER TABLE items ADD COLUMN file_hash TEXT;
     CREATE INDEX IF NOT EXISTS idx_items_file_hash ON items (file_hash);
+  `,
+  // Cloud Phase 2/3 fix — re-dirty already-backed-up items so their blob_hash /
+  // cover_hash (synced columns) reach the user's other devices. The uploader
+  // records these AFTER a capture, which is usually AFTER the item's metadata has
+  // already synced (clearing dirty); before this, a row that finished backup
+  // post-push left its hash stranded locally, so another device kept blob_hash NULL
+  // and pull-on-open ENOENT'd the book. The uploader now re-dirties on record; this
+  // one-shot heals rows stranded before the fix. Touches only backed-up live rows,
+  // so local-only items aren't needlessly re-pushed. DATA-ONLY (no DDL).
+  40: `
+    UPDATE items SET dirty = 1
+    WHERE deleted_at IS NULL AND (blob_hash IS NOT NULL OR cover_hash IS NOT NULL);
   `,
 }
 
