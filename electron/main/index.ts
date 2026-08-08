@@ -26,6 +26,20 @@ import { registerProcessingHandlers } from './ipc/processing'
 import { shutdownParseWorker } from './workers/parse-host'
 import { shutdownBackfill } from './recommender/lifecycle'
 
+// Dev-only: redirect the whole userData tree (local library.db, the encrypted
+// auth session, content/ blobs, cursors) to an alternate directory when
+// PL_USERDATA_DIR is set. This turns a second `npm run dev` into a fully isolated
+// "device"/profile on the same machine — the local rig for validating cross-device
+// sync (same account, two profiles) and, later, social features (two DIFFERENT
+// accounts signed in at once). Gated on !isPackaged so it is a no-op in a shipped
+// build and can never repoint a real user's data. Must run BEFORE
+// requestSingleInstanceLock() below (whose lock keys off userData) so two profiles
+// can run concurrently. Pass an absolute path, e.g.:
+//   PL_USERDATA_DIR=/tmp/pl-device-b npm run dev
+if (!app.isPackaged && process.env.PL_USERDATA_DIR) {
+  app.setPath('userData', process.env.PL_USERDATA_DIR)
+}
+
 // Stop WebRTC from reaching out to STUN servers. The hidden capture windows
 // (capture/fetch.ts) load real pages whose bot-detection/fingerprinting scripts
 // open an RTCPeerConnection to stun.l.google.com; Chromium then spams
