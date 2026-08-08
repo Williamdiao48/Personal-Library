@@ -74,6 +74,23 @@ describe('enqueueItemBackup', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2) // content + cover
   })
 
+  it('re-dirties the item so a backup finishing AFTER metadata sync still propagates', async () => {
+    // Regression: blob_hash/cover_hash are synced columns, but backup usually
+    // completes AFTER the item's metadata has pushed (which clears dirty). If the
+    // hash update doesn't re-dirty the row, it never reaches other devices → their
+    // pull-on-open ENOENTs the book forever.
+    h.buildCoverBlob.mockReturnValue({ data: Buffer.from('JPEG'), hash: 'coverhash' })
+    const id = seedItem(db, { file_path: 'a.epub', cover_path: 'content/a-cover.jpg' })
+    // Simulate the row having already synced (the sync engine clears dirty on push).
+    db.prepare(`UPDATE items SET dirty = 0 WHERE id = ?`).run(id)
+
+    await enqueueItemBackup(id)
+
+    expect(
+      db.prepare(`SELECT dirty, blob_hash, cover_hash FROM items WHERE id = ?`).get(id),
+    ).toMatchObject({ dirty: 1, blob_hash: 'contenthash', cover_hash: 'coverhash' })
+  })
+
   it('does nothing for a missing/deleted item', async () => {
     await enqueueItemBackup('nope')
     expect(db.prepare(`SELECT COUNT(*) n FROM blob_sync`).get()).toMatchObject({ n: 0 })
