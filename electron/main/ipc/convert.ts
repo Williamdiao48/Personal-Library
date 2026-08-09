@@ -11,6 +11,7 @@ type EpubGen = (opts: object, chapters: object[]) => Promise<Buffer>
 const epub = (require('epub-gen-memory') as { default: EpubGen }).default
 import { get, getDb } from '../db'
 import { indexFtsText } from '../db/ftsText'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 import type { Item, ConvertPayload, ConvertResult } from '../../../src/types'
 
 export function registerConvertHandlers(): void {
@@ -104,6 +105,7 @@ export function registerConvertHandlers(): void {
       throw err
     }
 
+    notifyLocalMutation() // derived EPUB inserted → push its row
     return { id: newId, title: item.title } as ConvertResult
   })
 }

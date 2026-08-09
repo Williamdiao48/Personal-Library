@@ -223,7 +223,10 @@ function ItemCard({
 
   async function handleBackupToCloud(e: React.MouseEvent) {
     e.stopPropagation()
-    setMenuOpen(false)
+    // Keep the dropdown OPEN so the action transitions in place:
+    // "Back up to cloud" → "Backing up…" → "✓ Backed up to cloud". Closing it here
+    // (as the other menu actions do) hides the whole progression, so the item just
+    // silently flips to backed-up — reading like an instant, dishonest "done".
     setBackingUp(true)
     try {
       await onBackupToCloud!()

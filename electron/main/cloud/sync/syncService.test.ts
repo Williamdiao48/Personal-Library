@@ -8,6 +8,8 @@ import {
   setEnabled,
   syncNow,
   schedule,
+  notifyLocalMutation,
+  flushNow,
   notifyAuthChange,
   __setRepoFactoryForTest,
   __resetForTest,
@@ -234,6 +236,115 @@ describe('schedule (debounce)', () => {
       schedule()
       await vi.advanceTimersByTimeAsync(5_000)
       expect(rounds).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('flushNow (durable push)', () => {
+  it('runs a round and pushes dirty rows synchronously (no debounce) when enabled', async () => {
+    const server = makeFakeServer()
+    __setRepoFactoryForTest(async () => server.repo)
+    setEnabled(true)
+    seedDirtyItem(db, 'i1')
+
+    // Unlike schedule()/notifyLocalMutation, flushNow resolves only after the push
+    // has actually happened — no fake timers needed.
+    const status = await flushNow()
+
+    expect(status.lastSyncedAt).toBeGreaterThan(0)
+    expect(server.pushed()).toBeGreaterThan(0)
+    expect(db.prepare('SELECT dirty FROM items WHERE id = ?').get('i1')).toMatchObject({ dirty: 0 })
+  })
+
+  it('waits out an in-flight round, then forces one that sees the newest write', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const server = makeFakeServer()
+    let calls = 0
+    __setRepoFactoryForTest(async () => {
+      // Block only the FIRST round so we can start a second write mid-flight.
+      if (calls++ === 0) await gate
+      return server.repo
+    })
+    setEnabled(true)
+    seedDirtyItem(db, 'i1')
+
+    // Kick a round that stalls inside the repo lookup, then dirty a NEW row and
+    // flushNow — it must not resolve until that new row is pushed.
+    const first = syncNow()
+    seedDirtyItem(db, 'i2')
+    const flushed = flushNow()
+    release()
+    await Promise.all([first, flushed])
+
+    // Both rows land dirty=0 — the flush's forced round observed i2.
+    expect(db.prepare('SELECT dirty FROM items WHERE id = ?').get('i1')).toMatchObject({ dirty: 0 })
+    expect(db.prepare('SELECT dirty FROM items WHERE id = ?').get('i2')).toMatchObject({ dirty: 0 })
+  })
+
+  it('no-ops while sync is disabled', async () => {
+    const server = makeFakeServer()
+    __setRepoFactoryForTest(async () => server.repo)
+    seedDirtyItem(db, 'i1')
+
+    const status = await flushNow()
+
+    expect(status.enabled).toBe(false)
+    expect(server.pushed()).toBe(0)
+    expect(db.prepare('SELECT dirty FROM items WHERE id = ?').get('i1')).toMatchObject({ dirty: 1 })
+  })
+})
+
+describe('notifyLocalMutation', () => {
+  it('schedules a debounced round after a local write when enabled', async () => {
+    vi.useFakeTimers()
+    try {
+      const server = makeFakeServer()
+      let rounds = 0
+      __setRepoFactoryForTest(async () => {
+        rounds++
+        return server.repo
+      })
+      setEnabled(true)
+      seedDirtyItem(db, 'i1')
+
+      // A burst of local mutations (e.g. rating then review then tag) collapses
+      // into a single push round.
+      notifyLocalMutation()
+      notifyLocalMutation()
+      notifyLocalMutation()
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      expect(rounds).toBe(1)
+      expect(server.pushed()).toBeGreaterThan(0)
+      expect(db.prepare('SELECT dirty FROM items WHERE id = ?').get('i1')).toMatchObject({
+        dirty: 0,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('is a no-op while sync is disabled (local-only user pays nothing)', async () => {
+    vi.useFakeTimers()
+    try {
+      let rounds = 0
+      __setRepoFactoryForTest(async () => {
+        rounds++
+        return makeFakeServer().repo
+      })
+      seedDirtyItem(db, 'i1')
+
+      notifyLocalMutation()
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      expect(rounds).toBe(0)
+      // Row stays dirty locally, ready to push if the user ever enables sync.
+      expect(db.prepare('SELECT dirty FROM items WHERE id = ?').get('i1')).toMatchObject({
+        dirty: 1,
+      })
     } finally {
       vi.useRealTimers()
     }

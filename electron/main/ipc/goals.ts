@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { randomUUID } from 'crypto'
 import { run, get, all, getDb } from '../db'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 import type { Goal, GoalType, GoalPeriod, GoalItem } from '../../../src/types'
 
 // Returns the Unix ms timestamp for the start of the current period window.
@@ -177,6 +178,7 @@ export function registerGoalsHandlers(): void {
         `SELECT id, type, title, period, target_minutes, target_count, created_at FROM goals WHERE id = ?`,
         [id],
       )!
+      notifyLocalMutation()
       return buildGoal(row)
     },
   )
@@ -219,6 +221,7 @@ export function registerGoalsHandlers(): void {
           now,
           id,
         ])
+      notifyLocalMutation()
     },
   )
 
@@ -232,6 +235,7 @@ export function registerGoalsHandlers(): void {
         [now, now, id],
       )
     })()
+    notifyLocalMutation()
   })
 
   // ── Add an item to a reading list goal ──────────────────────────
@@ -243,6 +247,7 @@ export function registerGoalsHandlers(): void {
        ON CONFLICT(goal_id, item_id) DO UPDATE SET deleted_at = NULL, updated_at = excluded.updated_at, dirty = 1`,
       [goalId, itemId, now],
     )
+    notifyLocalMutation()
   })
 
   // ── Remove an item from a reading list goal ─────────────────────
@@ -252,6 +257,7 @@ export function registerGoalsHandlers(): void {
       `UPDATE goal_items SET deleted_at = ?, updated_at = ?, dirty = 1 WHERE goal_id = ? AND item_id = ? AND deleted_at IS NULL`,
       [now, now, goalId, itemId],
     )
+    notifyLocalMutation()
   })
 
   // ── Upsert a time or count goal for a specific period ───────────
@@ -279,6 +285,7 @@ export function registerGoalsHandlers(): void {
               [now, now, existing.id],
             )
           })()
+          notifyLocalMutation()
         }
         return null
       }
@@ -301,6 +308,7 @@ export function registerGoalsHandlers(): void {
           `SELECT id, type, title, period, target_minutes, target_count, created_at FROM goals WHERE id = ?`,
           [existing.id],
         )!
+        notifyLocalMutation()
         return buildGoal(row)
       } else {
         const AUTO_TITLES: Record<string, Record<string, string>> = {
@@ -337,6 +345,7 @@ export function registerGoalsHandlers(): void {
           `SELECT id, type, title, period, target_minutes, target_count, created_at FROM goals WHERE id = ?`,
           [id],
         )!
+        notifyLocalMutation()
         return buildGoal(row)
       }
     },

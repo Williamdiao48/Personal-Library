@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { invoke, resetIpc } from '../../../test/stubs/electron'
 import {
   openTestDb,
@@ -7,7 +7,10 @@ import {
   seedSession,
   type TestDb,
 } from '../../../test/db/harness'
+// Tier 1 #3: a recorded reading session schedules a debounced sync push.
+vi.mock('../cloud/sync/syncService', () => ({ notifyLocalMutation: vi.fn() }))
 import { registerStatsHandlers } from './stats'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 
 let db: TestDb
 
@@ -50,6 +53,32 @@ describe('stats:recordSession', () => {
     const start = Date.now()
     await invoke('stats:recordSession', item, start, start + 3000) // 3s
     expect(db.prepare('SELECT COUNT(*) n FROM reading_sessions').get()).toEqual({ n: 0 })
+  })
+})
+
+describe('post-mutation sync trigger (Tier 1 #3)', () => {
+  const notify = vi.mocked(notifyLocalMutation)
+
+  it('recording a real session schedules a sync push', async () => {
+    const item = seedItem(db, {})
+    const start = Date.now()
+    notify.mockClear()
+    await invoke('stats:recordSession', item, start, start + 10 * 60 * 1000) // 10m
+    expect(notify).toHaveBeenCalledTimes(1)
+  })
+
+  it('a too-short session that inserts nothing does NOT schedule a push', async () => {
+    const item = seedItem(db, {})
+    const start = Date.now()
+    notify.mockClear()
+    await invoke('stats:recordSession', item, start, start + 3000) // 3s → discarded
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('reading a stats aggregate (getSummary) does NOT schedule a push', async () => {
+    notify.mockClear()
+    await invoke('stats:getSummary')
+    expect(notify).not.toHaveBeenCalled()
   })
 })
 

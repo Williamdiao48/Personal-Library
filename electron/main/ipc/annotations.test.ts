@@ -1,7 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { invoke, resetIpc } from '../../../test/stubs/electron'
 import { openTestDb, closeTestDb, seedItem, type TestDb } from '../../../test/db/harness'
+// Tier 1 #3: mutating handlers schedule a debounced sync push — mock the trigger.
+vi.mock('../cloud/sync/syncService', () => ({ notifyLocalMutation: vi.fn() }))
 import { registerAnnotationHandlers, toMarkdown, toPlainText } from './annotations'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 import type { ExportQuoteRow } from '../../../src/types'
 
 let db: TestDb
@@ -278,5 +281,23 @@ describe('quote export formatting', () => {
     expect(txt).toContain('"So we beat on"')
     expect(txt).not.toContain('*')
     expect(txt).toContain('#time')
+  })
+})
+
+describe('post-mutation sync trigger (Tier 1 #3)', () => {
+  const notify = vi.mocked(notifyLocalMutation)
+
+  it('creating an annotation schedules a sync push', async () => {
+    const item = seedItem(db, {})
+    notify.mockClear()
+    await invoke('annotations:create', { item_id: item, type: 'note', position: 0.5 })
+    expect(notify).toHaveBeenCalledTimes(1)
+  })
+
+  it('reading annotations (getForItem) does NOT schedule a push', async () => {
+    const item = seedItem(db, {})
+    notify.mockClear()
+    await invoke('annotations:getForItem', item)
+    expect(notify).not.toHaveBeenCalled()
   })
 })

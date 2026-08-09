@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { randomUUID } from 'crypto'
 import { all, run, getDb } from '../db'
 import { NAME_TOMB_SEP_SQL } from '../db/nameTombstone'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 import type { Collection, Item } from '../../../src/types'
 
 export function registerCollectionHandlers(): void {
@@ -18,6 +19,7 @@ export function registerCollectionHandlers(): void {
       now,
       now,
     ])
+    notifyLocalMutation()
     return { id, name, date_created: now } as Collection
   })
 
@@ -36,6 +38,7 @@ export function registerCollectionHandlers(): void {
         [now, now, id],
       )
     })()
+    notifyLocalMutation()
   })
 
   ipcMain.handle('collections:rename', (_e, id: string, name: string) => {
@@ -44,6 +47,7 @@ export function registerCollectionHandlers(): void {
       Date.now(),
       id,
     ])
+    notifyLocalMutation()
   })
 
   ipcMain.handle('collections:getAllItemCollections', () => {
@@ -87,6 +91,7 @@ export function registerCollectionHandlers(): void {
            deleted_at = NULL, sort_order = excluded.sort_order, updated_at = excluded.updated_at, dirty = 1`,
       ).run(collectionId, itemId, row.max_order + 1, now)
     })()
+    notifyLocalMutation()
   })
 
   ipcMain.handle('collections:removeItem', (_e, collectionId: string, itemId: string) => {
@@ -95,6 +100,7 @@ export function registerCollectionHandlers(): void {
       'UPDATE collection_items SET deleted_at = ?, updated_at = ?, dirty = 1 WHERE collection_id = ? AND item_id = ? AND deleted_at IS NULL',
       [now, now, collectionId, itemId],
     )
+    notifyLocalMutation()
   })
 
   ipcMain.handle('collections:reorderItems', (_e, collectionId: string, itemIds: string[]) => {
@@ -106,6 +112,7 @@ export function registerCollectionHandlers(): void {
     db.transaction(() => {
       itemIds.forEach((id, i) => stmt.run(i, now, collectionId, id))
     })()
+    notifyLocalMutation()
   })
 
   ipcMain.handle('collections:setForItem', (_e, itemId: string, collectionIds: string[]) => {
@@ -129,5 +136,6 @@ export function registerCollectionHandlers(): void {
       tombstoneAll.run(now, now, itemId)
       for (const cid of collectionIds) upsert.run(cid, itemId, savedOrders.get(cid) ?? null, now)
     })()
+    notifyLocalMutation()
   })
 }
