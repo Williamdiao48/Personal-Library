@@ -4,8 +4,15 @@ import { openTestDb, closeTestDb, seedItem, type TestDb } from '../../../test/db
 
 // enqueueItemBackup computes hashes off local files + kicks a network drain — mock
 // it so this suite stays focused on the handler's DB behaviour (gate flip + guards).
-const h = vi.hoisted(() => ({ enqueueItemBackup: vi.fn(() => Promise.resolve()) }))
+const h = vi.hoisted(() => ({
+  enqueueItemBackup: vi.fn(() => Promise.resolve()),
+  flushNow: vi.fn(() => Promise.resolve()),
+}))
 vi.mock('../cloud/uploader', () => ({ enqueueItemBackup: h.enqueueItemBackup }))
+// The backup handler AWAITS a durable sync push so blob_hash/cover_hash reach the
+// user's other devices before the call returns (durable "fire and forget" — the
+// user can quit immediately after). Mock the seam.
+vi.mock('../cloud/sync/syncService', () => ({ flushNow: h.flushNow }))
 
 import { registerCloudHandlers } from './cloud'
 
@@ -35,6 +42,9 @@ describe('cloud:backupItem', () => {
     expect(res).toEqual({ ok: true, state: 'pending' })
     expect(h.enqueueItemBackup).toHaveBeenCalledWith(id)
     expect(cloudBackupOf(id)).toBe(1)
+    // A successful backup awaits a durable push so the new blob_hash pointer is in
+    // Postgres before the call returns (survives an immediate quit).
+    expect(h.flushNow).toHaveBeenCalledTimes(1)
   })
 
   it('reports state:synced from the ledger when the blob uploaded', async () => {
@@ -94,5 +104,7 @@ describe('cloud:backupItem', () => {
     expect(res).toEqual({ ok: false, error: 'no local source' })
     // Gate must stay off so the item never reads as "backed up" when it isn't.
     expect(cloudBackupOf(id)).toBe(0)
+    // Nothing was stamped/uploaded → no sync to flush.
+    expect(h.flushNow).not.toHaveBeenCalled()
   })
 })
