@@ -402,6 +402,25 @@ describe('ItemCard — cloud backup action', () => {
     expect(onBackupToCloud).toHaveBeenCalled()
   })
 
+  it('keeps the menu open and shows "Backing up…" in place while the handler runs', async () => {
+    // Hold the handler mid-flight so we can observe the transitional state.
+    let resolve!: () => void
+    const onBackupToCloud = vi.fn(() => new Promise<void>((r) => (resolve = r)))
+    renderCard({ item: makeItem({ cloud_backup: 0 }), onBackupToCloud })
+    fireEvent.click(screen.getByRole('button', { name: 'More options' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back up to cloud' }))
+
+    // The dropdown stays open and the action swaps in place — no reopening needed —
+    // so the user sees the progression rather than a silent flip to "done".
+    expect(screen.getByText('Backing up…')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Back up to cloud' })).toBeNull()
+
+    await act(async () => {
+      resolve()
+    })
+  })
+
   it('shows a non-interactive "Backed up" label only once the blob is actually synced', () => {
     const onBackupToCloud = vi.fn()
     renderCard({ item: makeItem({ cloud_backup: 1, cloud_state: 'synced' }), onBackupToCloud })
