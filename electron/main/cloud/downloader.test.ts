@@ -20,7 +20,7 @@ vi.mock('../auth/client', () => ({
 }))
 vi.mock('./presign', () => ({ presignBlobUrl: h.presignBlobUrl }))
 
-import { ensureLocalContent } from './downloader'
+import { ensureLocalContent, ensureLocalCover } from './downloader'
 
 let db: TestDb
 let userData: string
@@ -197,5 +197,91 @@ describe('ensureLocalContent — pull', () => {
 
     await expect(ensureLocalContent('a.epub')).rejects.toThrow(/too large/i)
     expect(existsSync(join(contentPath, 'a.epub'))).toBe(false)
+  })
+
+  // Regression: a device that received this item purely via metadata sync never
+  // captured/imported locally, so <userData>/content does not exist. The pull must
+  // create it before writing — otherwise writeFileSync throws a parent-missing
+  // ENOENT byte-identical to the reader's own missing-file error (the original bug).
+  it('creates the content dir when it does not exist yet (metadata-only device)', async () => {
+    const archive = packArchive([entry('a.epub', 'EPUBBYTES')])
+    seedBacked('a.epub', archive)
+    fetchMock.mockResolvedValue(okBytes(archive))
+    rmSync(contentPath, { recursive: true, force: true }) // device never created content/
+    expect(existsSync(contentPath)).toBe(false)
+
+    await ensureLocalContent('a.epub')
+
+    expect(readFileSync(join(contentPath, 'a.epub'), 'utf8')).toBe('EPUBBYTES')
+  })
+})
+
+describe('ensureLocalCover', () => {
+  /** Seed an item with a cloud-backed cover (sets cover_path + cover_hash). */
+  const seedCover = (coverRel: string, bytes: Buffer): string => {
+    const id = seedItem(db, {})
+    db.prepare(`UPDATE items SET cover_path = ?, cover_hash = ? WHERE id = ?`).run(
+      coverRel,
+      sha256Hex(bytes),
+      id,
+    )
+    return id
+  }
+
+  it('does nothing when the cover is already local', async () => {
+    writeFileSync(join(contentPath, 'c-cover.jpg'), 'local')
+    await ensureLocalCover('content/c-cover.jpg')
+    expect(h.presignBlobUrl).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('does nothing for an item with no backed-up cover (no cover_hash)', async () => {
+    const id = seedItem(db, {})
+    db.prepare(`UPDATE items SET cover_path = ? WHERE id = ?`).run('content/c-cover.jpg', id)
+    await ensureLocalCover('content/c-cover.jpg')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('downloads, verifies, and writes the cover, creating content/ if absent', async () => {
+    const bytes = Buffer.from('JPEGBYTES', 'utf8')
+    seedCover('content/c-cover.jpg', bytes)
+    fetchMock.mockResolvedValue(okBytes(bytes))
+    rmSync(contentPath, { recursive: true, force: true }) // metadata-only device
+    expect(existsSync(contentPath)).toBe(false)
+
+    await ensureLocalCover('content/c-cover.jpg')
+
+    expect(h.presignBlobUrl).toHaveBeenCalledWith('get', 'cover', sha256Hex(bytes))
+    expect(readFileSync(join(contentPath, 'c-cover.jpg'), 'utf8')).toBe('JPEGBYTES')
+  })
+
+  it('never throws and writes nothing when signed out (covers are non-critical)', async () => {
+    const bytes = Buffer.from('JPEGBYTES', 'utf8')
+    seedCover('content/c-cover.jpg', bytes)
+    h.getSession.mockResolvedValue({ data: { session: null } } as never)
+
+    await expect(ensureLocalCover('content/c-cover.jpg')).resolves.toBeUndefined()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(existsSync(join(contentPath, 'c-cover.jpg'))).toBe(false)
+  })
+
+  it('drops bytes that fail the cover-hash integrity check (no write, no throw)', async () => {
+    seedCover('content/c-cover.jpg', Buffer.from('REAL', 'utf8'))
+    fetchMock.mockResolvedValue(okBytes(Buffer.from('TAMPERED', 'utf8')))
+
+    await expect(ensureLocalCover('content/c-cover.jpg')).resolves.toBeUndefined()
+    expect(existsSync(join(contentPath, 'c-cover.jpg'))).toBe(false)
+  })
+
+  it('swallows a failed GET without throwing', async () => {
+    seedCover('content/c-cover.jpg', Buffer.from('x', 'utf8'))
+    fetchMock.mockResolvedValue({ ok: false, status: 404 } as unknown as Response)
+    await expect(ensureLocalCover('content/c-cover.jpg')).resolves.toBeUndefined()
+    expect(existsSync(join(contentPath, 'c-cover.jpg'))).toBe(false)
+  })
+
+  it('returns quietly on a traversal path without touching the DB or network', async () => {
+    await expect(ensureLocalCover('content/../../../etc/passwd')).resolves.toBeUndefined()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

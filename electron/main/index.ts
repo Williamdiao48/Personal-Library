@@ -4,6 +4,7 @@ import { join } from 'path'
 import { initDatabase, getDb } from './db'
 import { backfillFileHashes } from './capture/fileHash'
 import { safeContentPath } from './security/paths'
+import { ensureLocalCover } from './cloud/downloader'
 import { assertPublicHttpUrl } from './security/net-guard'
 import { registerLibraryHandlers } from './ipc/library'
 import { registerCaptureHandlers } from './ipc/capture'
@@ -176,7 +177,7 @@ app.whenReady().then(() => {
   // content/. The stored value carries the `content/` prefix, so strip it before
   // resolving inside content/ (matches ipc/convert.ts). safeContentPath refuses
   // any traversal escaping content/ (shared F1 helper, security/paths.ts).
-  protocol.handle('library', (request) => {
+  protocol.handle('library', async (request) => {
     const relative = request.url.slice('library://'.length)
     let filePath: string
     try {
@@ -184,6 +185,11 @@ app.whenReady().then(() => {
     } catch {
       return new Response('Forbidden', { status: 403 })
     }
+    // Pull-on-open for covers: a device that received only this item's metadata
+    // (via sync) has no local cover bytes yet. Fetch them from R2 on first
+    // request. ensureLocalCover never throws — on any failure it no-ops and the
+    // fetch below 404s to the renderer's placeholder.
+    await ensureLocalCover(relative)
     return net.fetch(`file://${filePath}`).then((res) => {
       const headers = new Headers(res.headers)
       headers.set('X-Content-Type-Options', 'nosniff')
