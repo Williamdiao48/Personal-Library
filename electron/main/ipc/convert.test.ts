@@ -17,6 +17,10 @@ vi.mock('epub-gen-memory', () => ({
   default: vi.fn().mockResolvedValue(Buffer.from('fake epub bytes')),
 }))
 
+// Tier 1 #3: inserting the derived EPUB schedules a debounced sync push.
+vi.mock('../cloud/sync/syncService', () => ({ notifyLocalMutation: vi.fn() }))
+import { notifyLocalMutation } from '../cloud/sync/syncService'
+
 let db: TestDb
 let userData: string
 let getPathSpy: ReturnType<typeof vi.spyOn>
@@ -145,5 +149,27 @@ describe('convert:pdfToEpub', () => {
       n: number
     }
     expect(count.n).toBe(1) // still just the pre-seeded row, not overwritten
+  })
+
+  describe('post-mutation sync trigger (Tier 1 #3)', () => {
+    const notify = vi.mocked(notifyLocalMutation)
+
+    it('a successful conversion schedules a sync push for the derived EPUB', async () => {
+      const id = seedItem(db, { content_type: 'pdf', title: 'B' })
+      notify.mockClear()
+      await invoke('convert:pdfToEpub', {
+        itemId: id,
+        chapters: [{ title: 'Ch 1', content: '<p>hi</p>' }],
+      })
+      expect(notify).toHaveBeenCalledTimes(1)
+    })
+
+    it('a failed conversion (item not found) does NOT schedule a push', async () => {
+      notify.mockClear()
+      await expect(
+        invoke('convert:pdfToEpub', { itemId: 'missing', chapters: [] }),
+      ).rejects.toThrow()
+      expect(notify).not.toHaveBeenCalled()
+    })
   })
 })

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { invoke, resetIpc } from '../../../test/stubs/electron'
 import {
   openTestDb,
@@ -7,7 +7,10 @@ import {
   seedCollection,
   type TestDb,
 } from '../../../test/db/harness'
+// Tier 1 #3: mutating handlers schedule a debounced sync push — mock the trigger.
+vi.mock('../cloud/sync/syncService', () => ({ notifyLocalMutation: vi.fn() }))
 import { registerCollectionHandlers } from './collections'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 import type { Item } from '../../../src/types'
 
 let db: TestDb
@@ -118,5 +121,21 @@ describe('collections IPC — membership & ordering', () => {
     ).toEqual({ n: 0 })
     expect(db.prepare('SELECT COUNT(*) n FROM collection_items').get()).toEqual({ n: 1 })
     expect(db.prepare('SELECT COUNT(*) n FROM items').get()).toEqual({ n: 1 }) // item survives
+  })
+})
+
+describe('post-mutation sync trigger (Tier 1 #3)', () => {
+  const notify = vi.mocked(notifyLocalMutation)
+
+  it('creating a collection schedules a sync push', async () => {
+    notify.mockClear()
+    await invoke('collections:create', 'Favorites')
+    expect(notify).toHaveBeenCalledTimes(1)
+  })
+
+  it('reading collections (getAll) does NOT schedule a push', async () => {
+    notify.mockClear()
+    await invoke('collections:getAll')
+    expect(notify).not.toHaveBeenCalled()
   })
 })

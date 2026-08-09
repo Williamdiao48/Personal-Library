@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { writeFileSync } from 'fs'
 import { all, get, run, getDb } from '../db'
 import { NAME_TOMB_SEP_SQL } from '../db/nameTombstone'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 import type {
   Annotation,
   AnnotationTheme,
@@ -145,6 +146,7 @@ export function registerAnnotationHandlers(): void {
       ],
     )
     const row = get<Annotation>('SELECT * FROM annotations WHERE id = ?', [id])
+    notifyLocalMutation()
     // A fresh annotation has no themes yet.
     return row ? { ...row, themes: [] } : row
   })
@@ -155,6 +157,7 @@ export function registerAnnotationHandlers(): void {
       Date.now(),
       id,
     ])
+    notifyLocalMutation()
   })
 
   ipcMain.handle('annotations:setColor', (_e, id: string, color: string | null) => {
@@ -163,6 +166,7 @@ export function registerAnnotationHandlers(): void {
       Date.now(),
       id,
     ])
+    notifyLocalMutation()
   })
 
   ipcMain.handle('annotations:setThemes', (_e, annotationId: string, themeIds: string[]) => {
@@ -181,6 +185,7 @@ export function registerAnnotationHandlers(): void {
         )
       }
     })()
+    notifyLocalMutation()
   })
 
   ipcMain.handle('annotations:delete', (_e, id: string) => {
@@ -197,6 +202,7 @@ export function registerAnnotationHandlers(): void {
         [now, now, id],
       )
     })()
+    notifyLocalMutation()
   })
 
   ipcMain.handle('annotations:swapSortOrder', (_e, id1: string, id2: string) => {
@@ -222,6 +228,7 @@ export function registerAnnotationHandlers(): void {
         id2,
       ])
     })()
+    notifyLocalMutation()
   })
 
   ipcMain.handle('annotations:exportQuotes', async (_e, rows: ExportQuoteRow[], format: string) => {
@@ -260,6 +267,7 @@ export function registerAnnotationHandlers(): void {
       Date.now(),
       Date.now(),
     ])
+    notifyLocalMutation()
     return get<AnnotationTheme>('SELECT * FROM annotation_themes WHERE id = ?', [id])
   })
 
@@ -269,6 +277,7 @@ export function registerAnnotationHandlers(): void {
       Date.now(),
       id,
     ])
+    notifyLocalMutation()
   })
 
   ipcMain.handle('annotationThemes:delete', (_e, id: string) => {
@@ -286,5 +295,6 @@ export function registerAnnotationHandlers(): void {
         [now, now, id],
       )
     })()
+    notifyLocalMutation()
   })
 }

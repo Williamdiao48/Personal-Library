@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { randomUUID } from 'crypto'
 import { run, get, all } from '../db'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 import type {
   StatsSummary,
   DailyReading,
@@ -33,6 +34,7 @@ export function registerStatsHandlers(): void {
        VALUES (?, ?, ?, ?, ?)`,
         [randomUUID(), itemId, startedAt, endedAt, duration],
       )
+      notifyLocalMutation() // reading_sessions is synced → push the new session
     },
   )
 

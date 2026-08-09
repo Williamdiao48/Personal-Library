@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { invoke, resetIpc } from '../../../test/stubs/electron'
 import {
   openTestDb,
@@ -7,7 +7,10 @@ import {
   seedSession,
   type TestDb,
 } from '../../../test/db/harness'
+// Tier 1 #3: mutating handlers schedule a debounced sync push — mock the trigger.
+vi.mock('../cloud/sync/syncService', () => ({ notifyLocalMutation: vi.fn() }))
 import { registerGoalsHandlers } from './goals'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 
 let db: TestDb
 
@@ -136,5 +139,21 @@ describe('goals IPC — upsertPeriodGoal', () => {
     const deleted = await invoke('goals:upsertPeriodGoal', 'time', 'weekly', 0)
     expect(deleted).toBeNull()
     expect(((await invoke('goals:getAll')) as any[]).length).toBe(0)
+  })
+})
+
+describe('post-mutation sync trigger (Tier 1 #3)', () => {
+  const notify = vi.mocked(notifyLocalMutation)
+
+  it('creating a goal schedules a sync push', async () => {
+    notify.mockClear()
+    await invoke('goals:create', { type: 'list', title: 'TBR' })
+    expect(notify).toHaveBeenCalledTimes(1)
+  })
+
+  it('reading goals (getAll) does NOT schedule a push', async () => {
+    notify.mockClear()
+    await invoke('goals:getAll')
+    expect(notify).not.toHaveBeenCalled()
   })
 })

@@ -23,8 +23,12 @@ vi.mock('../capture', () => ({
   getChapterCount: vi.fn(),
 }))
 vi.mock('../recommender/lifecycle', () => ({ triggerBackfill: vi.fn() }))
+// Tier 1 #3: mutating handlers schedule a debounced sync push. Mock the trigger so
+// we can assert it fires on writes (and stays silent on reads) without a real engine.
+vi.mock('../cloud/sync/syncService', () => ({ notifyLocalMutation: vi.fn() }))
 import { refreshContent, appendChapters, getChapterCount } from '../capture'
 import { triggerBackfill } from '../recommender/lifecycle'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 
 type Mock = ReturnType<typeof vi.fn>
 
@@ -624,5 +628,23 @@ describe('library IPC — refresh', () => {
     expect(result.changed).toBe(true)
     // range was passed through from the item's chapter bounds
     expect(mockRefreshContent).toHaveBeenCalledWith('https://x', undefined, { start: 1, end: 2 })
+  })
+})
+
+describe('post-mutation sync trigger (Tier 1 #3)', () => {
+  const notify = vi.mocked(notifyLocalMutation)
+
+  it('a mutating write (setRating) schedules a sync push', async () => {
+    seedItem(db, { id: 'r1', file_path: 'r1.html' })
+    notify.mockClear()
+    await invoke('library:setRating', 'r1', 4)
+    expect(notify).toHaveBeenCalledTimes(1)
+  })
+
+  it('a read-only query (getAll) does NOT schedule a push', async () => {
+    seedItem(db, { id: 'r2', file_path: 'r2.html' })
+    notify.mockClear()
+    await invoke('library:getAll')
+    expect(notify).not.toHaveBeenCalled()
   })
 })

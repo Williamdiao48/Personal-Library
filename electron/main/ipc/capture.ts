@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { captureUrl, captureFile, appendChapters } from '../capture'
 import { triggerBackfill } from '../recommender/lifecycle'
 import { enqueueItemBackup } from '../cloud/uploader'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 
 /**
  * True only for parseable http(s) URLs. `capture:start` is a trust boundary —
@@ -51,6 +52,9 @@ export function registerCaptureHandlers(): void {
           // Cloud opt-in (Phase 2): back the bytes up to R2 in the background.
           // Best-effort — never blocks capture completion or fails the job.
           if (cloudBackup === true) void enqueueItemBackup(result.id).catch(() => {})
+          // New item's metadata → push it (independent of the byte backup above, so
+          // a non-backed-up capture still syncs its row to the user's other devices).
+          notifyLocalMutation()
           if (!event.sender.isDestroyed()) {
             event.sender.send('capture:complete', { jobId, result })
           }
@@ -79,6 +83,7 @@ export function registerCaptureHandlers(): void {
       .then((result) => {
         // Appended chapters change the item's content — reconcile in background.
         triggerBackfill()
+        notifyLocalMutation() // content/word_count changed → push
         if (!event.sender.isDestroyed()) {
           event.sender.send('capture:complete', { jobId, result })
         }
@@ -108,6 +113,9 @@ export function registerCaptureHandlers(): void {
     triggerBackfill()
     // Cloud opt-in (Phase 2): back the bytes up to R2 in the background.
     if (cloudBackup === true) void enqueueItemBackup(result.id).catch(() => {})
+    // A genuinely new import → push its metadata; a byte-identical dup mints no new
+    // row, so skip the round in that case (nothing new is dirty).
+    if (!result.duplicate) notifyLocalMutation()
     return result
   })
 }

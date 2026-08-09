@@ -11,6 +11,7 @@ import { safeContentPath, safeUserDataPath } from '../security/paths'
 import type { Item, Tag, RefreshResult } from '../../../src/types'
 import { computeContentHash } from '../util/contentHash'
 import { triggerBackfill } from '../recommender/lifecycle'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 import {
   indexFtsText,
   readStoredFtsText,
@@ -63,11 +64,13 @@ export function registerLibraryHandlers(): void {
   ipcMain.handle('library:softDelete', (_e, id: string) => {
     // Trash = the syncing tombstone. dirty=1 so the deletion propagates on push.
     run('UPDATE items SET deleted_at = ?, dirty = 1 WHERE id = ?', [Date.now(), id])
+    notifyLocalMutation()
   })
 
   ipcMain.handle('library:restore', (_e, id: string) => {
     // Un-trash. dirty=1 so the resurrection propagates on push.
     run('UPDATE items SET deleted_at = NULL, dirty = 1 WHERE id = ?', [id])
+    notifyLocalMutation()
   })
 
   ipcMain.handle('library:getTrashed', () => {
@@ -109,6 +112,7 @@ export function registerLibraryHandlers(): void {
         unlinkSync(safeUserDataPath(item.cover_path))
       } catch {}
     }
+    notifyLocalMutation() // purge flips purged_at/dirty → propagate the reclaim
   })
 
   ipcMain.handle('library:emptyTrash', async () => {
@@ -138,6 +142,7 @@ export function registerLibraryHandlers(): void {
         } catch {}
       }
     }
+    if (rows.length) notifyLocalMutation() // only if something was actually purged
   })
 
   ipcMain.handle('library:updateProgress', (_e, id: string, position: number) => {
@@ -172,6 +177,7 @@ export function registerLibraryHandlers(): void {
     }
     const derived = all<{ id: string }>(`SELECT id FROM items WHERE derived_from = ?`, [id])
     for (const d of derived) upsertProgress(d.id)
+    notifyLocalMutation()
   })
 
   ipcMain.handle('library:saveScrollPos', (_e, id: string, chapter: number, scrollY: number) => {
@@ -194,6 +200,7 @@ export function registerLibraryHandlers(): void {
     `,
       [id, chapter, scrollY, Date.now(), Date.now()],
     )
+    notifyLocalMutation()
   })
 
   ipcMain.handle('library:search', (_e, query: string) => {
@@ -239,6 +246,7 @@ export function registerLibraryHandlers(): void {
       color,
       Date.now(),
     ])
+    notifyLocalMutation()
     return { id, name, color } as Tag
   })
 
@@ -258,6 +266,7 @@ export function registerLibraryHandlers(): void {
         [now, now, id],
       )
     })()
+    notifyLocalMutation()
   })
 
   ipcMain.handle('tags:getForItem', (_e, itemId: string) => {
@@ -287,10 +296,12 @@ export function registerLibraryHandlers(): void {
       tombstoneAll.run(now, now, itemId)
       for (const tagId of tagIds) upsertTag.run(itemId, tagId, now)
     })()
+    notifyLocalMutation()
   })
 
   ipcMain.handle('tags:rename', (_e, id: string, name: string) => {
     run('UPDATE tags SET name = ?, updated_at = ?, dirty = 1 WHERE id = ?', [name, Date.now(), id])
+    notifyLocalMutation()
   })
 
   ipcMain.handle('tags:setColor', (_e, id: string, color: string) => {
@@ -299,6 +310,7 @@ export function registerLibraryHandlers(): void {
       Date.now(),
       id,
     ])
+    notifyLocalMutation()
   })
 
   ipcMain.handle('tags:getItemCounts', () => {
@@ -354,6 +366,7 @@ export function registerLibraryHandlers(): void {
       )
     }
 
+    notifyLocalMutation()
     return coverPath
   })
 
@@ -367,6 +380,7 @@ export function registerLibraryHandlers(): void {
     `,
       [id, status, Date.now()],
     )
+    notifyLocalMutation()
   })
 
   ipcMain.handle('library:setAuthor', (_e, id: string, author: string | null) => {
@@ -375,6 +389,7 @@ export function registerLibraryHandlers(): void {
       Date.now(),
       id,
     ])
+    notifyLocalMutation()
   })
 
   ipcMain.handle('library:setTitle', (_e, id: string, title: string) => {
@@ -383,6 +398,7 @@ export function registerLibraryHandlers(): void {
       Date.now(),
       id,
     ])
+    notifyLocalMutation()
   })
 
   ipcMain.handle('library:setRating', (_e, id: string, rating: number | null) => {
@@ -391,6 +407,7 @@ export function registerLibraryHandlers(): void {
       Date.now(),
       id,
     ])
+    notifyLocalMutation()
   })
 
   ipcMain.handle('library:setReview', (_e, id: string, review: string | null) => {
@@ -399,6 +416,7 @@ export function registerLibraryHandlers(): void {
       Date.now(),
       id,
     ])
+    notifyLocalMutation()
   })
 
   ipcMain.handle('library:findBySourceUrl', (_e, url: string) => {
@@ -468,6 +486,7 @@ export function registerLibraryHandlers(): void {
         // New chapters exist — append only the delta.
         const result = await appendChapters(id, currentCount)
         triggerBackfill() // content changed → reconcile embedding (C2.6)
+        notifyLocalMutation() // word_count/content changed → push
         return { changed: true, wordCount: result.wordCount ?? 0 }
       }
       // getChapterCount returned null (unsupported parser) — fall through to
@@ -536,6 +555,7 @@ export function registerLibraryHandlers(): void {
     })()
 
     triggerBackfill() // content changed → reconcile embedding (C2.6)
+    notifyLocalMutation() // word_count/content changed → push
     return { changed: true, wordCount: newWordCount }
   })
 
@@ -571,6 +591,7 @@ export function registerLibraryHandlers(): void {
       Date.now(),
       id,
     )
+    notifyLocalMutation()
     return coverPath
   })
 }

@@ -16,11 +16,14 @@ vi.mock('../recommender/lifecycle', () => ({ triggerBackfill: vi.fn() }))
 // The Phase 2 cloud uploader (enqueued on opted-in capture) pulls in the DB +
 // Supabase client — stub it so this suite stays DB-free and we just assert wiring.
 vi.mock('../cloud/uploader', () => ({ enqueueItemBackup: vi.fn(() => Promise.resolve()) }))
+// Tier 1 #3: a new/updated item schedules a debounced sync push — mock the trigger.
+vi.mock('../cloud/sync/syncService', () => ({ notifyLocalMutation: vi.fn() }))
 
 import { registerCaptureHandlers, isHttpUrl } from './capture'
 import { captureUrl, captureFile, appendChapters } from '../capture'
 import { triggerBackfill } from '../recommender/lifecycle'
 import { enqueueItemBackup } from '../cloud/uploader'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 
 type Mock = ReturnType<typeof vi.fn>
 /** Let the handler's fire-and-forget .then/.catch microtasks settle. */
@@ -181,5 +184,31 @@ describe('capture:fromFile', () => {
 
     expect(await invoke('capture:fromFile')).toBeNull()
     expect(captureFile).not.toHaveBeenCalled()
+  })
+})
+
+describe('post-mutation sync trigger (Tier 1 #3)', () => {
+  const notify = vi.mocked(notifyLocalMutation)
+
+  it('a successful capture schedules a sync push for the new item', async () => {
+    await invoke('capture:start', 'https://example.com/story')
+    await flush() // let the fire-and-forget .then run
+    expect(notify).toHaveBeenCalledTimes(1)
+  })
+
+  it('a rejected (non-http) capture does NOT schedule a push', async () => {
+    await invoke('capture:start', 'file:///etc/passwd')
+    await flush()
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('a byte-identical duplicate import mints no row → no push', async () => {
+    ;(captureFile as Mock).mockResolvedValueOnce({ id: 'item-1', duplicate: true })
+    vi.spyOn(dialog, 'showOpenDialog').mockResolvedValue({
+      canceled: false,
+      filePaths: ['/x.epub'],
+    })
+    await invoke('capture:fromFile')
+    expect(notify).not.toHaveBeenCalled()
   })
 })
