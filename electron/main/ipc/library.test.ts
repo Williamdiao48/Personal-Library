@@ -112,6 +112,24 @@ describe('library IPC — read & trash lifecycle', () => {
     expect(((await invoke('library:getTrashed')) as Item[]).length).toBe(0)
   })
 
+  it('restore fully revives a row — clears purged_at, not just deleted_at', async () => {
+    // Guards the restore-vs-purge cross-device race: a row that lost to a purge
+    // (deleted_at + purged_at both set) must come back live AND visible in Trash-free
+    // views, not stay hidden by a lingering purged_at.
+    seedItem(db, { id: 'r', deleted_at: 1 })
+    db.prepare('UPDATE items SET purged_at = 2 WHERE id = ?').run('r')
+
+    await invoke('library:restore', 'r')
+
+    const row = db.prepare('SELECT deleted_at, purged_at FROM items WHERE id = ?').get('r') as {
+      deleted_at: number | null
+      purged_at: number | null
+    }
+    expect(row.deleted_at).toBeNull()
+    expect(row.purged_at).toBeNull()
+    expect(((await invoke('library:getAll')) as Item[]).map((i) => i.id)).toEqual(['r'])
+  })
+
   it('permanentlyDelete keeps a syncing tombstone (purged_at) but hides the item', async () => {
     // Under sync the row can't be physically removed (the deletion must propagate);
     // purged_at marks the bytes reclaimed so it stays out of Trash and every view.

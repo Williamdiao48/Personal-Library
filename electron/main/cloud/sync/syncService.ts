@@ -20,6 +20,7 @@ import { getSupabase, isConfigured } from '../../auth/client'
 import { createSupabaseCloudRepo, type CloudRepo } from './cloudRepo'
 import { runSyncRound, type SyncReport } from './syncEngine'
 import { startRealtime, stopRealtime } from './realtime'
+import { scheduleReap } from '../reaper'
 
 /** The renderer-facing snapshot of where sync stands right now. */
 export interface SyncStatus {
@@ -149,6 +150,10 @@ async function runRound(): Promise<SyncStatus> {
         if (report.ok) {
           lastSyncedAt = Date.now()
           lastError = null
+          // A round just push+pulled, so the local items table mirrors Postgres —
+          // the one moment "is this blob still referenced?" is authoritative. Reap
+          // R2 orphans in the background (best-effort; never blocks the round).
+          scheduleReap()
         } else {
           lastError = report.error ?? 'Sync failed'
         }

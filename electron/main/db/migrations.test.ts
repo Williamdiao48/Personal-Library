@@ -556,6 +556,50 @@ describe('database bring-up', () => {
     db.close()
   })
 
+  // Migration 41 — purged_at becomes a synced column (permanent-delete now cascades
+  // so the shared R2 blob can be reaped). Re-dirty items purged BEFORE the change so
+  // their purged_at finally propagates. Build at v40 the way a real install reaches
+  // it, then confirm bring-up re-dirties only purged rows.
+  const buildAtV40 = (): Database.Database => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(SCHEMA)
+    for (let v = 2; v <= 40; v++) {
+      if (MIGRATIONS[v]) db.exec(MIGRATIONS[v])
+    }
+    db.pragma('user_version = 40')
+    return db
+  }
+
+  it('re-dirties already-purged items but not live/trashed ones (migration 41)', () => {
+    const db = buildAtV40()
+    const insert = db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified, deleted_at, purged_at)
+       VALUES (?, 'T', NULL, NULL, 'article', ?, 1, NULL, NULL, 0, 0, ?, ?)`,
+    )
+    insert.run('purged', 'purged.html', 100, 200) // permanently deleted (tombstone)
+    insert.run('trashed', 'trashed.html', 100, null) // in Trash, restorable
+    insert.run('live', 'live.html', null, null) // ordinary live item
+    // All already pushed their metadata (the sync engine clears dirty on push).
+    db.prepare(`UPDATE items SET dirty = 0`).run()
+
+    bringUpSchema(db) // runs migration 41
+    expect(db.pragma('user_version', { simple: true })).toBe(CURRENT_VERSION)
+
+    // The purged row is re-dirtied so its purged_at finally cascades to other devices…
+    expect(db.prepare(`SELECT dirty FROM items WHERE id = 'purged'`).get()).toMatchObject({
+      dirty: 1,
+    })
+    // …while a trashed-but-restorable and a live row are left alone (no needless re-push).
+    expect(db.prepare(`SELECT dirty FROM items WHERE id = 'trashed'`).get()).toMatchObject({
+      dirty: 0,
+    })
+    expect(db.prepare(`SELECT dirty FROM items WHERE id = 'live'`).get()).toMatchObject({
+      dirty: 0,
+    })
+    db.close()
+  })
+
   it('applies migrations incrementally from an empty (pre-schema) database', () => {
     // A DB at user_version 0 with NO tables must migrate cleanly to head — this is
     // the path a brand-new install actually takes.

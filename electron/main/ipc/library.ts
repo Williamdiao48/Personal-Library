@@ -68,8 +68,10 @@ export function registerLibraryHandlers(): void {
   })
 
   ipcMain.handle('library:restore', (_e, id: string) => {
-    // Un-trash. dirty=1 so the resurrection propagates on push.
-    run('UPDATE items SET deleted_at = NULL, dirty = 1 WHERE id = ?', [id])
+    // Un-trash. Clear purged_at too so a restore FULLY revives the row — otherwise a
+    // row that lost a restore-vs-purge race across devices could come back live yet
+    // stay hidden from Trash (purged_at set). dirty=1 so the resurrection propagates.
+    run('UPDATE items SET deleted_at = NULL, purged_at = NULL, dirty = 1 WHERE id = ?', [id])
     notifyLocalMutation()
   })
 

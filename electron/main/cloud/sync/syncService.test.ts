@@ -3,6 +3,12 @@ import { openTestDb, closeTestDb } from '../../../../test/db/harness'
 import type { CloudRepo } from './cloudRepo'
 import type { SyncRow } from './specs'
 import { keyOf } from './reconcile'
+
+// The R2 orphan reaper is fired (fire-and-forget) at the end of a successful round.
+// Mock it so we can assert the trigger without touching R2 or the reaper's own logic.
+const reap = vi.hoisted(() => ({ scheduleReap: vi.fn() }))
+vi.mock('../reaper', () => ({ scheduleReap: reap.scheduleReap }))
+
 import {
   getStatus,
   setEnabled,
@@ -67,6 +73,7 @@ let db: ReturnType<typeof openTestDb>
 
 beforeEach(() => {
   __resetForTest()
+  reap.scheduleReap.mockClear()
   db = openTestDb()
 })
 
@@ -294,6 +301,43 @@ describe('flushNow (durable push)', () => {
     expect(status.enabled).toBe(false)
     expect(server.pushed()).toBe(0)
     expect(db.prepare('SELECT dirty FROM items WHERE id = ?').get('i1')).toMatchObject({ dirty: 1 })
+  })
+})
+
+describe('orphan reaper trigger', () => {
+  it('schedules a reap after a successful round (items table is now fresh)', async () => {
+    const server = makeFakeServer()
+    __setRepoFactoryForTest(async () => server.repo)
+    setEnabled(true)
+    seedDirtyItem(db, 'i1')
+
+    await syncNow()
+
+    expect(reap.scheduleReap).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT reap after a failed round (stale reference set)', async () => {
+    __setRepoFactoryForTest(async () => ({
+      push: async () => {
+        throw new Error('PostgREST down')
+      },
+      pull: async () => [],
+    }))
+    setEnabled(true)
+    seedDirtyItem(db, 'i1')
+
+    await syncNow()
+
+    expect(reap.scheduleReap).not.toHaveBeenCalled()
+  })
+
+  it('does NOT reap when signed out (no round ran)', async () => {
+    __setRepoFactoryForTest(async () => null)
+    setEnabled(true)
+
+    await syncNow()
+
+    expect(reap.scheduleReap).not.toHaveBeenCalled()
   })
 })
 
