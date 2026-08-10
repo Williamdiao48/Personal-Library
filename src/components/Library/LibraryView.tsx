@@ -953,13 +953,14 @@ export default function LibraryView() {
                           onBackupToCloud={
                             cloudEligible
                               ? async () => {
-                                  const title = editableItem.title
-                                  const toastId = addToast(`Backing up "${title}"…`, 'info')
+                                  // No toast here: progress + completion + failure all
+                                  // surface globally via the backup-status pill (and the
+                                  // dropdown's own inline "Backing up…/✓" state), so a
+                                  // toast would be a third redundant surface. We still
+                                  // reflect the REAL outcome onto the card's cloud_state
+                                  // so it shows the truth (incl. a Retry on failure).
                                   try {
                                     const res = await cloudService.backupItem(editableItem.id)
-                                    // Reflect the REAL outcome: cloud_backup stays set
-                                    // (intent), cloud_state carries synced/error so the
-                                    // card shows the truth (incl. a Retry on failure).
                                     setItems((prev) =>
                                       prev.map((i) =>
                                         i.id === editableItem.id
@@ -971,21 +972,14 @@ export default function LibraryView() {
                                           : i,
                                       ),
                                     )
-                                    if (res.ok) {
-                                      updateToast(
-                                        toastId,
-                                        `"${title}" backed up to cloud`,
-                                        'success',
-                                      )
-                                    } else {
-                                      updateToast(
-                                        toastId,
-                                        res.error ?? `Couldn't back up "${title}"`,
-                                        'error',
-                                      )
-                                    }
                                   } catch {
-                                    updateToast(toastId, `Couldn't back up "${title}"`, 'error')
+                                    setItems((prev) =>
+                                      prev.map((i) =>
+                                        i.id === editableItem.id
+                                          ? { ...i, cloud_backup: 1, cloud_state: 'error' }
+                                          : i,
+                                      ),
+                                    )
                                   }
                                 }
                               : undefined
