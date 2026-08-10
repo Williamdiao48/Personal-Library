@@ -11,7 +11,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 41
+export const CURRENT_VERSION = 42
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -498,6 +498,18 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   41: `
     UPDATE items SET dirty = 1
     WHERE purged_at IS NOT NULL;
+  `,
+  // Cloud hardening — device-local guard for the on-disk-file reaper. A cross-device
+  // permanent-delete propagates purged_at to peers (Tier 1 #4), but the sync-apply
+  // layer is DB-only, so a peer's local content/cover files are never unlinked and
+  // leak on disk. reapPurgedLocalFiles() sweeps purged rows and unlinks their files;
+  // this flag bounds that sweep to one pass per row (set once the bytes are gone).
+  // DEVICE-LOCAL: never in the sync spec, never pushed. Deliberately NOT in the
+  // schema.ts baseline (a fresh install would crash on the duplicate column — the
+  // v0.5.1 gotcha). Defaults 0, so the first post-migration sweep also HEALS files
+  // already stranded by a pre-feature cross-device purge.
+  42: `
+    ALTER TABLE items ADD COLUMN files_reclaimed INTEGER NOT NULL DEFAULT 0;
   `,
 }
 

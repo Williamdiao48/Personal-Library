@@ -19,6 +19,7 @@ import TagsView from './components/Library/TagsView'
 import AuthorsView from './components/Library/AuthorsView'
 import DiscoverView from './components/Discover/DiscoverView'
 import AnnotationsView from './components/Annotations/AnnotationsView'
+import SyncStatusPill from './components/SyncStatusPill'
 import ErrorBoundary from './components/ErrorBoundary'
 
 /** Subscribes to auto-updater events and surfaces them as Toast notifications.
@@ -139,6 +140,7 @@ export default function App() {
                   <Route path="/discover" element={<DiscoverView />} />
                   <Route path="/annotations" element={<AnnotationsView />} />
                 </Routes>
+                <SyncStatusPill />
               </CaptureJobsProvider>
             </AuthProvider>
           </ToastProvider>

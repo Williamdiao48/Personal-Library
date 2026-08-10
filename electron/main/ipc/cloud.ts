@@ -59,4 +59,19 @@ export function registerCloudHandlers(): void {
     if (state === 'error') return { ok: false, state, error: row?.error ?? 'Upload failed.' }
     return { ok: true, state: state ?? 'pending' }
   })
+
+  // Authoritative backup tally for the status pill. blobState broadcasts nudge the
+  // renderer to refetch this, so a dropped event self-corrects on the next one.
+  ipcMain.handle('cloud:getBackupCounts', (): { pending: number; error: number } => {
+    const rows = getDb()
+      .prepare(`SELECT state, COUNT(*) AS n FROM blob_sync GROUP BY state`)
+      .all() as { state: string; n: number }[]
+    let pending = 0
+    let error = 0
+    for (const r of rows) {
+      if (r.state === 'pending') pending = r.n
+      else if (r.state === 'error') error = r.n
+    }
+    return { pending, error }
+  })
 }

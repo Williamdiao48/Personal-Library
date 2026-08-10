@@ -263,10 +263,13 @@ contextBridge.exposeInMainWorld('api', {
   // backup — flips its gate and enqueues its blobs for the uploader to drain.
   cloud: {
     backupItem: (id: string) => ipcRenderer.invoke('cloud:backupItem', id),
-    onBlobState: (callback: (ev: { hash: string; state: 'synced' | 'error' }) => void) => {
+    getBackupCounts: () => ipcRenderer.invoke('cloud:getBackupCounts'),
+    onBlobState: (
+      callback: (ev: { hash: string; state: 'pending' | 'synced' | 'error' }) => void,
+    ) => {
       const handler = (
         _e: Electron.IpcRendererEvent,
-        ev: { hash: string; state: 'synced' | 'error' },
+        ev: { hash: string; state: 'pending' | 'synced' | 'error' },
       ) => callback(ev)
       ipcRenderer.on('cloud:blobState', handler)
       return () => ipcRenderer.removeListener('cloud:blobState', handler)
