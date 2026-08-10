@@ -13,4 +13,11 @@ describe('SYNC_SPECS', () => {
   it('keeps items as whole-row LWW (file_hash rides the same conflict class)', () => {
     expect(SYNC_SPEC_BY_TABLE.items.mode).toBe('lww')
   })
+
+  it('syncs items.purged_at so permanent-delete cascades (peers hide it + the blob is reapable)', () => {
+    // If purged_at didn't sync, a permanent-delete on one device would leave the
+    // item lingering in every other device's Trash and the shared R2 blob could
+    // never be safely reaped (no cross-device signal that the bytes are unwanted).
+    expect(SYNC_SPEC_BY_TABLE.items.columns).toContain('purged_at')
+  })
 })

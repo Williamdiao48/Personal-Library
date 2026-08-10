@@ -5,8 +5,13 @@
 // (reconcile.ts) and the cloudRepo/orchestrator (Chunk 4). Column names are the
 // LOCAL SQLite names, which are 1:1 with the Postgres mirror (server/supabase
 // migrations) MINUS `user_id` (cloudRepo adds it on push, strips it on pull) and
-// MINUS device-local columns (file_path, cover_path, cloud_backup, purged_at,
-// dirty — never synced).
+// MINUS device-local columns (file_path, cover_path, cloud_backup, dirty — never
+// synced).
+//
+// purged_at IS synced (Tier 1 #4): permanent-delete cascades globally so the
+// shared R2 blob can be reaped once no un-purged item references it — and so a
+// peer hides a permanently-deleted item from its Trash (its Trash query already
+// filters purged_at IS NULL).
 //
 // Order matters: parents precede children so a pull applies FKs top-down (items
 // before its children; tags before item_tags; collections before collection_items;
@@ -82,6 +87,11 @@ export const SYNC_SPECS: SyncSpec[] = [
       'file_hash',
       'updated_at',
       'deleted_at',
+      // Synced so permanent-delete cascades: a purge on one device propagates and
+      // (a) hides the item from every device's Trash (getTrashed filters
+      // purged_at IS NULL) and (b) lets the reaper reclaim the shared R2 blob once
+      // no un-purged item references it. Written at purge time on a tombstone row.
+      'purged_at',
     ],
     mode: LWW,
   },

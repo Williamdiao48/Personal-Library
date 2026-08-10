@@ -1,0 +1,21 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 0005 · items.purged_at — sync the permanent-delete signal (Cloud Tier 1 #4).
+--
+-- Local: items.purged_at (migration 37) is set at permanent-delete time on a
+-- tombstone row (deleted_at already set) to mark "bytes reclaimed, keep as a pure
+-- tombstone" so the Trash view excludes it. It was device-local — never synced.
+--
+-- Syncing it makes permanent-delete CASCADE: a purge on one device propagates so
+--   (a) every other device hides the item from Trash (getTrashed filters
+--       purged_at IS NULL), and
+--   (b) the R2 orphan reaper can reclaim the shared content/cover blob once NO
+--       un-purged item references it (electron/main/cloud/reaper.ts).
+-- Trash (deleted_at) stays reversible + byte-preserving; only purge frees bytes.
+--
+-- Nullable (the common case — a live or merely-trashed item has purged_at NULL).
+-- RLS + the set_updated_at trigger already cover `items` generically (0001).
+-- Additive-first: apply this to prod BEFORE shipping a client that pushes the
+-- column, or PostgREST rejects the write. Mirrors the 0003/0004 add-column pattern.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+alter table items add column if not exists purged_at bigint;

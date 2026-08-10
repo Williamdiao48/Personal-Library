@@ -11,7 +11,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 40
+export const CURRENT_VERSION = 41
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -486,6 +486,18 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   40: `
     UPDATE items SET dirty = 1
     WHERE deleted_at IS NULL AND (blob_hash IS NOT NULL OR cover_hash IS NOT NULL);
+  `,
+  // Cloud Tier 1 #4 — purged_at becomes a SYNCED column (permanent-delete now
+  // cascades globally so the shared R2 blob can be reaped when no un-purged item
+  // references it). purged_at was written at purge time but never synced, so items
+  // permanently deleted BEFORE this change have it set locally yet NULL on the
+  // server + other devices. Re-dirty them so the purge finally propagates (another
+  // device then hides it from Trash and the reaper can reclaim the bytes). Third
+  // instance of "a synced column written by a later step must re-dirty its row"
+  // (blob_hash was the 2nd, migration 40). DATA-ONLY (no DDL).
+  41: `
+    UPDATE items SET dirty = 1
+    WHERE purged_at IS NOT NULL;
   `,
 }
 
