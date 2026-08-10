@@ -545,9 +545,14 @@ export interface Api {
     backupItem: (
       id: string,
     ) => Promise<{ ok: boolean; state?: 'pending' | 'synced' | 'error'; error?: string }>
-    /** Subscribe to blob sync-state changes (content_hash → synced/error) so cards
-     *  update live for the fire-and-forget capture path; returns unsubscribe. */
-    onBlobState: (callback: (ev: { hash: string; state: 'synced' | 'error' }) => void) => () => void
+    /** Authoritative count of in-flight / failed blob backups, for the status pill. */
+    getBackupCounts: () => Promise<{ pending: number; error: number }>
+    /** Subscribe to blob sync-state changes (content_hash → pending/synced/error) so
+     *  cards + the status pill update live for the fire-and-forget capture path and
+     *  background drains; returns unsubscribe. */
+    onBlobState: (
+      callback: (ev: { hash: string; state: 'pending' | 'synced' | 'error' }) => void,
+    ) => () => void
   }
   sync: {
     /** Mirror the sync master switch to main (arms/disarms the poll). Returns the

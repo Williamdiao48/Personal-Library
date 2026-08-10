@@ -45,6 +45,31 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('blobState broadcast on enqueue', () => {
+  it('emits a pending blobState when a backup is newly queued (drives the status pill)', async () => {
+    const sent: Array<{ channel: string; payload: unknown }> = []
+    const winSpy = vi.spyOn(BrowserWindow, 'getAllWindows').mockReturnValue([
+      {
+        webContents: {
+          send: (channel: string, payload: unknown) => sent.push({ channel, payload }),
+        },
+      },
+    ] as unknown as BrowserWindow[])
+    try {
+      const id = seedItem(db, { file_path: 'a.epub' })
+      await enqueueItemBackup(id)
+      // The insert broadcasts pending up front (before the drain flips it to synced),
+      // so the pill can show "Backing up…" without awaiting the upload.
+      expect(sent).toContainEqual({
+        channel: 'cloud:blobState',
+        payload: { hash: 'contenthash', state: 'pending' },
+      })
+    } finally {
+      winSpy.mockRestore()
+    }
+  })
+})
+
 describe('enqueueItemBackup', () => {
   it('records blob_hash on the item, enqueues, and uploads the content blob', async () => {
     const id = seedItem(db, { file_path: 'a.epub' })
@@ -157,7 +182,7 @@ describe('drainOutbox', () => {
     expect(row?.error).toMatch(/403/)
   })
 
-  it('errors when the source item is gone by drain time (nothing to upload)', async () => {
+  it('DROPS the dead row when the source item is gone by drain time (no false permanent failure)', async () => {
     const id = seedItem(db, { file_path: 'a.epub' })
     // Enqueue while signed out so the row stays pending and no upload happens…
     h.getSession.mockResolvedValue({ data: { session: null } } as never)
@@ -167,10 +192,20 @@ describe('drainOutbox', () => {
     h.getSession.mockResolvedValue({ data: { session: { access_token: 't' } } })
     await drainOutbox()
 
-    const row = blobRow('contenthash')
-    expect(row?.state).toBe('error')
-    expect(row?.error).toMatch(/no local source/)
+    // The row is DROPPED, not parked in 'error' forever — otherwise it would re-fail
+    // every drain and (via getBackupCounts) falsely read as "Backup failed" with no
+    // card to retry from. Nothing was uploaded.
+    expect(blobRow('contenthash')).toBeUndefined()
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('does NOT drop a genuine upload failure — the source still exists, so it stays retriable', async () => {
+    const id = seedItem(db, { file_path: 'a.epub' })
+    fetchMock.mockResolvedValue({ ok: false, status: 500 } as unknown as Response)
+    await enqueueItemBackup(id)
+
+    // Real R2 failure with the item still present → kept as 'error' (card shows Retry).
+    expect(blobRow('contenthash')).toMatchObject({ state: 'error' })
   })
 
   it('retries a pending row on a subsequent drain', async () => {

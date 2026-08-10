@@ -30,7 +30,7 @@ interface BlobSyncRow {
  *  DOES revive an 'error' row back to 'pending' so a re-enqueue (e.g. a manual
  *  Retry) uploads immediately instead of waiting out the retry backoff. */
 function enqueueBlob(hash: string, kind: BlobKind): void {
-  getDb()
+  const info = getDb()
     .prepare(
       `INSERT INTO blob_sync (content_hash, kind, state, updated_at)
        VALUES (?, ?, 'pending', ?)
@@ -38,12 +38,17 @@ function enqueueBlob(hash: string, kind: BlobKind): void {
          WHERE blob_sync.state = 'error'`,
     )
     .run(hash, kind, Date.now())
+  // A fresh insert or an error→pending revive actually queued a backup — tell the
+  // renderer so the status pill shows "Backing up…" immediately. changes === 0 means
+  // the row was already pending/synced (nothing new), so stay quiet.
+  if (info.changes > 0) broadcastBlobState(hash, 'pending')
 }
 
 /** Notify the renderer a blob's sync state changed so cards driven by
  *  `blob_sync.state` (via items.blob_hash) update live — covers the fire-and-forget
- *  capture path and background drains, which don't await an IPC round-trip. */
-function broadcastBlobState(hash: string, state: 'synced' | 'error'): void {
+ *  capture path and background drains, which don't await an IPC round-trip. The
+ *  status pill also listens, refetching the authoritative counts on each event. */
+function broadcastBlobState(hash: string, state: 'pending' | 'synced' | 'error'): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('cloud:blobState', { hash, state })
   }
@@ -107,10 +112,15 @@ function resolveBlobBytes(hash: string, kind: BlobKind): Buffer | null {
   return kind === 'content' ? buildContentBlob(item).data : (buildCoverBlob(item)?.data ?? null)
 }
 
+/** The blob's source item is gone (permanently deleted) — there's nothing to upload
+ *  and no card to retry from, so the drain drops the dead ledger row rather than
+ *  parking it in 'error' forever (which would falsely read as "backup failed"). */
+class NoSourceError extends Error {}
+
 async function uploadBlob(hash: string, kind: BlobKind): Promise<void> {
   const data = resolveBlobBytes(hash, kind)
   // The source item was deleted before we drained — nothing to upload.
-  if (!data) throw new Error(`no local source for ${kind} blob ${hash.slice(0, 12)}`)
+  if (!data) throw new NoSourceError(`no local source for ${kind} blob ${hash.slice(0, 12)}`)
   const url = await presignBlobUrl('put', kind, hash, data.length)
   const res = await fetch(url, { method: 'PUT', body: data })
   if (!res.ok) {
@@ -155,7 +165,14 @@ export async function drainOutbox(): Promise<void> {
         await uploadBlob(row.content_hash, row.kind)
         markState(row.content_hash, 'synced')
       } catch (err) {
-        markState(row.content_hash, 'error', err instanceof Error ? err.message : String(err))
+        if (err instanceof NoSourceError) {
+          // Dead row — the item it came from was permanently deleted. Drop it so it
+          // stops re-failing every drain and no longer counts as a failed backup.
+          getDb().prepare(`DELETE FROM blob_sync WHERE content_hash = ?`).run(row.content_hash)
+          broadcastBlobState(row.content_hash, 'synced') // nudge the pill to refetch (no live card matches this orphan hash)
+        } else {
+          markState(row.content_hash, 'error', err instanceof Error ? err.message : String(err))
+        }
       }
     }
   } finally {

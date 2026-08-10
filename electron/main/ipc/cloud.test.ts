@@ -108,3 +108,25 @@ describe('cloud:backupItem', () => {
     expect(h.flushNow).not.toHaveBeenCalled()
   })
 })
+
+describe('cloud:getBackupCounts', () => {
+  const setLedger = (hash: string, state: 'pending' | 'synced' | 'error') =>
+    db
+      .prepare(
+        `INSERT INTO blob_sync (content_hash, kind, state, updated_at) VALUES (?, 'content', ?, 0)`,
+      )
+      .run(hash, state)
+
+  it('tallies pending + error blob_sync rows (ignores synced)', async () => {
+    setLedger('a', 'pending')
+    setLedger('b', 'pending')
+    setLedger('c', 'error')
+    setLedger('d', 'synced')
+
+    expect(await invoke('cloud:getBackupCounts')).toEqual({ pending: 2, error: 1 })
+  })
+
+  it('returns zeros for an empty ledger', async () => {
+    expect(await invoke('cloud:getBackupCounts')).toEqual({ pending: 0, error: 0 })
+  })
+})

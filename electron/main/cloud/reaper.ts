@@ -1,6 +1,8 @@
+import { unlinkSync } from 'fs'
 import { getDb } from '../db'
 import { getSupabase, isConfigured } from '../auth/client'
 import { presignBlobUrl, type BlobKind } from './presign'
+import { safeContentPath, safeUserDataPath } from '../security/paths'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // R2 orphan reaper (Cloud Tier 1 #4). Permanent-delete cascades globally (purged_at
@@ -29,6 +31,7 @@ const REAP_TIMEOUT_MS = 30_000
 
 // Guards against overlapping sweeps (e.g. two rounds finishing close together).
 let reaping = false
+let reapingLocal = false
 
 // The last sweep promise, so tests can await the fire-and-forget cleanup deterministically.
 let lastSweep: Promise<void> = Promise.resolve()
@@ -36,6 +39,12 @@ let lastSweep: Promise<void> = Promise.resolve()
 interface SyncedBlobRow {
   content_hash: string
   kind: BlobKind
+}
+
+interface PurgedFileRow {
+  id: string
+  file_path: string | null
+  cover_path: string | null
 }
 
 /** Delete R2 blobs no un-purged item references, and drop their ledger rows. No-ops
@@ -86,9 +95,73 @@ export async function reapOrphanBlobs(): Promise<void> {
   }
 }
 
-/** Fire-and-forget the sweep, recording the promise so tests can await it. */
+// ─────────────────────────────────────────────────────────────────────────────
+// Local-file reaper. A cross-device permanent-delete propagates `purged_at` to
+// peers, but the sync-apply layer is DB-only — so a peer's on-disk content/cover
+// files are never unlinked and leak on disk (the row is hidden from both Library
+// and Trash, so the user can't reach it to clean up). This sweep reclaims them.
+//
+// The purging device already unlinks inline at purge time; its rows still pass
+// through here once (the files are gone → treated as reclaimed). The NEW work is
+// on devices that RECEIVED a purge via pull. `files_reclaimed` (device-local,
+// migration 42) bounds the sweep to one pass per row — purged tombstones live
+// forever, so an unguarded sweep would re-stat every already-gone file each round.
+//
+// Pure local: no session/config gate. The only new work exists after a pull, which
+// only happens with sync on, so it hangs off the same post-successful-round hook.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Unlink the local files of permanently-deleted items and mark them reclaimed.
+ *  Idempotent + retry-safe: a row is marked reclaimed only once its bytes are
+ *  actually gone (delete succeeded or the file was already absent); any other
+ *  error (e.g. the file is open in the reader on Windows) leaves it for the next
+ *  sweep. Never throws. `file_path`/`cover_path` are per-item (id-derived, no local
+ *  sharing after import-dedup), so unlinking one can't strand another item's bytes. */
+export async function reapPurgedLocalFiles(): Promise<void> {
+  if (reapingLocal) return
+  reapingLocal = true
+  try {
+    const db = getDb()
+    const rows = db
+      .prepare(
+        `SELECT id, file_path, cover_path FROM items
+         WHERE purged_at IS NOT NULL AND files_reclaimed = 0`,
+      )
+      .all() as PurgedFileRow[]
+
+    for (const { id, file_path, cover_path } of rows) {
+      const contentGone = tryUnlink(file_path && safeContentPath(file_path))
+      const coverGone = tryUnlink(cover_path && safeUserDataPath(cover_path))
+      // Only settle the row when BOTH files are gone; a transient failure on either
+      // leaves files_reclaimed=0 so the next sweep retries (a re-unlink of the
+      // already-removed sibling just no-ops via ENOENT).
+      if (contentGone && coverGone) {
+        db.prepare(`UPDATE items SET files_reclaimed = 1 WHERE id = ?`).run(id)
+      }
+    }
+  } finally {
+    reapingLocal = false
+  }
+}
+
+/** Delete a file, treating "already gone" (ENOENT) as success. Returns false only
+ *  on a real failure (permission, busy) so the caller can retry. A null/empty path
+ *  means "nothing to delete" → gone. */
+function tryUnlink(absPath: string | null | false): boolean {
+  if (!absPath) return true
+  try {
+    unlinkSync(absPath)
+    return true
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return true
+    return false // real error (EPERM/EBUSY/…) → leave unreclaimed, retry next sweep
+  }
+}
+
+/** Fire-and-forget both post-round sweeps (R2 orphans + local purged files),
+ *  recording the combined promise so tests can await it deterministically. */
 export function scheduleReap(): void {
-  lastSweep = reapOrphanBlobs()
+  lastSweep = Promise.all([reapOrphanBlobs(), reapPurgedLocalFiles()]).then(() => {})
 }
 
 /** Test-only: await the last fire-and-forget sweep (deterministic assertions). */
@@ -96,8 +169,9 @@ export function __whenReapedForTest(): Promise<void> {
   return lastSweep
 }
 
-/** Test-only: clear the single-flight guard between tests. */
+/** Test-only: clear the single-flight guards between tests. */
 export function __resetForTest(): void {
   reaping = false
+  reapingLocal = false
   lastSweep = Promise.resolve()
 }

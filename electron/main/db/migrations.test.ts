@@ -600,6 +600,31 @@ describe('database bring-up', () => {
     db.close()
   })
 
+  // Migration 42 — device-local `files_reclaimed` guard for the local-file reaper.
+  // A row created before the column existed must gain it, defaulted 0, so the first
+  // sweep can reclaim (or heal) its on-disk files.
+  it('adds files_reclaimed (default 0) to existing items (migration 42)', () => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(SCHEMA)
+    for (let v = 2; v <= 41; v++) {
+      if (MIGRATIONS[v]) db.exec(MIGRATIONS[v])
+    }
+    db.pragma('user_version = 41')
+    db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified, purged_at)
+       VALUES ('p', 'T', NULL, NULL, 'article', 'p.html', 1, NULL, NULL, 0, 0, 200)`,
+    ).run()
+
+    bringUpSchema(db) // runs migration 42
+    expect(db.pragma('user_version', { simple: true })).toBe(CURRENT_VERSION)
+
+    expect(db.prepare(`SELECT files_reclaimed FROM items WHERE id = 'p'`).get()).toMatchObject({
+      files_reclaimed: 0,
+    })
+    db.close()
+  })
+
   it('applies migrations incrementally from an empty (pre-schema) database', () => {
     // A DB at user_version 0 with NO tables must migrate cleanly to head — this is
     // the path a brand-new install actually takes.

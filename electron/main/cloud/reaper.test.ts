@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { app } from '../../../test/stubs/electron'
 import { openTestDb, closeTestDb, seedItem, type TestDb } from '../../../test/db/harness'
 
 // Mock the seams so the test is about the LEDGER + REF-COUNT logic, not the network
@@ -14,7 +18,7 @@ vi.mock('../auth/client', () => ({
 }))
 vi.mock('./presign', () => ({ presignBlobUrl: h.presignBlobUrl }))
 
-import { reapOrphanBlobs, __resetForTest } from './reaper'
+import { reapOrphanBlobs, reapPurgedLocalFiles, __resetForTest } from './reaper'
 
 let db: TestDb
 let fetchMock: ReturnType<typeof vi.fn>
@@ -163,5 +167,116 @@ describe('reapOrphanBlobs', () => {
 
     expect(fetchMock).not.toHaveBeenCalled()
     expect(ledgerCount()).toBe(1)
+  })
+})
+
+describe('reapPurgedLocalFiles', () => {
+  // Real files under a per-test mkdtemp userData/content (the shared stub path is
+  // rm'd by sibling suites → order-dependent flakes; a scoped getPath spy isolates us).
+  let userData: string
+  let getPathSpy: ReturnType<typeof vi.spyOn>
+
+  const contentPath = (name: string) => join(userData, 'content', name)
+  const reclaimed = (id: string) =>
+    (
+      db.prepare(`SELECT files_reclaimed FROM items WHERE id = ?`).get(id) as {
+        files_reclaimed: number
+      }
+    ).files_reclaimed
+  /** Seed a purged item with real content (+ optional cover) files on disk. */
+  const seedPurged = (
+    id: string,
+    opts: {
+      file?: string
+      cover?: string
+      purged_at?: number | null
+      files_reclaimed?: number
+    } = {},
+  ) => {
+    const file = opts.file ?? `${id}.epub`
+    seedItem(db, { id, file_path: file, cover_path: opts.cover ?? null, deleted_at: 1000 })
+    db.prepare(`UPDATE items SET purged_at = ?, files_reclaimed = ? WHERE id = ?`).run(
+      opts.purged_at === undefined ? 2000 : opts.purged_at,
+      opts.files_reclaimed ?? 0,
+      id,
+    )
+    writeFileSync(contentPath(file), 'bytes')
+    if (opts.cover) writeFileSync(contentPath(opts.cover.replace(/^content\//, '')), 'cover')
+    return file
+  }
+
+  beforeEach(() => {
+    userData = mkdtempSync(join(tmpdir(), 'pl-reaper-'))
+    mkdirSync(join(userData, 'content'), { recursive: true })
+    getPathSpy = vi
+      .spyOn(app, 'getPath')
+      .mockImplementation((name: string) =>
+        name === 'userData' ? userData : join('/tmp', `pl-${name}`),
+      )
+  })
+  afterEach(() => {
+    getPathSpy.mockRestore()
+    rmSync(userData, { recursive: true, force: true })
+  })
+
+  it('unlinks content + cover of a purged item and marks it reclaimed', async () => {
+    const file = seedPurged('a', { cover: 'content/a.jpg' })
+
+    await reapPurgedLocalFiles()
+
+    expect(existsSync(contentPath(file))).toBe(false)
+    expect(existsSync(contentPath('a.jpg'))).toBe(false)
+    expect(reclaimed('a')).toBe(1)
+  })
+
+  it('leaves a LIVE item (purged_at NULL) — files and flag untouched', async () => {
+    const file = seedPurged('a', { purged_at: null })
+
+    await reapPurgedLocalFiles()
+
+    expect(existsSync(contentPath(file))).toBe(true)
+    expect(reclaimed('a')).toBe(0)
+  })
+
+  it('skips an already-reclaimed row (bounded to one pass)', async () => {
+    // Marked reclaimed but a file still (impossibly) present — proves the WHERE guard
+    // skips it rather than re-unlinking every round.
+    const file = seedPurged('a', { files_reclaimed: 1 })
+
+    await reapPurgedLocalFiles()
+
+    expect(existsSync(contentPath(file))).toBe(true) // not touched
+  })
+
+  it('treats an already-gone file as reclaimed (ENOENT is success)', async () => {
+    const file = seedPurged('a')
+    rmSync(contentPath(file)) // purging device already unlinked inline
+
+    await reapPurgedLocalFiles()
+
+    expect(reclaimed('a')).toBe(1)
+  })
+
+  it('handles a purged item with no cover (null cover_path)', async () => {
+    seedPurged('a') // no cover
+
+    await reapPurgedLocalFiles()
+
+    expect(reclaimed('a')).toBe(1)
+  })
+
+  it('leaves the row unreclaimed when a real unlink error occurs (retry next sweep)', async () => {
+    const file = seedPurged('a')
+    // Make the content dir read-only so unlink fails with EPERM/EACCES (not ENOENT).
+    const dir = join(userData, 'content')
+    chmodSync(dir, 0o500)
+    try {
+      await reapPurgedLocalFiles()
+      // On permissive CI (e.g. root) chmod may not block unlink; only assert the
+      // retry-safety invariant when the file genuinely survived.
+      if (existsSync(contentPath(file))) expect(reclaimed('a')).toBe(0)
+    } finally {
+      chmodSync(dir, 0o700) // restore so afterEach rmSync can clean up
+    }
   })
 })
