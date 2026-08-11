@@ -11,7 +11,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 42
+export const CURRENT_VERSION = 43
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -510,6 +510,15 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   // already stranded by a pre-feature cross-device purge.
   42: `
     ALTER TABLE items ADD COLUMN files_reclaimed INTEGER NOT NULL DEFAULT 0;
+  `,
+  // Cloud hardening H1 — the R2 orphan reaper's grace-window clock. reapOrphanBlobs()
+  // no longer deletes a blob the first time it looks unreferenced; it stamps orphaned_at
+  // and only reaps once the blob has stayed unreferenced past a grace window (a
+  // cross-device restore/re-import that propagates in first clears the stamp). Bounds a
+  // TOCTOU false-reap. DEVICE-LOCAL: blob_sync is a local outbox, never synced / never in
+  // schema.ts. Nullable; existing rows default NULL = "not yet observed as an orphan".
+  43: `
+    ALTER TABLE blob_sync ADD COLUMN orphaned_at INTEGER;
   `,
 }
 

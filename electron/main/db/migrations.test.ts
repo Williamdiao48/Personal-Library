@@ -625,6 +625,34 @@ describe('database bring-up', () => {
     db.close()
   })
 
+  // Migration 43 — device-local `orphaned_at` on blob_sync for the reaper's grace window.
+  // An existing synced ledger row must gain the column, defaulted NULL ("not yet observed
+  // as an orphan"), so the mark-and-sweep only reaps after a first sweep stamps it.
+  it('adds orphaned_at (default NULL) to blob_sync (migration 43)', () => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(SCHEMA)
+    for (let v = 2; v <= 42; v++) {
+      if (MIGRATIONS[v]) db.exec(MIGRATIONS[v])
+    }
+    db.pragma('user_version = 42')
+    db.prepare(
+      `INSERT INTO blob_sync (content_hash, kind, state, updated_at) VALUES ('H', 'content', 'synced', 0)`,
+    ).run()
+
+    bringUpSchema(db) // runs migration 43
+    expect(db.pragma('user_version', { simple: true })).toBe(CURRENT_VERSION)
+
+    const cols = (db.prepare(`PRAGMA table_info(blob_sync)`).all() as { name: string }[]).map(
+      (c) => c.name,
+    )
+    expect(cols).toContain('orphaned_at')
+    expect(db.prepare(`SELECT orphaned_at FROM blob_sync WHERE content_hash = 'H'`).get()).toEqual({
+      orphaned_at: null,
+    })
+    db.close()
+  })
+
   it('applies migrations incrementally from an empty (pre-schema) database', () => {
     // A DB at user_version 0 with NO tables must migrate cleanly to head — this is
     // the path a brand-new install actually takes.
