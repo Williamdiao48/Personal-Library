@@ -20,14 +20,39 @@ import { safeContentPath, safeUserDataPath } from '../security/paths'
 // frees them. Dedup siblings (a hash shared by another still-un-purged item) are
 // protected by the same check.
 //
+// MARK-AND-SWEEP grace window (H1). "Is this blob still wanted?" is a snapshot taken
+// after a pull; a peer can create a new reference to the same hash (restore a trashed
+// item, or re-import a file that dedups to it) in the window before our DELETE lands —
+// a TOCTOU false-reap of still-wanted bytes. So we don't delete an orphan the first
+// time we see it: we stamp `blob_sync.orphaned_at` and only reap once the blob has
+// stayed unreferenced past REAP_GRACE_MS (i.e. across ≥1 further post-round sweep). A
+// resurrection that propagates in during the window clears the stamp and cancels the
+// reap. The clock is "when THIS device first observed the orphan", NOT `purged_at` age:
+// the dangerous event is the recent restore/import, so an old purge + a fresh restore
+// must not sail through — purge-age would be the wrong clock.
+//
 // Everything is best-effort and idempotent: a DELETE against an already-gone key is
 // a 2xx, so a double sweep — or two devices reaping the same hash — is harmless. A
-// failed reap leaves the ledger row for the next sweep to retry.
+// failed reap leaves the ledger row (and its stamp) for the next sweep to retry.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Bound a single DELETE so an unreachable R2/network can't wedge the sweep. Matches
 // processing.ts's source-reap timeout.
 const REAP_TIMEOUT_MS = 30_000
+
+// Grace window between first observing a blob as an orphan and actually deleting it.
+// Bounds the false-reap race by real cross-device propagation latency; exported so tests
+// pin their fixtures to it. Cost of the delay is ~10 min of lingering R2 bytes (the bill,
+// not correctness).
+//
+// Overridable via MAIN_VITE_REAP_GRACE_MS (ms) for the two-profile local rig — a full
+// 10-min wait makes the reap tedious to eyeball, so a test build can drop it to seconds.
+// A plain tuning knob, not a secret; a release built with no override uses the default. A
+// missing/blank/non-positive value falls back (so it never accidentally disables the delay).
+const REAP_GRACE_DEFAULT_MS = 10 * 60_000
+const graceOverride = Number(import.meta.env.MAIN_VITE_REAP_GRACE_MS)
+export const REAP_GRACE_MS =
+  Number.isFinite(graceOverride) && graceOverride > 0 ? graceOverride : REAP_GRACE_DEFAULT_MS
 
 // Guards against overlapping sweeps (e.g. two rounds finishing close together).
 let reaping = false
@@ -39,6 +64,7 @@ let lastSweep: Promise<void> = Promise.resolve()
 interface SyncedBlobRow {
   content_hash: string
   kind: BlobKind
+  orphaned_at: number | null
 }
 
 interface PurgedFileRow {
@@ -65,17 +91,38 @@ export async function reapOrphanBlobs(): Promise<void> {
     // Only blobs we actually uploaded (state='synced') are candidates; a 'pending'/
     // 'error' row hasn't reached R2 yet, so there's nothing to delete.
     const rows = db
-      .prepare(`SELECT content_hash, kind FROM blob_sync WHERE state = 'synced'`)
+      .prepare(`SELECT content_hash, kind, orphaned_at FROM blob_sync WHERE state = 'synced'`)
       .all() as SyncedBlobRow[]
 
-    for (const { content_hash, kind } of rows) {
+    const now = Date.now()
+    for (const { content_hash, kind, orphaned_at } of rows) {
       // A tombstone (deleted_at set) still carries its blob_hash, so filter on
       // purged_at — the "reclaimed everywhere" signal — not deleted_at.
       const col = kind === 'cover' ? 'cover_hash' : 'blob_hash'
       const wanted = db
         .prepare(`SELECT 1 FROM items WHERE ${col} = ? AND purged_at IS NULL LIMIT 1`)
         .get(content_hash)
-      if (wanted) continue // still referenced by a live/restorable item → keep the bytes
+      if (wanted) {
+        // Still referenced by a live/restorable item → keep the bytes. If we'd previously
+        // marked it an orphan, a restore/re-import has propagated in — cancel the reap.
+        if (orphaned_at !== null) {
+          db.prepare(`UPDATE blob_sync SET orphaned_at = NULL WHERE content_hash = ?`).run(
+            content_hash,
+          )
+        }
+        continue
+      }
+
+      // Orphan. First observation → stamp the clock and wait; only reap once it has
+      // stayed unreferenced past the grace window (a later sweep, ≥REAP_GRACE_MS on).
+      if (orphaned_at === null) {
+        db.prepare(`UPDATE blob_sync SET orphaned_at = ? WHERE content_hash = ?`).run(
+          now,
+          content_hash,
+        )
+        continue
+      }
+      if (now - orphaned_at < REAP_GRACE_MS) continue // not stable long enough yet
 
       try {
         const url = await presignBlobUrl('delete', kind, content_hash)

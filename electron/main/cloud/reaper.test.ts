@@ -18,15 +18,33 @@ vi.mock('../auth/client', () => ({
 }))
 vi.mock('./presign', () => ({ presignBlobUrl: h.presignBlobUrl }))
 
-import { reapOrphanBlobs, reapPurgedLocalFiles, __resetForTest } from './reaper'
+import { reapOrphanBlobs, reapPurgedLocalFiles, __resetForTest, REAP_GRACE_MS } from './reaper'
 
 let db: TestDb
 let fetchMock: ReturnType<typeof vi.fn>
 
-const enqueue = (hash: string, kind: 'content' | 'cover', state = 'synced') =>
+// A blob past the reap grace window — a first sweep already stamped it this long ago, so
+// the current sweep is free to actually delete it. Blobs seeded without an orphaned_at
+// are "not yet observed as an orphan" and only get MARKED this round, never reaped.
+const PAST_GRACE = () => Date.now() - REAP_GRACE_MS - 1000
+
+const enqueue = (
+  hash: string,
+  kind: 'content' | 'cover',
+  state = 'synced',
+  orphanedAt: number | null = null,
+) =>
   db
-    .prepare(`INSERT INTO blob_sync (content_hash, kind, state, updated_at) VALUES (?, ?, ?, ?)`)
-    .run(hash, kind, state, 0)
+    .prepare(
+      `INSERT INTO blob_sync (content_hash, kind, state, orphaned_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(hash, kind, state, orphanedAt, 0)
+
+const orphanedAtOf = (hash: string) =>
+  (
+    db.prepare(`SELECT orphaned_at FROM blob_sync WHERE content_hash = ?`).get(hash) as
+      { orphaned_at: number | null } | undefined
+  )?.orphaned_at ?? null
 
 const setBlob = (
   id: string,
@@ -56,7 +74,7 @@ describe('reapOrphanBlobs', () => {
   it('reaps a synced blob whose only referencing item is purged', async () => {
     const id = seedItem(db, { deleted_at: 1000 })
     setBlob(id, { blob_hash: 'H', purged_at: 2000 })
-    enqueue('H', 'content')
+    enqueue('H', 'content', 'synced', PAST_GRACE()) // already observed as an orphan long enough ago
 
     await reapOrphanBlobs()
 
@@ -106,7 +124,7 @@ describe('reapOrphanBlobs', () => {
   it('reaps a cover blob via the cover_hash column', async () => {
     const id = seedItem(db, { deleted_at: 1000 })
     setBlob(id, { cover_hash: 'C', purged_at: 2000 })
-    enqueue('C', 'cover')
+    enqueue('C', 'cover', 'synced', PAST_GRACE())
 
     await reapOrphanBlobs()
 
@@ -128,7 +146,7 @@ describe('reapOrphanBlobs', () => {
   it('keeps the ledger row on a failed DELETE (retriable), never throws', async () => {
     const id = seedItem(db, { deleted_at: 1000 })
     setBlob(id, { blob_hash: 'H', purged_at: 2000 })
-    enqueue('H', 'content')
+    enqueue('H', 'content', 'synced', PAST_GRACE())
     fetchMock.mockResolvedValue({ ok: false, status: 500 } as unknown as Response)
 
     await expect(reapOrphanBlobs()).resolves.toBeUndefined()
@@ -138,7 +156,7 @@ describe('reapOrphanBlobs', () => {
   it('swallows a thrown fetch (offline) and keeps the row', async () => {
     const id = seedItem(db, { deleted_at: 1000 })
     setBlob(id, { blob_hash: 'H', purged_at: 2000 })
-    enqueue('H', 'content')
+    enqueue('H', 'content', 'synced', PAST_GRACE())
     fetchMock.mockRejectedValue(new Error('network down'))
 
     await expect(reapOrphanBlobs()).resolves.toBeUndefined()
@@ -167,6 +185,46 @@ describe('reapOrphanBlobs', () => {
 
     expect(fetchMock).not.toHaveBeenCalled()
     expect(ledgerCount()).toBe(1)
+  })
+
+  // ── mark-and-sweep grace window (H1) ───────────────────────────────────────
+  it('MARKS a freshly-orphaned blob instead of deleting it (first observation)', async () => {
+    const id = seedItem(db, { deleted_at: 1000 })
+    setBlob(id, { blob_hash: 'H', purged_at: 2000 })
+    enqueue('H', 'content') // orphaned_at NULL → never seen as an orphan before
+
+    await reapOrphanBlobs()
+
+    // No network work this round — just stamp the clock and keep the bytes.
+    expect(h.presignBlobUrl).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(ledgerCount()).toBe(1)
+    expect(orphanedAtOf('H')).toBeTypeOf('number') // now marked
+  })
+
+  it('does NOT reap an orphan still inside the grace window', async () => {
+    const id = seedItem(db, { deleted_at: 1000 })
+    setBlob(id, { blob_hash: 'H', purged_at: 2000 })
+    enqueue('H', 'content', 'synced', Date.now()) // marked just now → not stable yet
+
+    await reapOrphanBlobs()
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(ledgerCount()).toBe(1)
+  })
+
+  it('CLEARS the mark when the blob is referenced again (restore/re-import cancels the reap)', async () => {
+    // Marked as an orphan past the grace window, but an un-purged item now references it
+    // again — a cross-device restore/re-import propagated in. The reap must be cancelled.
+    const id = seedItem(db)
+    setBlob(id, { blob_hash: 'H', purged_at: null }) // live reference
+    enqueue('H', 'content', 'synced', PAST_GRACE())
+
+    await reapOrphanBlobs()
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(ledgerCount()).toBe(1)
+    expect(orphanedAtOf('H')).toBeNull() // stamp cleared → no longer a reap candidate
   })
 })
 
