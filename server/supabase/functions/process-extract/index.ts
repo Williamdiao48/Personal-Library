@@ -60,8 +60,10 @@ const deps: ProcessExtractDeps = {
   },
 
   async presignSourceGet(userId, contentHash) {
-    // Scoped to the VERIFIED user id — never client-supplied. Mirrors blob-url.
-    const key = `users/${userId}/content/${contentHash}`
+    // Scoped to the VERIFIED user id — never client-supplied. Mirrors blob-url's
+    // transient `scratch` prefix: the client uploaded the raw source to
+    // scratch/<uid>/<hash> (top-level, lifecycle-reaped), so we presign the GET there.
+    const key = `scratch/${userId}/${contentHash}`
     const endpoint = `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${R2_BUCKET}/${key}`
     const signed = await r2.sign(
       new Request(`${endpoint}?X-Amz-Expires=${SOURCE_GET_EXPIRES}`, { method: 'GET' }),

@@ -88,9 +88,9 @@ describe('cloudExtractEpub', () => {
   it('uploads the raw source, invokes process-extract, and maps the result', async () => {
     const result = await cloudExtractEpub('/tmp/book.epub')
 
-    // Presigned a PUT for the content blob keyed by the RAW bytes' sha256, with
-    // the raw byte count as the upload-size cap ('RAW-EPUB-BYTES' = 14 bytes).
-    expect(h.presignBlobUrl).toHaveBeenCalledWith('put', 'content', RAW_HASH, RAW.length)
+    // Presigned a PUT for the transient scratch blob keyed by the RAW bytes' sha256,
+    // with the raw byte count as the upload-size cap ('RAW-EPUB-BYTES' = 14 bytes).
+    expect(h.presignBlobUrl).toHaveBeenCalledWith('put', 'scratch', RAW_HASH, RAW.length)
     // Raw bytes PUT to the presigned URL (the first fetch; a reap DELETE may follow).
     expect(fetchMock.mock.calls[0][0]).toBe('https://r2.example/put-url')
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'PUT' })
@@ -173,8 +173,8 @@ describe('source reaping (HYGIENE-1)', () => {
   it('deletes the transient source object after a successful extraction', async () => {
     await cloudExtractEpub('/tmp/book.epub')
     await __whenReapedForTest()
-    // Presigned a DELETE for the same content hash, then issued it to R2.
-    expect(h.presignBlobUrl).toHaveBeenCalledWith('delete', 'content', RAW_HASH)
+    // Presigned a DELETE for the same scratch hash, then issued it to R2.
+    expect(h.presignBlobUrl).toHaveBeenCalledWith('delete', 'scratch', RAW_HASH)
     const del = fetchMock.mock.calls.find((c) => (c[1] as RequestInit)?.method === 'DELETE')
     expect(del).toBeDefined()
     expect(del![0]).toBe('https://r2.example/put-url') // mock returns one URL for every op
@@ -184,7 +184,7 @@ describe('source reaping (HYGIENE-1)', () => {
     h.invoke.mockResolvedValue({ data: null, error: { message: 'boom' } })
     await expect(cloudExtractEpub('/tmp/book.epub')).rejects.toThrow(/boom/)
     await __whenReapedForTest()
-    expect(h.presignBlobUrl).toHaveBeenCalledWith('delete', 'content', RAW_HASH)
+    expect(h.presignBlobUrl).toHaveBeenCalledWith('delete', 'scratch', RAW_HASH)
   })
 
   it('swallows a reap failure without affecting the extraction result', async () => {
@@ -213,7 +213,7 @@ describe('cloudExtractPdf', () => {
     })
     const result = await cloudExtractPdf('/tmp/doc.pdf')
 
-    expect(h.presignBlobUrl).toHaveBeenCalledWith('put', 'content', RAW_HASH, RAW.length)
+    expect(h.presignBlobUrl).toHaveBeenCalledWith('put', 'scratch', RAW_HASH, RAW.length)
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'PUT' })
     expect(h.invoke).toHaveBeenCalledWith('process-extract', {
       body: { kind: 'pdf', content_hash: RAW_HASH },

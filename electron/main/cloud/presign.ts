@@ -2,6 +2,11 @@ import { getSupabase } from '../auth/client'
 
 export type BlobOp = 'put' | 'get' | 'delete'
 export type BlobKind = 'content' | 'cover'
+// A presign can also target the transient Phase-4 extraction-source prefix. Scratch is
+// NOT a `BlobKind`: it is never laddered into `blob_sync` (it's a throwaway parse input,
+// not a synced backup), so the ledger/reaper types stay narrow (`BlobKind`) and only the
+// presign call surface widens to include it.
+export type BlobScope = BlobKind | 'scratch'
 
 // Client for the blob-url Edge Function (Phase 2 Decision 7). Asks for a
 // short-lived presigned R2 URL scoped to the caller's own prefix; the session JWT
@@ -13,7 +18,7 @@ export type BlobKind = 'content' | 'cover'
 // it must equal the Content-Length the upload fetch sends (the body's length).
 export async function presignBlobUrl(
   op: BlobOp,
-  kind: BlobKind,
+  kind: BlobScope,
   hash: string,
   size?: number,
 ): Promise<string> {

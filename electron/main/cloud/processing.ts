@@ -100,10 +100,13 @@ async function canCloudProcess(): Promise<boolean> {
  * map the result and callers fall back to local parsing.
  *
  * Note the key is sha256(raw bytes) — NOT the Phase-2 backup key, which is
- * sha256(packed archive) (itemBlob.buildContentBlob). So this object dedupes only
- * against another cloud-extract of the same file (idempotent overwrite), not against
- * the item's backup; it's a transient extraction input that lingers in R2 until a
- * bucket lifecycle rule reaps it. Reaping is a bucket-config concern, not this path.
+ * sha256(packed archive) (itemBlob.buildContentBlob). It's uploaded under the dedicated
+ * top-level `scratch/<uid>/<hash>` prefix (NOT `content/`, where real backups live), so
+ * it dedupes only against another cloud-extract of the same file (idempotent overwrite),
+ * never against the item's backup. It's a transient extraction input: reaped inline below
+ * (fast path), with an R2 lifecycle rule on the `scratch/` prefix as the crash/offline
+ * backstop. Segregating the prefix is what makes that age-based rule safe (it can never
+ * touch a permanent `content/`/`cover/` object).
  */
 async function cloudExtract(filePath: string, kind: 'epub' | 'pdf'): Promise<CloudExtractResponse> {
   const supabase = getSupabase()
@@ -114,9 +117,9 @@ async function cloudExtract(filePath: string, kind: 'epub' | 'pdf'): Promise<Clo
   const bytes = await readFile(filePath)
   const contentHash = sha256Hex(bytes)
 
-  // 1 — Upload the raw source so the container can GET it. users/<uid>/content/<hash>,
-  //     the same key process-extract will presign a GET for. Bounded upload deadline.
-  const putUrl = await presignBlobUrl('put', 'content', contentHash, bytes.length)
+  // 1 — Upload the raw source so the container can GET it. scratch/<uid>/<hash>, the same
+  //     key process-extract will presign a GET for. Bounded upload deadline.
+  const putUrl = await presignBlobUrl('put', 'scratch', contentHash, bytes.length)
   const put = await fetch(putUrl, {
     method: 'PUT',
     body: new Uint8Array(bytes),
@@ -148,17 +151,17 @@ async function cloudExtract(filePath: string, kind: 'epub' | 'pdf'): Promise<Clo
     return res
   } finally {
     // 3 — The uploaded source is a TRANSIENT extraction input; reap it (best-effort,
-    //     non-blocking) so it doesn't linger in R2. A bucket lifecycle rule is the
-    //     backstop for the rare case this never runs (crash/offline mid-import).
+    //     non-blocking) so it doesn't linger in R2. The `scratch/`-prefix R2 lifecycle
+    //     rule is the backstop for the rare case this never runs (crash/offline mid-import).
     lastReap = reapSourceBlob(contentHash)
   }
 }
 
 /** Best-effort delete of the transient raw-source object from R2 after extraction.
- *  Never throws — a failure just leaves the object for a bucket lifecycle rule. */
+ *  Never throws — a failure just leaves the object for the `scratch/` lifecycle rule. */
 async function reapSourceBlob(contentHash: string): Promise<void> {
   try {
-    const url = await presignBlobUrl('delete', 'content', contentHash)
+    const url = await presignBlobUrl('delete', 'scratch', contentHash)
     await fetch(url, { method: 'DELETE', signal: AbortSignal.timeout(SOURCE_REAP_TIMEOUT_MS) })
   } catch {
     // Opportunistic cleanup — swallow (offline, expired URL, R2 hiccup, …).
