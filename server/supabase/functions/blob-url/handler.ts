@@ -8,7 +8,10 @@
 // process-extract/{handler,index}.ts.
 
 export type BlobOp = 'put' | 'get' | 'delete'
-export type BlobKind = 'content' | 'cover'
+// 'scratch' is the transient Phase-4 extraction-source prefix (top-level scratch/<uid>/<hash>),
+// kept separate from the permanent backup kinds so an age-based R2 lifecycle rule can expire
+// it without ever touching content/cover. See the key construction in step 4.
+export type BlobKind = 'content' | 'cover' | 'scratch'
 
 export interface BlobUrlDeps {
   /** Verify the Authorization header; resolve the trusted user id or null. */
@@ -33,14 +36,17 @@ export const EXPIRES_SECONDS = 300
 const MiB = 1024 * 1024
 export const MAX_PUT_BYTES: Record<BlobKind, number> = {
   content: 200 * MiB,
+  // A scratch upload is a raw source file (a full EPUB/PDF), so it shares content's ceiling.
+  scratch: 200 * MiB,
   cover: 10 * MiB,
 }
 
 // A key is scoped to a VERIFIED user id and addresses an immutable, sha256-named
 // blob. Validate the shape so nothing outside `users/<uid>/{content,cover}/<hash>`
-// can ever be signed (no path traversal, no arbitrary keys).
+// (or the transient `scratch/<uid>/<hash>`) can ever be signed (no path traversal,
+// no arbitrary keys).
 const HASH_RE = /^[0-9a-f]{64}$/
-const KINDS = new Set<string>(['content', 'cover'])
+const KINDS = new Set<string>(['content', 'cover', 'scratch'])
 // 'delete' reaps a transient extraction-source object (Phase 4); like 'get' it needs
 // no size. All three stay scoped to the verified user's own key (step 4).
 const OPS = new Set<string>(['put', 'get', 'delete'])
@@ -77,7 +83,9 @@ export async function handleBlobUrl(req: Request, deps: BlobUrlDeps): Promise<Re
   const kind = String(body.kind ?? '')
   const hash = String(body.hash ?? '')
   if (!OPS.has(op)) return json({ error: 'op must be "put", "get", or "delete"' }, 400)
-  if (!KINDS.has(kind)) return json({ error: 'kind must be "content" or "cover"' }, 400)
+  if (!KINDS.has(kind)) {
+    return json({ error: 'kind must be "content", "cover", or "scratch"' }, 400)
+  }
   if (!HASH_RE.test(hash)) return json({ error: 'hash must be a sha256 hex string' }, 400)
 
   // 3 — A PUT must declare its exact byte size, bounded by the per-kind cap. The
@@ -99,8 +107,11 @@ export async function handleBlobUrl(req: Request, deps: BlobUrlDeps): Promise<Re
   }
 
   // 4 — Scope the key to the verified user id (never client-supplied), then sign.
-  //     From here the bytes go direct to R2; this function only mints the URL.
-  const key = `users/${userId}/${kind}/${hash}`
+  //     Scratch lives at a TOP-LEVEL prefix (scratch/<uid>/<hash>), not under users/, so
+  //     a single R2 lifecycle rule on `scratch/` can expire it without matching any
+  //     permanent content/cover backup. The uid is still in the key, so cross-user
+  //     isolation is unchanged. From here the bytes go direct to R2; we only mint the URL.
+  const key = kind === 'scratch' ? `scratch/${userId}/${hash}` : `users/${userId}/${kind}/${hash}`
   const url = await deps.presign({ op: op as BlobOp, key, contentLength })
   return json({ url, key, expiresIn: EXPIRES_SECONDS })
 }

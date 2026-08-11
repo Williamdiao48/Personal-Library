@@ -162,4 +162,59 @@ describe('handleBlobUrl', () => {
     const res = await handleBlobUrl(req, makeDeps())
     expect(res.status).toBe(400)
   })
+
+  // scratch — the transient Phase-4 extraction-source prefix. Keyed TOP-LEVEL
+  // (scratch/<uid>/<hash>, not under users/) so a single R2 lifecycle rule on the
+  // `scratch/` prefix can expire it without touching any permanent content/cover blob.
+  describe('scratch scope', () => {
+    it('signs a scratch PUT at a top-level scratch/<uid>/<hash> key (uid still verified)', async () => {
+      const deps = makeDeps()
+      const res = await handleBlobUrl(
+        post({ op: 'put', kind: 'scratch', hash: HASH, size: 1234 }),
+        deps,
+      )
+      expect(res.status).toBe(200)
+      expect(deps.presign).toHaveBeenCalledWith({
+        op: 'put',
+        key: `scratch/user-1/${HASH}`,
+        contentLength: 1234,
+      })
+    })
+
+    it('signs a scratch GET and DELETE at the same top-level key', async () => {
+      for (const op of ['get', 'delete'] as const) {
+        const deps = makeDeps()
+        const res = await handleBlobUrl(post({ op, kind: 'scratch', hash: HASH }), deps)
+        expect(res.status).toBe(200)
+        expect(deps.presign).toHaveBeenCalledWith({
+          op,
+          key: `scratch/user-1/${HASH}`,
+          contentLength: undefined,
+        })
+      }
+    })
+
+    it('accepts a scratch PUT exactly at its cap and 400s one over it', async () => {
+      const ok = makeDeps()
+      expect(
+        (
+          await handleBlobUrl(
+            post({ op: 'put', kind: 'scratch', hash: HASH, size: MAX_PUT_BYTES.scratch }),
+            ok,
+          )
+        ).status,
+      ).toBe(200)
+
+      const over = makeDeps()
+      expect(
+        (
+          await handleBlobUrl(
+            post({ op: 'put', kind: 'scratch', hash: HASH, size: MAX_PUT_BYTES.scratch + 1 }),
+            over,
+          )
+        ).status,
+      ).toBe(400)
+      expect(over.presign).not.toHaveBeenCalled()
+    })
+  })
 })

@@ -3,8 +3,8 @@
 // Flow (MVP, synchronous):
 //   client → POST { kind:'epub', content_hash } + Supabase JWT
 //        → verify JWT (trusted user id)
-//        → presign a GET for users/<uid>/content/<content_hash> (the source the
-//          client already uploaded to R2 via the Phase-2 uploader)
+//        → presign a GET for scratch/<uid>/<content_hash> (the raw source the
+//          client already uploaded to R2's transient scratch prefix)
 //        → mint a Google ID token and invoke the PRIVATE Cloud Run /extract
 //        → pass the extraction result straight back to the client.
 //
