@@ -5,6 +5,11 @@ import AuthorsView from './AuthorsView'
 import type { Item } from '../../types'
 
 vi.mock('./Sidebar', () => ({ default: () => null }))
+// The Sidebar (mocked to null) is the only consumer of capture-job state, so stub the
+// app-level context hook to keep the view renderable without a CaptureJobsProvider.
+vi.mock('../../contexts/CaptureJobsContext', () => ({
+  useCaptureJobs: () => ({ captureJobs: [], startJob: vi.fn(), dismissJob: vi.fn() }),
+}))
 vi.mock('../../services/library', () => ({
   collectionService: {
     getAll: vi.fn().mockResolvedValue([]),

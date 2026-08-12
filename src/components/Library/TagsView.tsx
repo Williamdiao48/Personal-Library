@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { tagService, collectionService, libraryService } from '../../services/library'
 import Sidebar from './Sidebar'
 import ColorInput from '../ui/ColorInput'
+import { useCaptureJobs } from '../../contexts/CaptureJobsContext'
 import type { Tag, Collection } from '../../types'
 
 const DEFAULT_COLOR = '#7c6aff'
@@ -104,6 +105,7 @@ function TagRow({ tag, count, onRename, onSetColor, onDelete, onNavigate }: TagR
 
 export default function TagsView() {
   const navigate = useNavigate()
+  const { captureJobs, dismissJob } = useCaptureJobs()
 
   const [tags, setTags] = useState<Tag[]>([])
   const [itemCounts, setItemCounts] = useState<Record<string, number>>({})
@@ -218,8 +220,8 @@ export default function TagsView() {
     <div className="library-layout">
       <Sidebar
         collectionMgmt={collectionMgmt}
-        captureJobs={[]}
-        onDismissJob={() => {}}
+        captureJobs={captureJobs}
+        onDismissJob={dismissJob}
         trashedCount={trashedCount}
       />
 

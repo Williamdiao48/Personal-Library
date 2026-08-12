@@ -2,12 +2,14 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { collectionService, libraryService } from '../../services/library'
 import Sidebar from './Sidebar'
+import { useCaptureJobs } from '../../contexts/CaptureJobsContext'
 import type { Collection, Item } from '../../types'
 
 type SortMode = 'az' | 'count'
 
 export default function AuthorsView() {
   const navigate = useNavigate()
+  const { captureJobs, dismissJob } = useCaptureJobs()
 
   const [allLibraryItems, setAllLibraryItems] = useState<Item[]>([])
   const [allCollections, setAllCollections] = useState<Collection[]>([])
@@ -100,8 +102,8 @@ export default function AuthorsView() {
     <div className="library-layout">
       <Sidebar
         collectionMgmt={collectionMgmt}
-        captureJobs={[]}
-        onDismissJob={() => {}}
+        captureJobs={captureJobs}
+        onDismissJob={dismissJob}
         trashedCount={trashedCount}
       />
 
