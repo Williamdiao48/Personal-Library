@@ -474,7 +474,7 @@ export default function EpubReader({ item, onBack }: Props) {
     })
 
     return () => cancelAnimationFrame(rafId)
-  }, [chapter, book, outerWidth, outerHeight, fontSize, fontFamily])
+  }, [chapter, book, outerWidth, outerHeight, fontSize, fontFamily, lineHeight, colPadding])
 
   // ── 3c. Persist within-chapter page to localStorage ─────────────
   // The DB only stores the chapter fraction; localStorage adds page granularity.

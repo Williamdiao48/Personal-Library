@@ -503,6 +503,27 @@ describe('PdfReader — header interactions', () => {
     fireEvent.keyDown(window, { key: 'ArrowLeft' }) // → back to 1–2
     expect(screen.getByText('1–2')).toBeInTheDocument()
   })
+
+  // Regression: the note editor is a <textarea>; the global keydown handler must
+  // ignore nav keys originating from it, or typing a note flips pages / toggles
+  // fullscreen behind the modal. The guard once covered only INPUT.
+  it('ignores navigation keys typed into a textarea (note editor)', async () => {
+    renderPdf()
+    await screen.findByText('A PDF')
+    expect(screen.getByText('1–2')).toBeInTheDocument()
+
+    const textarea = document.createElement('textarea')
+    document.body.appendChild(textarea)
+    // Same key that navigates from the document — must be a no-op from the textarea.
+    fireEvent.keyDown(textarea, { key: 'ArrowRight' })
+    expect(screen.getByText('1–2')).toBeInTheDocument() // guard held: no spread change
+
+    // Control: the identical key still navigates when it comes from the document.
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(screen.getByText('3–4')).toBeInTheDocument()
+
+    textarea.remove()
+  })
 })
 
 describe('PdfReader — convert to EPUB', () => {

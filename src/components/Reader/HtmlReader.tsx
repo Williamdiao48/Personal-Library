@@ -1296,6 +1296,7 @@ export default function HtmlReader({
             setContextMenu(null)
           }}
           onUpdate={(id, text) => annot.updateNote(id, text ?? '')}
+          onSetColor={annot.setHighlightColor}
           allThemes={annot.allThemes}
           onSetThemes={annot.setAnnotationThemes}
           onVocabChange={annot.refreshThemes}
