@@ -170,6 +170,12 @@ vi.mock('./Sidebar', () => ({
   ),
 }))
 
+// The Sidebar stub doesn't render capture-job state, so stub the app-level context hook
+// to keep the view renderable without a CaptureJobsProvider.
+vi.mock('../../contexts/CaptureJobsContext', () => ({
+  useCaptureJobs: () => ({ captureJobs: [], startJob: vi.fn(), dismissJob: vi.fn() }),
+}))
+
 // CustomSelect (sort) stub: a button per option that fires onChange(value).
 vi.mock('../ui/CustomSelect', () => ({
   default: ({ options, onChange }: any) => (

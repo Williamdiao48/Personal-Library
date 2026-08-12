@@ -18,6 +18,7 @@ import AddToCollectionModal from './AddToCollectionModal'
 import CustomSelect from '../ui/CustomSelect'
 import MultiSelect from '../ui/MultiSelect'
 import { useGridColumns } from '../../hooks/useGridColumns'
+import { useCaptureJobs } from '../../contexts/CaptureJobsContext'
 import type { Item, Tag, Collection, ReadingStatus } from '../../types'
 
 type CollectionSortBy = 'custom' | 'title' | 'date_saved' | 'last_read' | 'word_count' | 'progress'
@@ -84,6 +85,7 @@ function SortableItemCard({ item, dragEnabled, ...cardProps }: SortableCardProps
 export default function CollectionView() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { captureJobs, dismissJob } = useCaptureJobs()
 
   // ── Data ────────────────────────────────────────────────────────
   const [collection, setCollection] = useState<Collection | null>(null)
@@ -325,8 +327,8 @@ export default function CollectionView() {
     <div className="library-layout">
       <Sidebar
         collectionMgmt={collectionMgmt}
-        captureJobs={[]}
-        onDismissJob={() => {}}
+        captureJobs={captureJobs}
+        onDismissJob={dismissJob}
         trashedCount={trashedCount}
       />
 
