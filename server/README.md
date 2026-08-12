@@ -242,16 +242,17 @@ contract above). Errors: `401` (bad/absent JWT), `400` (bad kind/hash/JSON),
 
 ### Transient source cleanup
 
-The raw file the client uploads for extraction (`users/<uid>/content/<sha256-of-raw-
-bytes>`) is a **throwaway extraction input** — its key is the raw-bytes hash, which is
-_not_ the Phase-2 backup key (that's the sha256 of the packed archive), so it's never
-reused. After `process-extract` returns, the client best-effort **`DELETE`s** it (a
-presigned `delete` op on `blob-url`). To mop up the rare object left behind when that
-cleanup can't run (crash/offline mid-import), add a **bucket lifecycle rule** as a
-backstop — e.g. expire objects under the `users/` prefix a few days after creation is
-too broad (it also holds durable backups), so scope aggressive expiry only if/when
-extraction sources move to a dedicated prefix. Until then the client `DELETE` is the
-primary reaper and the residue is bounded (one object per never-reaped import).
+The raw file the client uploads for extraction is a **throwaway extraction input** — its
+key is the raw-bytes hash, which is _not_ the Phase-2 backup key (that's the sha256 of the
+packed archive), so it's never reused. After `process-extract` returns, the client
+best-effort **`DELETE`s** it (a presigned `delete` op on `blob-url`) — the primary reaper.
+
+Since **H2a** the source lives under a dedicated **top-level `scratch/<uid>/<hash>`** prefix
+(not `users/<uid>/content/…`), so a single **R2 lifecycle rule on `scratch/`** (delete after
+1 day) is the backstop for the rare object left behind when the inline `DELETE` can't run
+(crash/offline mid-import) — without ever touching a durable `content/`/`cover/` backup.
+Objects **already stranded** under `content/` from pre-H2a crashes are swept up by
+`reconcile-blobs` (**H2b**, below).
 
 ### Structure & test
 
@@ -276,6 +277,84 @@ supabase functions deploy process-extract
 ```
 Leave the default `verify_jwt = true` (gateway rejects tokenless calls). Smoke-
 test after deploy like `blob-url` — it isn't in the vitest suite end-to-end.
+
+## Edge Function: `reconcile-blobs` (H2b — server-side R2 orphan backstop)
+
+`functions/reconcile-blobs/` is a **privileged janitor** that reaps R2 objects the
+client-side reaper structurally can't. The client reaper (`electron/main/cloud/reaper.ts`)
+only knows about blobs in some device's local `blob_sync` ledger; two orphan classes
+escape it forever:
+
+- **Lost uploader** — a device uploads a blob, then its DB dies (reinstall/wipe). No
+  device holds a ledger row for the hash, so a later global purge has nothing to drive
+  the `DELETE`.
+- **Pre-H2a stranded scratch** — old raw extraction sources left under
+  `users/<uid>/content/<sha256(raw)>` (see the H2a note above).
+
+Because Postgres is the globally-authoritative "is this blob wanted?" oracle (every device
+pushes `blob_hash`/`cover_hash`/`purged_at`, LWW-merged), a `service_role` sweep can answer
+what no single client can: it `LIST`s each user's `users/` prefix, and for every
+`content`/`cover` object deletes the ones **no un-purged item references**.
+
+### Safety model (this deletes bytes across all users)
+
+- **Admin-gated, not user-gated:** deploy `--no-verify-jwt` (there's no user context) and
+  require a shared **`RECONCILE_SECRET`** bearer (constant-time compare). The service-role
+  key is used only inside the function (auto-injected), never client-exposed.
+- **Age-gate:** only objects **older than `RECONCILE_MIN_AGE_DAYS` (default 30)** are ever
+  candidates — the server has no "I just uploaded this" knowledge, so this makes an
+  in-flight/recent upload impossible to false-delete; a real orphan just lingers a few
+  extra weeks. (This is why `content/` can't take a blanket lifecycle rule — content is
+  addressed, never ages out — and why the age-gate is a per-run classification, not R2's.)
+- **Dry-run by default:** a bare call only **reports**; deletion needs `{"apply":true}` in
+  the body. `RECONCILE_DRY_RUN=1` is an env kill-switch that forces dry-run regardless.
+- Predicate parity with the client reaper: **`purged_at IS NULL`** (a merely-trashed item
+  keeps its bytes; only a permanent purge frees them).
+
+### Contract
+
+`POST /functions/v1/reconcile-blobs` — `Authorization: Bearer <RECONCILE_SECRET>`.
+```jsonc
+{ "apply": true,        // optional; omitted/false ⇒ dry-run (report only)
+  "minAgeDays": 30 }    // optional; overrides RECONCILE_MIN_AGE_DAYS for this run
+```
+Success (`200`) returns a report:
+```jsonc
+{ "scanned": 42, "keptWanted": 40, "skippedRecent": 1,
+  "orphans": ["users/<uid>/content/<hash>", …],   // classified as reclaimable
+  "deleted": ["users/<uid>/content/<hash>", …],   // actually removed (empty on a dry-run)
+  "dryRun": false, "minAgeMs": 2592000000 }
+```
+Errors: `401` (bad/absent secret), `400` (invalid JSON body), `500` (misconfigured — R2 /
+service-role / secret env unset).
+
+### Structure & test
+
+Same split as `blob-url`/`process-extract`: only `index.ts` is Deno glue (env, R2
+`AwsClient` LIST/DELETE + XML parse, the `service_role` Supabase client), untested. The
+classification logic — admin gate, key parsing, age-gate, dry-run, per-owner memoization —
+is in `handler.ts` and **is** covered by the vitest `server` project (`npm test`, fake
+deps). Isolated `tsc` via the local `tsconfig.json` (excludes the Deno `index.ts`).
+
+### Deploy & run
+
+```bash
+cd server
+supabase secrets set RECONCILE_SECRET="$(openssl rand -hex 32)"
+#   optional: RECONCILE_MIN_AGE_DAYS=30   RECONCILE_DRY_RUN=1 (kill-switch)
+#   (R2_* already set for blob-url; SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY auto-injected)
+supabase functions deploy reconcile-blobs --no-verify-jwt
+
+# Dry-run first — eyeball the report, confirm `orphans` are only genuine leaks:
+curl -sS -X POST "$SUPABASE_URL/functions/v1/reconcile-blobs" \
+  -H "Authorization: Bearer $RECONCILE_SECRET"
+# Then arm deletion:
+curl -sS -X POST "$SUPABASE_URL/functions/v1/reconcile-blobs" \
+  -H "Authorization: Bearer $RECONCILE_SECRET" \
+  -H 'content-type: application/json' -d '{"apply":true}'
+```
+Scheduling (e.g. weekly via `pg_cron` + `pg_net`) is a later add — run it manually until
+you trust it.
 
 ## What's here vs. coming
 
