@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
-import type { TextItem } from 'pdfjs-dist'
 
 /** One search hit — the (1-based) page number that contains the query. */
 interface PdfMatch {
@@ -49,7 +48,7 @@ export function usePdfSearch(): UsePdfSearchResult {
       const page = await doc.getPage(i)
       const tc = await page.getTextContent()
       const text = tc.items
-        .filter((it): it is TextItem => 'str' in it)
+        .filter((it): it is typeof it & { str: string } => 'str' in it)
         .map((it) => it.str)
         .join(' ')
       texts.push(text.toLowerCase())

@@ -615,6 +615,7 @@ export default function EpubReader({ item, onBack }: Props) {
       }, TRANSITION_MS + 20)
       return () => clearTimeout(timer)
     }
+    return undefined
   }, [xAnim])
 
   // ── 5. Keyboard navigation ─────────────────────────────────────
@@ -700,6 +701,7 @@ export default function EpubReader({ item, onBack }: Props) {
     if (!container) return
 
     function handleLinkClick(e: MouseEvent) {
+      if (!container) return
       const anchor = (e.target as HTMLElement).closest('a')
       if (!anchor) return
 
