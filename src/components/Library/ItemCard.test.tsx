@@ -20,7 +20,7 @@ function makeItem(over: Partial<Item> = {}): Item {
     title: 'The Great Book',
     author: 'Jane Doe',
     source_url: null,
-    content_type: 'html',
+    content_type: 'article',
     file_path: 'x.html',
     word_count: null,
     cover_path: null,

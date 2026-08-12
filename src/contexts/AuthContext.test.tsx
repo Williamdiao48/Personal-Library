@@ -10,7 +10,7 @@ const svc = vi.hoisted(() => ({
   signUp: vi.fn(),
   signIn: vi.fn(),
   signOut: vi.fn(),
-  onStateChange: vi.fn(() => () => {}),
+  onStateChange: vi.fn((_cb?: unknown) => () => {}),
 }))
 vi.mock('../services/auth', () => ({ authService: svc }))
 

@@ -122,7 +122,11 @@ async function uploadBlob(hash: string, kind: BlobKind): Promise<void> {
   // The source item was deleted before we drained — nothing to upload.
   if (!data) throw new NoSourceError(`no local source for ${kind} blob ${hash.slice(0, 12)}`)
   const url = await presignBlobUrl('put', kind, hash, data.length)
-  const res = await fetch(url, { method: 'PUT', body: data })
+  // Buffer isn't in fetch's BodyInit union; hand it a plain Uint8Array view over
+  // the same bytes (no copy). A Node Buffer is always ArrayBuffer-backed (never
+  // SharedArrayBuffer), so the cast is safe and keeps the view typed correctly.
+  const body = new Uint8Array(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength)
+  const res = await fetch(url, { method: 'PUT', body })
   if (!res.ok) {
     // R2/S3 returns an XML body (<Code>…</Code>) explaining a 4xx; surface a
     // slice of it so failures are diagnosable instead of an opaque status. Guard

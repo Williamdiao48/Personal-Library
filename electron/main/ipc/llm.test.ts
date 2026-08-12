@@ -11,7 +11,7 @@ vi.mock('../recommender/llm/ollamaClient', () => ({
 }))
 
 import { registerLlmHandlers, getLlmConfig, ollamaConfigFrom } from './llm'
-import { probeOllama, pullModel } from '../recommender/llm/ollamaClient'
+import { probeOllama, pullModel, type PullProgress } from '../recommender/llm/ollamaClient'
 
 const mockProbe = vi.mocked(probeOllama)
 const mockPull = vi.mocked(pullModel)
@@ -94,9 +94,9 @@ describe('llm:pullModel', () => {
   it('drives pullModel with the form config and forwards each progress line to the renderer', async () => {
     const sendSpy = vi.spyOn(fakeEvent.sender, 'send')
     // Have the mock emit a couple of progress lines through the forwarded callback.
-    mockPull.mockImplementation((_cfg, onProgress?: (p: unknown) => void) => {
-      onProgress?.({ status: 'downloading', percent: 10 })
-      onProgress?.({ status: 'downloading', percent: 100 })
+    mockPull.mockImplementation((_cfg, onProgress: (p: PullProgress) => void) => {
+      onProgress({ status: 'downloading', percent: 10 })
+      onProgress({ status: 'downloading', percent: 100 })
       return Promise.resolve({ ok: true })
     })
 

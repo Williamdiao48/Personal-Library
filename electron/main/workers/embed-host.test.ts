@@ -14,7 +14,7 @@ class FakeProc extends EventEmitter {
 }
 
 const forked: FakeProc[] = []
-const forkFn = vi.fn(() => {
+const forkFn = vi.fn((..._args: unknown[]) => {
   const p = new FakeProc()
   forked.push(p)
   return p

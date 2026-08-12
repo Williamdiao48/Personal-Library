@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest'
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -232,7 +232,7 @@ describe('reapPurgedLocalFiles', () => {
   // Real files under a per-test mkdtemp userData/content (the shared stub path is
   // rm'd by sibling suites → order-dependent flakes; a scoped getPath spy isolates us).
   let userData: string
-  let getPathSpy: ReturnType<typeof vi.spyOn>
+  let getPathSpy: MockInstance
 
   const contentPath = (name: string) => join(userData, 'content', name)
   const reclaimed = (id: string) =>

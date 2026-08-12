@@ -91,7 +91,7 @@ describe('cloud:backupItem', () => {
 
     const res = await invoke('cloud:backupItem', id)
 
-    expect(res.ok).toBe(false)
+    expect((res as { ok: boolean }).ok).toBe(false)
     expect(h.enqueueItemBackup).not.toHaveBeenCalled()
   })
 

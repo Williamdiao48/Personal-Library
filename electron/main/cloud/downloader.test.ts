@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -25,7 +25,7 @@ import { ensureLocalContent, ensureLocalCover } from './downloader'
 let db: TestDb
 let userData: string
 let contentPath: string
-let getPathSpy: ReturnType<typeof vi.spyOn>
+let getPathSpy: MockInstance
 let fetchMock: ReturnType<typeof vi.fn>
 
 const entry = (name: string, s: string) => ({ name, data: Buffer.from(s, 'utf8') })

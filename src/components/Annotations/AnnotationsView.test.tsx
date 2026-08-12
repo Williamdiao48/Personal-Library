@@ -56,6 +56,7 @@ function ann(over: Partial<AnnotationWithSource>): AnnotationWithSource {
     note_text: null,
     color: 'green',
     themes: [],
+    rects: null,
     book_fraction: null,
     created_at: 0,
     sort_order: null,

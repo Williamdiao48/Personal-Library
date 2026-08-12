@@ -71,6 +71,7 @@ export default function SyncStatusPill(): React.ReactElement | null {
       const t = setTimeout(() => setFlashBackedUp(false), BACKED_UP_FLASH_MS)
       return () => clearTimeout(t)
     }
+    return undefined
   }, [counts.pending, counts.error])
 
   if (!status || !status.enabled || !status.signedIn) return null

@@ -247,7 +247,7 @@ describe('fetchCandidates', () => {
     // A different page is a distinct cache key → a genuine miss, so both hit the
     // network (page 2 is NOT served from the page-1 cache — that was the dead-end bug).
     expect(searchCalls()).toHaveLength(2)
-    const urls = searchCalls().map(([u]) => String(u))
+    const urls = searchCalls().map((call) => String((call as unknown[])[0]))
     expect(urls[0]).not.toContain('page=') // page 1 omits the param
     expect(urls[1]).toContain('page=2')
     expect(p1.map((c) => c.sourceId)).toEqual(['/works/A'])

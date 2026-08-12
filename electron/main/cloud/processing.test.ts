@@ -5,9 +5,11 @@ import { createHash } from 'node:crypto'
 // upload/invoke/map plumbing — not real files, network, or EPUB parsing.
 const h = vi.hoisted(() => ({
   isConfigured: vi.fn(() => true),
-  getSession: vi.fn(async () => ({ data: { session: { access_token: 't' } } })),
+  getSession: vi.fn(async () => ({
+    data: { session: { access_token: 't' } as { access_token: string } | null },
+  })),
   invoke: vi.fn(),
-  presignBlobUrl: vi.fn(async () => 'https://r2.example/put-url'),
+  presignBlobUrl: vi.fn(async (_op: string) => 'https://r2.example/put-url'),
   readFile: vi.fn(async () => Buffer.from('RAW-EPUB-BYTES')),
   parseEpub: vi.fn(async () => ({
     title: 'Local Title',

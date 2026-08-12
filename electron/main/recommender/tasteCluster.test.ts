@@ -13,7 +13,7 @@ const item = (e: Float32Array, w = 1, key = Math.random().toString()): WeightedV
 })
 
 /** k=2-forcing config: split at ≥ 2 items so the small fixtures below cluster. */
-const K2 = { ...CLUSTER, TARGET_SIZE: 3 }
+const K2 = { ...CLUSTER, TARGET_SIZE: 3 } as unknown as typeof CLUSTER
 
 describe('pickK', () => {
   it('scales with count, clamped to [1, MAX] and never above n', () => {

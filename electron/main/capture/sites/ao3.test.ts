@@ -210,13 +210,15 @@ describe('captureAo3 — multi-page fetch', () => {
     mockFetchPage.mockResolvedValue(
       paginatedPage(['<p>Page1 chapter.</p>'], { next: true, pagination: [1, 2, 3] }),
     )
-    mockFetchPages.mockImplementation((_urls, _delay, onProgress?: (i: number) => void) => {
-      onProgress?.(0) // exercises the per-page progress-forwarding callback
-      return Promise.resolve([
-        paginatedPage(['<p>Page2 chapter.</p>']),
-        paginatedPage(['<p>Page3 chapter.</p>']),
-      ])
-    })
+    mockFetchPages.mockImplementation(
+      (_urls, _delay, onProgress?: (index: number, total: number) => void) => {
+        onProgress?.(0, 3) // exercises the per-page progress-forwarding callback
+        return Promise.resolve([
+          paginatedPage(['<p>Page2 chapter.</p>']),
+          paginatedPage(['<p>Page3 chapter.</p>']),
+        ])
+      },
+    )
 
     const progress: string[] = []
     const result = await captureAo3('https://archiveofourown.org/works/77', (m) => progress.push(m))

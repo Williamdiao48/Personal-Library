@@ -57,7 +57,9 @@ interface Props {
   onOpenSource?: () => void
   onTogglePreferred?: () => void
   onEditTags: () => void
-  onEditCollections: () => void
+  // Only meaningful for the "Add to collection" action, which ItemCard renders
+  // solely when onRemoveFromCollection is absent (i.e. outside a collection view).
+  onEditCollections?: () => void
   onCoverChange: (newPath: string) => void
   onAuthorChange: (author: string | null) => void
   onTitleChange: (title: string) => void
@@ -574,7 +576,7 @@ function ItemCard({
                   onClick={(e) => {
                     e.stopPropagation()
                     setMenuOpen(false)
-                    onEditCollections()
+                    onEditCollections?.()
                   }}
                 >
                   Add to collection

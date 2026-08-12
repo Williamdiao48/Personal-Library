@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 // against an in-memory DB (Node ABI). parseAutocompleteTop is pure.
 vi.mock('../capture/fetch', () => ({ fetchJson: vi.fn() }))
 
-import { openTestDb, closeTestDb, type TestDb } from '../../../test/db/harness'
+import { openTestDb, closeTestDb } from '../../../test/db/harness'
 import { fetchJson } from '../capture/fetch'
 import {
   parseAutocompleteTop,
@@ -33,9 +33,8 @@ describe('parseAutocompleteTop', () => {
 
 // ── resolveAo3Tag (network + cache) ───────────────────────────────────────────
 describe('resolveAo3Tag', () => {
-  let _db: TestDb
   beforeEach(() => {
-    _db = openTestDb()
+    openTestDb()
     mockFetchPage.mockReset()
   })
   afterEach(() => closeTestDb())
@@ -118,9 +117,8 @@ describe('parsePairingMatch', () => {
 
 // ── resolvePairing (network + cache) ──────────────────────────────────────────
 describe('resolvePairing', () => {
-  let _db: TestDb
   beforeEach(() => {
-    _db = openTestDb()
+    openTestDb()
     mockFetchPage.mockReset()
   })
   afterEach(() => closeTestDb())
@@ -147,9 +145,8 @@ describe('resolvePairing', () => {
 
 // ── resolveAo3Seeds (merge + partition) ───────────────────────────────────────
 describe('resolveAo3Seeds', () => {
-  let _db: TestDb
   beforeEach(() => {
-    _db = openTestDb()
+    openTestDb()
     mockFetchPage.mockReset()
     // Map each raw term to its canonical top hit (or [] = unresolvable).
     const map: Record<string, string[]> = {

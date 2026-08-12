@@ -14,6 +14,7 @@ function makeFakeClient(): {
   unsubscribe: ReturnType<typeof vi.fn>
   removeChannel: ReturnType<typeof vi.fn>
   fireChange: () => void
+  fireStatus: (status: string, err?: Error) => void
 } {
   let handler: ((payload: unknown) => void) | null = null
   let statusCb: ((status: string, err?: Error) => void) | null = null

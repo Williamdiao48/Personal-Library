@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -10,7 +10,7 @@ import { unpackArchive } from './blobArchive'
 // mkdtemp userData (the shared-content-dir race) via a scoped app.getPath spy.
 let userData: string
 let contentPath: string
-let getPathSpy: ReturnType<typeof vi.spyOn>
+let getPathSpy: MockInstance
 
 const writeContent = (name: string, body: string) => writeFileSync(join(contentPath, name), body)
 
