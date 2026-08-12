@@ -613,7 +613,7 @@ describe('library IPC — refresh', () => {
       html: '<p>penguin dolphin</p>',
       textContent: 'penguin dolphin',
     })
-    expect((await invoke('library:refresh', 'drift')).changed).toBe(true)
+    expect(((await invoke('library:refresh', 'drift')) as { changed: boolean }).changed).toBe(true)
     expect(searchHits('wolverine', 'drift')).toBe(false) // old posting exactly removed
     expect(searchHits('badger', 'drift')).toBe(false)
     expect(searchHits('penguin', 'drift')).toBe(true) // new posting present
@@ -624,7 +624,7 @@ describe('library IPC — refresh', () => {
       html: '<p>aardvark</p>',
       textContent: 'aardvark',
     })
-    expect((await invoke('library:refresh', 'drift')).changed).toBe(true)
+    expect(((await invoke('library:refresh', 'drift')) as { changed: boolean }).changed).toBe(true)
     expect(searchHits('penguin', 'drift')).toBe(false) // no residual from refresh 1
     expect(searchHits('dolphin', 'drift')).toBe(false)
     expect(searchHits('aardvark', 'drift')).toBe(true)

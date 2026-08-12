@@ -75,7 +75,10 @@ describe('llmRerankBooks', () => {
         { id: 'b2', fit: 0.7 }, // beyond the SHORTLIST:2 cut → invalid → dropped
       ],
     })
-    const out = await llmRerankBooks(books, 'digest', client, { ...LLM, SHORTLIST: 2 })
+    const out = await llmRerankBooks(books, 'digest', client, {
+      ...LLM,
+      SHORTLIST: 2,
+    } as unknown as typeof LLM)
     expect([...out.keys()].sort()).toEqual(['s0', 's1'])
   })
 })

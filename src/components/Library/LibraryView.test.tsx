@@ -85,7 +85,7 @@ vi.mock('../Capture/AddItemModal', () => ({
   default: ({ onSaved, onJobStarted, onClose }: any) => (
     <div>
       ADD MODAL
-      <button onClick={() => onSaved({ id: 'new1', title: 'Saved', content_type: 'html' })}>
+      <button onClick={() => onSaved({ id: 'new1', title: 'Saved', content_type: 'article' })}>
         add-saved
       </button>
       <button onClick={() => onJobStarted('job1', 'https://x')}>add-job</button>
@@ -197,7 +197,7 @@ const mkItem = (over: Partial<Item> = {}): Item =>
     id: 'i1',
     title: 'Alpha',
     author: 'Ann',
-    content_type: 'html',
+    content_type: 'article',
     description: null,
     status: null,
     scroll_position: 0,
@@ -298,7 +298,7 @@ describe('LibraryView — load states', () => {
 
 describe('LibraryView — filtering', () => {
   const items = [
-    mkItem({ id: 'i1', title: 'Unread One', status: 'unread', content_type: 'html' }),
+    mkItem({ id: 'i1', title: 'Unread One', status: 'unread', content_type: 'article' }),
     mkItem({ id: 'i2', title: 'Finished One', status: 'finished', content_type: 'pdf' }),
     mkItem({ id: 'i3', title: 'Reading One', scroll_position: 0.5, content_type: 'epub' }),
   ]

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest'
 
 // assertPublicHttpUrl resolves hostnames via dns/promises, and safeFetch drives
 // the global fetch — mock both so the resolve-all + redirect-revalidation paths
@@ -8,7 +8,9 @@ vi.mock('dns/promises', () => ({ lookup: vi.fn() }))
 import { assertHttpUrl, isPrivateAddress, assertPublicHttpUrl, safeFetch } from './net-guard'
 import { lookup } from 'dns/promises'
 
-const mockLookup = vi.mocked(lookup)
+// dns.lookup is heavily overloaded; vi.mocked resolves to the single-address
+// overload, so retype the mock to accept our array resolutions.
+const mockLookup = vi.mocked(lookup) as unknown as Mock<() => Promise<unknown>>
 
 describe('isPrivateAddress', () => {
   const PRIVATE = [

@@ -14,7 +14,7 @@ const TAGS: SourceTag[] = [
   { name: 'Enemies to Lovers', category: 'freeform' },
 ]
 
-const chipsOf = (db: TestDb, itemId: string): string[] =>
+const chipsOf = (_db: TestDb, itemId: string): string[] =>
   all<{ name: string }>(
     `SELECT t.name FROM item_tags it JOIN tags t ON t.id = it.tag_id WHERE it.item_id = ? ORDER BY t.name`,
     [itemId],

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest'
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -23,7 +23,7 @@ import { notifyLocalMutation } from '../cloud/sync/syncService'
 
 let db: TestDb
 let userData: string
-let getPathSpy: ReturnType<typeof vi.spyOn>
+let getPathSpy: MockInstance
 
 beforeEach(() => {
   resetIpc()
@@ -135,7 +135,7 @@ describe('convert:pdfToEpub', () => {
     const id = seedItem(db, { content_type: 'pdf' })
     const collidingId = 'colliding-id'
     seedItem(db, { id: collidingId }) // pre-occupies the id the handler will try to reuse
-    vi.mocked(randomUUID).mockReturnValueOnce(collidingId)
+    vi.mocked(randomUUID).mockReturnValueOnce(collidingId as ReturnType<typeof randomUUID>)
 
     await expect(
       invoke('convert:pdfToEpub', {

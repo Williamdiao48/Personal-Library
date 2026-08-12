@@ -37,7 +37,10 @@ export function okJson(obj: unknown): FakeResponse {
 /** A 200 response whose body is raw `bytes` (for blob GETs that read
  *  arrayBuffer()). Pair with `vi.stubGlobal('fetch', …)`. */
 export function okBytes(bytes: Buffer): FakeResponse {
-  const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+  const ab = bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer
   return {
     ok: true,
     status: 200,

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { readFileSync, existsSync, appendFileSync, rmSync } from 'fs'
 import { registerLogHandlers } from './log'
-import { invoke, resetIpc } from 'electron'
+import { invoke, resetIpc } from '../../../test/stubs/electron'
 
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>()

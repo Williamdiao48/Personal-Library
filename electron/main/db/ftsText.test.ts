@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -24,7 +24,7 @@ import {
 let db: TestDb
 let userData: string
 let contentDir: string
-let getPathSpy: ReturnType<typeof vi.spyOn>
+let getPathSpy: MockInstance
 
 beforeEach(() => {
   db = openTestDb()
