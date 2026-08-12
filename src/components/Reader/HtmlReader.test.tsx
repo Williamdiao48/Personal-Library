@@ -24,6 +24,14 @@ vi.mock('../../services/reader', () => ({
   },
 }))
 
+// Shared mutable state so tests can inject annotations into the useAnnotations mock
+// and inspect the props HtmlReader passes down to AnnotationContextMenu.
+const mockAnnot = vi.hoisted(() => ({
+  annotations: [] as Array<Record<string, unknown>>,
+  setHighlightColor: vi.fn(),
+  ctxProps: null as Record<string, unknown> | null,
+}))
+
 // Hooks: canned returns. useAnnotations must expose every member HtmlReader reads.
 vi.mock('../../hooks/useReadingSession', () => ({
   useReadingSession: () => ({ recordActivity: vi.fn() }),
@@ -33,7 +41,7 @@ vi.mock('../../hooks/useTextHighlight', () => ({
 }))
 vi.mock('../../hooks/useAnnotations', () => ({
   useAnnotations: () => ({
-    annotations: [],
+    annotations: mockAnnot.annotations,
     applyHighlightsToDOM: vi.fn(),
     createBookmark: vi.fn(),
     createHighlight: vi.fn(),
@@ -41,6 +49,10 @@ vi.mock('../../hooks/useAnnotations', () => ({
     updateNote: vi.fn(),
     deleteAnnotation: vi.fn(),
     swapAnnotationOrder: vi.fn(),
+    setHighlightColor: mockAnnot.setHighlightColor,
+    setAnnotationThemes: vi.fn(),
+    allThemes: [],
+    refreshThemes: vi.fn(),
   }),
 }))
 
@@ -50,7 +62,14 @@ vi.mock('./TextSelectionPopup', () => ({ default: () => null }))
 vi.mock('./AnnotationsPanel', () => ({ default: () => <div>ANNOTATIONS PANEL</div> }))
 vi.mock('./BookmarksPanel', () => ({ default: () => <div>BOOKMARKS PANEL</div> }))
 vi.mock('./NotePopover', () => ({ default: () => null }))
-vi.mock('./AnnotationContextMenu', () => ({ default: () => null }))
+// Capture the props HtmlReader hands the context menu so a test can assert the
+// highlight-recolor wiring (onSetColor) is present in every render mode.
+vi.mock('./AnnotationContextMenu', () => ({
+  default: (props: Record<string, unknown>) => {
+    mockAnnot.ctxProps = props
+    return <div>CONTEXT MENU</div>
+  },
+}))
 
 import { libraryService } from '../../services/library'
 import { readerService } from '../../services/reader'
@@ -78,6 +97,8 @@ const threeChapterHtml =
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  mockAnnot.annotations = []
+  mockAnnot.ctxProps = null
   reader.loadChapter.mockResolvedValue('<p>lazy body</p>')
   // jsdom implements neither; the rAF scroll-restore effects call both.
   Element.prototype.scrollTo = vi.fn()
@@ -233,6 +254,38 @@ describe('HtmlReader — initial-chapter restore', () => {
     )
     // round(0.5 * (5-1)) = 2 → header label "3."
     expect(await screen.findByRole('button', { name: /^3\./ })).toBeInTheDocument()
+  })
+})
+
+// ── Highlight-recolor wiring (regression) ───────────────────────────────────────
+// The single-article render once omitted the required onSetColor prop, so clicking a
+// color swatch in the context menu crashed ("onSetColor is not a function"). The
+// paged/continuous renders always passed it. Assert every mode wires it. Because the
+// vacuous `tsc --noEmit` CI gate hid the missing-required-prop type error, this must
+// be caught behaviorally.
+describe('HtmlReader — context-menu highlight recolor', () => {
+  const openContextMenuOnMark = (container: HTMLElement) => {
+    const mark = container.querySelector('mark[data-annotation-id]') as HTMLElement
+    expect(mark).not.toBeNull()
+    act(() => {
+      fireEvent.contextMenu(mark)
+    })
+  }
+
+  it('passes onSetColor to the context menu in single-article mode', () => {
+    mockAnnot.annotations = [{ id: 'a1', type: 'highlight', color: 'yellow' }]
+    const { container } = render(
+      <HtmlReader
+        item={mkItem()}
+        content='<p>see <mark data-annotation-id="a1" data-type="highlight">this</mark></p>'
+        onBack={() => {}}
+      />,
+    )
+    openContextMenuOnMark(container)
+    expect(mockAnnot.ctxProps).not.toBeNull()
+    expect(typeof mockAnnot.ctxProps!.onSetColor).toBe('function')
+    ;(mockAnnot.ctxProps!.onSetColor as (id: string, c: string) => void)('a1', 'blue')
+    expect(mockAnnot.setHighlightColor).toHaveBeenCalledWith('a1', 'blue')
   })
 })
 

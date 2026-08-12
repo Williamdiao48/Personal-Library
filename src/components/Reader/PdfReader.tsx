@@ -1392,7 +1392,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
         return
       }
 
-      if (tag === 'INPUT') return
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
 
       // f — toggle fullscreen
       if (e.key === 'f') {
