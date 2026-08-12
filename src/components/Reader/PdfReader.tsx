@@ -23,7 +23,7 @@ import { useAnnotations } from '../../hooks/useAnnotations'
 import SearchBar from './SearchBar'
 import AnnotationsPanel from './AnnotationsPanel'
 import BookmarksPanel from './BookmarksPanel'
-import ThemePicker from '../Annotations/ThemePicker'
+import NoteEditorModal from './NoteEditorModal'
 import TextSelectionPopup from './TextSelectionPopup'
 import AnnotationContextMenu from './AnnotationContextMenu'
 import NotePopover from './NotePopover'
@@ -2269,50 +2269,19 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
 
       {/* Note editor modal */}
       {noteEditorState && (
-        <div className="note-editor-overlay" onClick={closeNoteEditor}>
-          <div className="note-editor-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="note-editor-header">
-              {noteEditorState.existingId
-                ? 'Edit note'
-                : `Add note — Page ${currentPageRef.current}`}
-            </div>
-            <textarea
-              className="note-editor-textarea"
-              value={noteText}
-              onChange={(e) => setNoteText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  savePdfNote()
-                }
-                if (e.key === 'Escape') {
-                  closeNoteEditor()
-                }
-              }}
-              autoFocus
-              rows={4}
-              placeholder="Write a note…"
-            />
-            <div className="note-editor-themes">
-              <label className="note-editor-themes-label">Themes</label>
-              <ThemePicker
-                value={noteThemes}
-                onChange={setNoteThemes}
-                allThemes={annot.allThemes}
-                onVocabChange={annot.refreshThemes}
-                idSuffix="note"
-              />
-            </div>
-            <div className="note-editor-actions">
-              <button className="annot-save-btn" onClick={savePdfNote}>
-                Save
-              </button>
-              <button className="annot-cancel-btn" onClick={closeNoteEditor}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <NoteEditorModal
+          title={
+            noteEditorState.existingId ? 'Edit note' : `Add note — Page ${currentPageRef.current}`
+          }
+          noteText={noteText}
+          onNoteTextChange={setNoteText}
+          themes={noteThemes}
+          onThemesChange={setNoteThemes}
+          allThemes={annot.allThemes}
+          onVocabChange={annot.refreshThemes}
+          onSave={savePdfNote}
+          onCancel={closeNoteEditor}
+        />
       )}
 
       {/* Text-selection popup (highlight swatches + Note) over the text layer */}
