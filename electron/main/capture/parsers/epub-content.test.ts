@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterAll } from 'vitest'
 import AdmZip from 'adm-zip'
 import { JSDOM } from 'jsdom'
-import { transformChapterHtml, type ChapterContext } from './epub-content'
+import { transformChapterHtml, extractEpubPlainText, type ChapterContext } from './epub-content'
+import { makeEpubFile, writeTempEpub, cleanupTempEpubs } from '../../../../test/fixtures/epub'
 
 // F9: the per-chapter rewrite now happens on a parsed DOM (no regex over raw
 // markup), with sanitize-html as the final step. These fixtures exercise the
@@ -224,5 +225,62 @@ describe('transformChapterHtml (F9 DOM rewriting)', () => {
     const out = transformChapterHtml('<div class="epub-settings-overlay" id="x">t</div>', ctx())
     expect(out).not.toMatch(/class=/i)
     expect(out).not.toMatch(/\bid=/i)
+  })
+})
+
+describe('extractEpubPlainText (import / FTS text-only path)', () => {
+  afterAll(() => cleanupTempEpubs())
+
+  it('concatenates chapter body text in spine order, tags stripped', () => {
+    const path = makeEpubFile({
+      chapters: [
+        { href: 'c1.xhtml', title: 'Ch 1', body: '<p>In a hole in the ground.</p>' },
+        { href: 'c2.xhtml', title: 'Ch 2', body: '<p>There lived a hobbit.</p>' },
+      ],
+    })
+    const text = extractEpubPlainText(path)
+    expect(text).toBe('In a hole in the ground. There lived a hobbit.')
+    expect(text).not.toMatch(/<[^>]+>/)
+  })
+
+  it('keeps inline-element text (a tag boundary becomes a space, as before)', () => {
+    // Behaviour-preserving quirk: replacing each tag with a space means an inline
+    // element flush against punctuation leaves a space (…hobbit</em>. → "hobbit .").
+    // The prior render-then-strip path produced the identical text.
+    const path = makeEpubFile({
+      chapters: [{ href: 'c1.xhtml', title: 'Ch', body: '<p>a <em>hobbit</em>.</p>' }],
+    })
+    expect(extractEpubPlainText(path)).toBe('a hobbit .')
+  })
+
+  it('excludes <head> (e.g. <title>), <script>, and <style> contents', () => {
+    // makeEpubFile wraps body in <head><title>…</title></head>; add inline
+    // script/style inside the body to prove their text never reaches the index.
+    const path = makeEpubFile({
+      chapters: [
+        {
+          href: 'c1.xhtml',
+          title: 'SECRETHEADWORD',
+          body: '<style>.x{color:SECRETCSSWORD}</style><p>Visible prose.</p><script>var SECRETJSWORD=1</script>',
+        },
+      ],
+    })
+    const text = extractEpubPlainText(path)
+    expect(text).toBe('Visible prose.')
+    expect(text).not.toContain('SECRETHEADWORD') // head <title> excluded
+    expect(text).not.toContain('SECRETCSSWORD') // <style> contents excluded
+    expect(text).not.toContain('SECRETJSWORD') // <script> contents excluded
+  })
+
+  it('decodes HTML entities', () => {
+    const path = makeEpubFile({
+      chapters: [{ href: 'c1.xhtml', title: 'Ch', body: '<p>Salt &amp; pepper &#38; more</p>' }],
+    })
+    expect(extractEpubPlainText(path)).toBe('Salt & pepper & more')
+  })
+
+  it('throws on a non-EPUB file (caller treats it as empty text)', () => {
+    const path = writeTempEpub(Buffer.from('not a zip at all'))
+    expect(() => extractEpubPlainText(path)).toThrow()
   })
 })
