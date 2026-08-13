@@ -238,12 +238,12 @@
 
 /* Dropdown panel for the theme combobox — reuses the .custom-select-options look
    (portaled via Headless UI anchor="bottom start", so it escapes modal/menu
-   overflow). It portals to <body>, so it must out-rank the note-editor overlay
-   (z-index 500); the base .custom-select-options z-index of 200 would render it
-   *behind* the compose modal. */
+   overflow). NOTE: the critical `z-index: 600` (out-ranks the note-editor overlay
+   at 500) lives in globals.css, not here — this file is only imported on the
+   annotations route, so keeping the z-index here left the reader's note modal
+   with the base 200 and the dropdown fell behind the note. */
 .theme-combobox-options {
   min-width: 180px;
-  z-index: 600;
 }
 .theme-combobox-options .custom-select-option {
   font-size: 12px;

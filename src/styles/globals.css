@@ -453,6 +453,17 @@ body,
   opacity: 0;
 }
 
+/* The theme-picker dropdown portals to <body>; when the picker is used inside
+   the note-editor modal (overlay z-index 500) the base z-index of 200 above
+   would render it *behind* the modal. This override MUST live in globals.css
+   (always loaded) — not annotations.css, which only the annotations route
+   imports, so in the reader the rule was missing and the dropdown fell behind
+   the note. Rest of the picker's styling stays in annotations.css, which
+   ThemePicker now imports itself. */
+.theme-combobox-options {
+  z-index: 600;
+}
+
 .custom-select-option {
   display: flex;
   align-items: center;

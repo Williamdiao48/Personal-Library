@@ -10,7 +10,8 @@ import AnnotationsPanel from './AnnotationsPanel'
 import BookmarksPanel from './BookmarksPanel'
 import NotePopover from './NotePopover'
 import AnnotationContextMenu from './AnnotationContextMenu'
-import ThemePicker from '../Annotations/ThemePicker'
+import NoteEditorModal from './NoteEditorModal'
+import { useMarkInteractions } from '../../hooks/useMarkInteractions'
 import type { Item, EpubBook, Annotation, AnnotationTheme, HighlightColor } from '../../types'
 import '../../styles/epub-reader.css'
 
@@ -733,41 +734,7 @@ export default function EpubReader({ item, onBack }: Props) {
   }, [chapter])
 
   // ── Note mark click + context menu handlers ───────────────────
-  useEffect(() => {
-    const container = contentRef.current
-    if (!container) return
-
-    const handleMarkClick = (e: MouseEvent) => {
-      const mark = (e.target as HTMLElement).closest(
-        'mark[data-annotation-id]',
-      ) as HTMLElement | null
-      if (!mark || mark.dataset.type !== 'note') return
-      const annotation = annot.annotations.find((a) => a.id === mark.dataset.annotationId)
-      if (!annotation?.note_text) return
-      const rect = mark.getBoundingClientRect()
-      setNotePopup({ x: rect.left + rect.width / 2, y: rect.top, annotation })
-    }
-
-    const handleContextMenu = (e: MouseEvent) => {
-      const mark = (e.target as HTMLElement).closest(
-        'mark[data-annotation-id]',
-      ) as HTMLElement | null
-      if (!mark) return
-      e.preventDefault()
-      const annotation = annot.annotations.find((a) => a.id === mark.dataset.annotationId)
-      if (!annotation) return
-      const rect = mark.getBoundingClientRect()
-      setNotePopup(null)
-      setContextMenu({ x: rect.left + rect.width / 2, y: rect.top, annotation })
-    }
-
-    container.addEventListener('click', handleMarkClick)
-    container.addEventListener('contextmenu', handleContextMenu)
-    return () => {
-      container.removeEventListener('click', handleMarkClick)
-      container.removeEventListener('contextmenu', handleContextMenu)
-    }
-  }, [annot.annotations, chapter])
+  useMarkInteractions(contentRef, annot.annotations, { setNotePopup, setContextMenu })
 
   // ── Navigation helpers ─────────────────────────────────────────
 
@@ -922,53 +889,22 @@ export default function EpubReader({ item, onBack }: Props) {
   } as React.CSSProperties
 
   const noteEditorModal = noteEditorState && (
-    <div className="note-editor-overlay" onClick={closeNoteEditor}>
-      <div className="note-editor-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="note-editor-header">
-          {noteEditorState.existingId ? 'Edit note' : 'Add note'}
-        </div>
-        {noteEditorState.range && !noteEditorState.existingId && (
-          <blockquote className="note-editor-quote">
-            {noteEditorState.range.toString().slice(0, 120)}
-          </blockquote>
-        )}
-        <textarea
-          className="note-editor-textarea"
-          value={noteText}
-          onChange={(e) => setNoteText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              saveNote()
-            }
-            if (e.key === 'Escape') {
-              closeNoteEditor()
-            }
-          }}
-          autoFocus
-          rows={4}
-          placeholder="Write a note…"
-        />
-        <div className="note-editor-themes">
-          <label className="note-editor-themes-label">Themes</label>
-          <ThemePicker
-            value={noteThemes}
-            onChange={setNoteThemes}
-            allThemes={annot.allThemes}
-            onVocabChange={annot.refreshThemes}
-            idSuffix="note"
-          />
-        </div>
-        <div className="note-editor-actions">
-          <button className="annot-save-btn" onClick={saveNote}>
-            Save
-          </button>
-          <button className="annot-cancel-btn" onClick={closeNoteEditor}>
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
+    <NoteEditorModal
+      title={noteEditorState.existingId ? 'Edit note' : 'Add note'}
+      quote={
+        noteEditorState.range && !noteEditorState.existingId
+          ? noteEditorState.range.toString().slice(0, 120)
+          : undefined
+      }
+      noteText={noteText}
+      onNoteTextChange={setNoteText}
+      themes={noteThemes}
+      onThemesChange={setNoteThemes}
+      allThemes={annot.allThemes}
+      onVocabChange={annot.refreshThemes}
+      onSave={saveNote}
+      onCancel={closeNoteEditor}
+    />
   )
 
   return (

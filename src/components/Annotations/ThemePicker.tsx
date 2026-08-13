@@ -2,6 +2,11 @@ import { useState } from 'react'
 import { Combobox, ComboboxInput, ComboboxOptions, ComboboxOption } from '@headlessui/react'
 import type { AnnotationTheme } from '../../types'
 import { annotationThemesService } from '../../services/annotationsService'
+// Own our styling (chips, input, and the portaled dropdown's z-index:600 that
+// must out-rank the note-editor modal). Previously only AnnotationsView loaded
+// annotations.css, so in the reader the theme dropdown fell back to the base
+// .custom-select-options z-index (200) and rendered *behind* the note modal.
+import '../../styles/annotations.css'
 
 interface Props {
   /** Currently-selected themes. */
