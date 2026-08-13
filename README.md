@@ -1,6 +1,8 @@
 # Personal Library
 
-A local-first desktop app for capturing, organizing, and reading web content — articles, fanfiction, web serials, EPUBs, and PDFs. No account, no backend, no sync. Everything lives on your machine.
+A local-first desktop app for capturing, organizing, and reading web content — articles, fanfiction, web serials, EPUBs, and PDFs. It runs fully offline and requires no account or server — your whole library lives on your machine. An **optional, opt-in cloud layer** (off by default) adds cross-device backup and sync when you want it.
+
+> **Engineering deep-dive → [ARCHITECTURE.md](ARCHITECTURE.md).** How the app is built and why: the local SQLite/FTS5 core, the custom local↔Postgres sync engine (whole-row LWW on a server-stamped clock), content-addressed blob backup via presigned URLs, the on-device recommender, and the testing/CI setup.
 
 ---
 
@@ -73,6 +75,7 @@ The installer is unsigned, so SmartScreen may show a warning:
 - **Trash & recovery** — deleted items move to Trash and can be restored within 30 days; auto-purged on next launch after that
 - **Full-text search** — FTS5 with partial-word matching as you type; indexes HTML, EPUB, and PDF content
 - **Reading stats** — 1-year activity heatmap, streaks, time/count/reading-list goals with progress rings, per-item breakdown with avg WPM and word count
+- **Optional cloud sync & backup** — sign in to back up chosen items and sync your library (metadata + files) across devices. Strictly opt-in and **off by default**, with per-item control over what leaves your machine; signed out, the app is byte-for-byte local-only. Built on a custom local↔Postgres sync engine with content-addressed file backup — see [ARCHITECTURE.md](ARCHITECTURE.md)
 - **Export & import** — `.plbackup` ZIP contains the full database + all content files; import relaunches cleanly
 - **Auto-updater** — on Windows & Linux, checks for new releases on launch; download and install from the in-app notification (macOS updates are manual — see [Updating](#updating))
 
@@ -80,7 +83,7 @@ The installer is unsigned, so SmartScreen may show a warning:
 
 ## Your Data
 
-All data is stored locally in your system's app data folder — no cloud, no account required.
+All data is stored locally in your system's app data folder — the app is fully functional without any account or cloud connection. (Cloud backup and cross-device sync exist but are strictly opt-in and off by default; nothing leaves your machine unless you sign in and choose it — see [Features](#features).)
 
 | Platform | Location |
 |---|---|
@@ -122,6 +125,8 @@ npm test             # Vitest (unit + integration)
 ---
 
 ## Architecture Overview
+
+The diagram below is the always-present **local core**. The optional cloud layer (identity, the Postgres library mirror, content-addressed blob backup, and the sync engine) sits on top of it and is covered in full — with the design tradeoffs behind each piece — in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -401,3 +406,5 @@ the only outbound requests are the same kind of public page fetches capture alre
 - `scroll_position` input clamped to `[0, 1]` with NaN guard before being written to SQLite
 - EPUB/HTML content is sanitized through a strict allowlist before storage — `<script>`, `<style>`, `<iframe>`, event handlers, and `class`/`id` attributes are all stripped
 - PDF rendered canvas-only via pdf.js with `isEvalSupported: false`, `disableFontFace: true`, `enableXfa: false` — no PDF JavaScript can execute
+
+The above is the local/renderer boundary. The **cloud layer's** security model — per-user isolation via Postgres RLS, storage access brokered by short-lived presigned URLs (no client ever holds a bucket-wide credential), and input hardening on the sync/upload path — is described in [ARCHITECTURE.md § Security model](ARCHITECTURE.md#8-security-model).
