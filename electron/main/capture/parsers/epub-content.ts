@@ -649,3 +649,79 @@ export function extractEpubContent(filePath: string): EpubBook {
 
   return { chapters }
 }
+
+// ── Text-only extraction (import / FTS) ──────────────────────────────────────
+
+/**
+ * Reduce one chapter's raw XHTML to plain body text — no DOM, no image inlining,
+ * no sanitize. Isolates <body> (dropping the <head>'s <title>/CSS, mirroring the
+ * render path, which strips text from body.innerHTML only), removes <script> /
+ * <style> blocks wholesale so their contents don't leak into the text, strips the
+ * remaining tags, and decodes entities.
+ *
+ * Regex over raw markup is deliberate here: the output is plain TEXT that is never
+ * re-rendered as HTML, so the F9 "no string surgery producing markup" rule does
+ * not apply (the render path in transformChapterHtml still sanitizes, DOM-based).
+ */
+function xhtmlToPlainText(xhtml: string): string {
+  const body = /<body[^>]*>([\s\S]*?)<\/body>/i.exec(xhtml)?.[1] ?? xhtml
+  return decodeEntities(
+    body.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+>/g, ' '),
+  )
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Extract an EPUB's readable plain text for the import word count + FTS index.
+ *
+ * Walks the spine with the SAME security caps as {@link extractEpubContent}
+ * (per-entry inflate guard + aggregate {@link ZIP_TOTAL_MAX_BYTES}) but skips the
+ * expensive render machinery — jsdom parse, base64 image inlining, link rewriting,
+ * and the sanitize-html pass — none of which affect the plain text. The import
+ * path only needs text/word-count (the reader re-renders from the stored .epub on
+ * open), so paying the render cost here just to strip it back to text is pure
+ * waste. Throws on an invalid EPUB, exactly like extractEpubContent; the caller
+ * ({@link extractEpub}) treats a throw as empty text + null word count.
+ *
+ * NOTE: unlike the render path this does NOT strip publisher running-header title
+ * nodes (stripLeadingTitleNodes), so a repeated chapter-header book title stays in
+ * the indexed text — harmless for search (the title is already indexed) and it
+ * slightly raises the word count. Replicating node-based header stripping in a
+ * text-only path isn't worth the cost.
+ */
+export function extractEpubPlainText(filePath: string): string {
+  const zip = new AdmZip(filePath)
+
+  const containerXml = readEntryTextCapped(zip, 'META-INF/container.xml') ?? ''
+  const opfPath = /full-path="([^"]+\.opf)"/i.exec(containerXml)?.[1]
+  if (!opfPath) throw new Error('Invalid EPUB: cannot find OPF file in container.xml')
+
+  const opfDir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1) : ''
+  const opfContent = readEntryTextCapped(zip, opfPath) ?? ''
+
+  const manifest = parseManifest(opfContent)
+  const spineHrefs = parseSpine(opfContent, manifest)
+  if (spineHrefs.length === 0) throw new Error('EPUB spine is empty — no readable content found.')
+
+  const parts: string[] = []
+  let totalInflated = 0
+  for (const href of spineHrefs) {
+    const zipPath = resolveZipPath(opfDir, href)
+    const entry = zip.getEntry(zipPath)
+    if (!entry) {
+      console.warn(`[epub-content] Missing spine entry: ${zipPath} — skipping`)
+      continue
+    }
+    // Same bomb guards as the render path: per-entry cap, then aggregate cap.
+    assertEntryInflateOk(entry)
+    totalInflated += entry.header.size
+    if (totalInflated > ZIP_TOTAL_MAX_BYTES) {
+      throw new Error('EPUB total decompressed size exceeds the allowed maximum.')
+    }
+    const text = xhtmlToPlainText(entry.getData().toString('utf8'))
+    if (text) parts.push(text)
+  }
+
+  return parts.join(' ')
+}

@@ -12,7 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { parseEpubMetadata } from '../parsers/epub'
-import { extractEpubContent } from '../parsers/epub-content'
+import { extractEpubPlainText } from '../parsers/epub-content'
 import type { EpubParseResult } from '../../workers/parse-protocol'
 
 // Re-export the canonical result type so both consumers (worker + container) can
@@ -26,10 +26,15 @@ function wordCountOf(text: string): number {
 
 /**
  * Extract an EPUB into the canonical {@link EpubParseResult}. Metadata always
- * resolves (parseEpubMetadata is internally fault-tolerant); content extraction is
+ * resolves (parseEpubMetadata is internally fault-tolerant); text extraction is
  * best-effort — a failure yields empty text + null word count while still
- * returning the (fault-tolerant) metadata. This mirrors the prior in-worker
- * behavior exactly.
+ * returning the (fault-tolerant) metadata.
+ *
+ * Text comes from the lean {@link extractEpubPlainText} (spine walk + tag strip),
+ * NOT the full render transform: the import only needs text + word count, and the
+ * reader re-renders from the stored .epub on open, so paying the render cost
+ * (jsdom, base64 image inlining, sanitize) here just to strip it back to text was
+ * pure waste.
  */
 export function extractEpub(filePath: string): EpubParseResult {
   const meta = parseEpubMetadata(filePath)
@@ -37,18 +42,10 @@ export function extractEpub(filePath: string): EpubParseResult {
   let plainText = ''
   let wordCount: number | null = null
   try {
-    const book = extractEpubContent(filePath)
-    plainText = book.chapters
-      .map((ch) =>
-        ch.html
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim(),
-      )
-      .join(' ')
+    plainText = extractEpubPlainText(filePath)
     wordCount = wordCountOf(plainText)
   } catch {
-    // content extraction failure is non-fatal
+    // text extraction failure is non-fatal
   }
 
   return {

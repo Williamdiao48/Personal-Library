@@ -44,8 +44,16 @@ export async function extractPdfText(data: Uint8Array): Promise<string> {
     const parts: string[] = []
     for (let p = 1; p <= doc.numPages; p++) {
       const page = await doc.getPage(p)
-      const content = await page.getTextContent()
-      parts.push(content.items.map((it) => ('str' in it ? it.str : '')).join(' '))
+      try {
+        const content = await page.getTextContent()
+        parts.push(content.items.map((it) => ('str' in it ? it.str : '')).join(' '))
+      } finally {
+        // Release this page's parsed operator list + font caches now that its text
+        // is materialized, so peak memory tracks a single page rather than the whole
+        // document (PDFs are capped at a hefty 200 MB). Synchronous on PDFPageProxy;
+        // safe here because getTextContent() has already resolved (no live render).
+        page.cleanup()
+      }
     }
     return parts.join(' ')
   } finally {
