@@ -277,6 +277,49 @@ describe('resolveEpubParse', () => {
     expect(h.parseEpub).toHaveBeenCalledWith('/tmp/book.epub')
     warn.mockRestore()
   })
+
+  it('retries locally when the cloud returns an empty EPUB result (no text, no title)', async () => {
+    // A 200 with empty text AND no title is a strong "container mis-parsed" signal
+    // for an EPUB (every real one has spine text) — the local worker likely handles it.
+    setCloudProcessingEnabled(true)
+    h.invoke.mockResolvedValue({
+      data: {
+        title: null,
+        author: null,
+        coverBase64: null,
+        coverExt: null,
+        plainText: '   ', // whitespace-only is still "empty" after trim
+        wordCount: 0,
+      },
+      error: null,
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = await resolveEpubParse('/tmp/book.epub')
+    expect(h.invoke).toHaveBeenCalledOnce() // cloud WAS tried…
+    expect(result.title).toBe('Local Title') // …but the local result is what's used
+    expect(h.parseEpub).toHaveBeenCalledWith('/tmp/book.epub')
+    warn.mockRestore()
+  })
+
+  it('accepts a cloud EPUB result that has a title even when its text is empty', async () => {
+    // A title present means the container parsed the OPF — not a total failure, so
+    // an empty body (e.g. a genuinely text-light book) is accepted, not retried.
+    setCloudProcessingEnabled(true)
+    h.invoke.mockResolvedValue({
+      data: {
+        title: 'Cloud Title',
+        author: null,
+        coverBase64: null,
+        coverExt: null,
+        plainText: '',
+        wordCount: 0,
+      },
+      error: null,
+    })
+    const result = await resolveEpubParse('/tmp/book.epub')
+    expect(result.title).toBe('Cloud Title')
+    expect(h.parseEpub).not.toHaveBeenCalled()
+  })
 })
 
 describe('resolvePdfParse', () => {
@@ -315,5 +358,25 @@ describe('resolvePdfParse', () => {
     expect(result).toEqual({ plainText: 'local pdf text', wordCount: 3 })
     expect(h.extractPdf).toHaveBeenCalledWith('/tmp/doc.pdf')
     warn.mockRestore()
+  })
+
+  it('accepts an empty cloud PDF result WITHOUT a local retry (scanned-PDF ambiguity)', async () => {
+    // Unlike EPUB, an empty PDF text result is legitimately ambiguous — a scanned /
+    // image-only PDF really has no extractable text — so it's accepted as-is.
+    setCloudProcessingEnabled(true)
+    h.invoke.mockResolvedValue({
+      data: {
+        title: null,
+        author: null,
+        coverBase64: null,
+        coverExt: null,
+        plainText: '',
+        wordCount: 0,
+      },
+      error: null,
+    })
+    const result = await resolvePdfParse('/tmp/doc.pdf')
+    expect(result).toEqual({ plainText: '', wordCount: 0 })
+    expect(h.extractPdf).not.toHaveBeenCalled()
   })
 })

@@ -61,6 +61,13 @@ function ensureWorker(): UtilityProcess {
     if (child !== c) return // superseded by a newer worker — this exit is stale
     child = null
     ready = false
+    // Drop any pre-spawn requests still queued: the worker died before 'spawn'
+    // (fork OOM/startup failure), so flush() never drained them. rejectAll below
+    // fails their promises; leaving them in the outbox would replay them onto the
+    // NEXT worker, which re-parses a file whose promise already rejected (the
+    // response is then dropped as an orphan). A non-empty outbox only exists in
+    // the pre-spawn window, so everything in it maps to a request rejectAll fails.
+    outbox.length = 0
     registry.rejectAll(new Error(`Parse worker exited (code ${code})`))
   })
 

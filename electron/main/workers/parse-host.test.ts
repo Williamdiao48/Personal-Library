@@ -118,6 +118,30 @@ describe('parse-host worker lifecycle (T1-1 race guards)', () => {
     expect(forkFn).toHaveBeenCalledTimes(2)
   })
 
+  it('a pre-spawn crash does not replay the dead request onto the next worker', async () => {
+    // Request 1 forks worker A, but A dies BEFORE emitting 'spawn' (fork OOM /
+    // startup failure) — so its queued message was never flushed.
+    const p1 = parse(host, '/a.epub')
+    const a = forked[0]
+    expect(a.postMessage).not.toHaveBeenCalled() // held in the outbox (A not ready)
+    a.emit('exit', 1)
+    await expect(p1).rejects.toThrow(/exited \(code 1\)/)
+
+    // Request 2 forks a fresh worker B. Once B spawns, ONLY request 2 is
+    // delivered: the dead request 1 (id 1, already rejected) must not be replayed
+    // onto B, where it would re-parse a file whose promise is gone.
+    const p2 = parse(host, '/b.epub')
+    const b = forked[1]
+    expect(forkFn).toHaveBeenCalledTimes(2)
+    b.emit('spawn')
+    expect(b.postMessage).toHaveBeenCalledTimes(1)
+    expect(b.postMessage.mock.calls[0][0]).toMatchObject({ id: 2, filePath: '/b.epub' })
+
+    // B still answers request 2 normally.
+    b.emit('message', { id: 2, ok: true, result: { title: 'OK', chapters: [] } })
+    await expect(p2).resolves.toMatchObject({ title: 'OK' })
+  })
+
   it('a current worker’s crash still rejects everything in flight', async () => {
     const p1 = parse(host, '/a.epub')
     const a = forked[0]
