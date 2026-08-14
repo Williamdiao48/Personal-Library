@@ -51,6 +51,23 @@
   padding-left: var(--epub-side-padding, 40px);
   padding-right: var(--epub-side-padding, 40px);
   box-sizing: border-box;
+  /* When a block fragments across a column break (a tall paragraph, or a wrapper
+     the parser couldn't flatten), repeat its side padding on every fragment
+     instead of only the first/last column. Primary fix is the parser's
+     container flattening; this is additive insurance for the flat-but-tall case.
+     (Chromium's clone across column fragments is historically unreliable, so it
+     is a belt-and-suspenders, not the load-bearing fix.) */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* Baseline paragraph rhythm for EPUBs that use <div> as their paragraph unit
+   instead of <p>. All source CSS is stripped, so without this such books render
+   with no gaps between paragraphs. The parser flattens *pure* wrapper containers
+   (no direct text), so a <div> surviving to here holds real text — a paragraph
+   leaf — and should space like one. (<p> keeps its own rule below.) */
+.epub-page-content div {
+  margin-bottom: 1.2em;
 }
 
 /* ── Column-break control ───────────────────────────────────────────────── */
