@@ -486,6 +486,130 @@ function markCoverImageNode(doc: Document): void {
   body.replaceChildren(img) // discard now-empty wrappers (<p>, <svg>, …)
 }
 
+// ── Container flattening ────────────────────────────────────────────────────
+
+// Generic block wrappers we flatten. Element grouping carries no visual meaning
+// here (all EPUB CSS is stripped), so unwrapping these is visually neutral —
+// while structurally it lets the renderer's per-block side padding apply on
+// every page. Everything else (p, headings, blockquote, pre, lists, table,
+// figure, …) is meaningful or has known CSS and is never touched.
+const FLATTEN_CONTAINER_TAGS = new Set(['DIV', 'SECTION', 'ARTICLE'])
+
+// Block-level content a phantom wrapper might swallow. Used to tell a structural
+// wrapper artifact from an inline link/marker.
+const BLOCK_CONTENT_SELECTOR =
+  'div,p,section,article,h1,h2,h3,h4,h5,h6,ul,ol,li,blockquote,pre,table,figure,hr,dl'
+
+// Fixed-point cap: enough for realistic wrapper nesting, bounded so a
+// pathological input can't spin.
+const MAX_UNWRAP_PASSES = 16
+
+/**
+ * A container is "pure" (safe to unwrap) iff it has no direct non-whitespace
+ * text of its own — every direct child is an element or layout whitespace. Such
+ * a container is a layout wrapper (`<div class="chapter">`, nested
+ * `<section><div>`, per-chapter `<section>`s), not content.
+ *
+ * A container that holds direct text is a div-as-paragraph *leaf* — kept, so the
+ * renderer's baseline CSS can give it paragraph spacing (see epub-reader.css).
+ */
+function isPureContainer(el: Element): boolean {
+  if (!FLATTEN_CONTAINER_TAGS.has(el.tagName)) return false
+  for (let n = el.firstChild; n; n = n.nextSibling) {
+    if (n.nodeType === 3 /* TEXT_NODE */ && (n.textContent ?? '').trim() !== '') return false
+  }
+  // Must actually WRAP block-level content. A div/section holding only inline
+  // content (a chapter number `<div><b>7</b></div>`, a heading `<div><span>…`)
+  // is a paragraph-like block, not a layout wrapper — keep it as its own block
+  // rather than dissolving it into an inline run.
+  return el.querySelector(BLOCK_CONTENT_SELECTOR) !== null
+}
+
+/**
+ * A "layout anchor" is a phantom <a> that wraps block content and carries no
+ * href. Its usual origin: a self-closing XHTML chapter bookmark `<a id="c07"/>`.
+ * jsdom parses chapters as HTML (like the renderer will), where `/>` on an <a>
+ * is meaningless — so the anchor is left UNCLOSED and the HTML adoption-agency
+ * algorithm reconstructs it around the rest of the chapter, wrapping every
+ * paragraph in one spanning <a>. As the sole direct child of the page that <a>
+ * swallows the renderer's per-child side padding on all interior columns.
+ *
+ * Unwrap it: it has no href (a bookmark target, not a link). Real links (with an
+ * href) are untouched — and this runs before rewriteLinkNodes, so hrefs are
+ * still intact here. Anchors that wrap only inline content don't break the
+ * layout, so they're left alone (smaller blast radius). The lost `id` is a
+ * non-issue: the sanitizer strips id anyway, and cross-chapter nav targets whole
+ * chapters, not intra-chapter ids.
+ */
+function isLayoutAnchor(el: Element): boolean {
+  return (
+    el.tagName === 'A' &&
+    !el.hasAttribute('href') &&
+    el.querySelector(BLOCK_CONTENT_SELECTOR) !== null
+  )
+}
+
+/** Rename an element to <div>, preserving its children (attributes are dropped —
+ *  they'd be stripped by the sanitizer anyway). */
+function retagToDiv(el: Element): void {
+  const div = el.ownerDocument.createElement('div')
+  while (el.firstChild) div.appendChild(el.firstChild)
+  el.replaceWith(div)
+}
+
+/**
+ * Some converters (notably Calibre) author ordinary paragraphs as
+ * `<blockquote>` — often deeply nested — using stripped CSS for indentation, not
+ * quotation. With the source CSS gone, the renderer's real blockquote styling
+ * (grey, italic, left border) would then paint the *entire book* as a quote.
+ *
+ * Detect that abuse and retag those blockquotes to plain <div> paragraphs (the
+ * later container flatten + baseline CSS then space them like any paragraph).
+ * Gated conservatively so a book's genuine, occasional quotes keep their styling:
+ * fire only on a Calibre class marker, or when blockquotes DOMINATE the chapter's
+ * block content (a real document quotes sparingly).
+ */
+function normalizeBlockquoteParagraphs(body: HTMLElement): void {
+  const bqs = Array.from(body.querySelectorAll('blockquote'))
+  if (bqs.length === 0) return
+  const totalBlocks = body.querySelectorAll(BLOCK_CONTENT_SELECTOR).length
+  const hasCalibreMarker = bqs.some((bq) => /calibre/i.test(bq.getAttribute('class') ?? ''))
+  const dominant = bqs.length >= 6 && totalBlocks > 0 && bqs.length / totalBlocks >= 0.5
+  if (!(hasCalibreMarker && bqs.length >= 3) && !dominant) return
+  for (const bq of bqs) retagToDiv(bq)
+}
+
+/**
+ * Flatten redundant wrappers so the chapter's real block elements become direct
+ * children of <body>: pure generic containers (div/section/article) and phantom
+ * layout anchors (see isPureContainer / isLayoutAnchor).
+ *
+ * WHY: the renderer applies side padding to `.epub-page-content > *` (direct
+ * children only). A chapter wrapped in a single element is one direct child that
+ * spans every column, and CSS multicolumn's default `box-decoration-break:
+ * slice` paints that box's horizontal padding on only the first column's left
+ * and the last column's right — so every interior page renders flush to the
+ * edges. Hoisting the wrapper's children up makes each real block a direct child
+ * that gets padded on the page it lands on.
+ *
+ * Runs before stripLeadingTitleNodes (so a title buried in a wrapper is now
+ * reachable) and before the final sanitize (F9: no string surgery after
+ * sanitize). Bounded fixed-point so nested wrappers collapse fully.
+ */
+function unwrapRedundantContainers(body: HTMLElement): void {
+  for (let pass = 0; pass < MAX_UNWRAP_PASSES; pass++) {
+    // Collect this pass's targets first, then mutate — replaceWith moves the
+    // children into the live tree, so a deeper wrapper surfaces on the next pass
+    // rather than being visited mid-iteration.
+    const targets: Element[] = []
+    for (const el of body.querySelectorAll('a, div, section, article')) {
+      if (el.tagName === 'A' ? isLayoutAnchor(el) : isPureContainer(el)) targets.push(el)
+    }
+    if (targets.length === 0) return
+    for (const el of targets) el.replaceWith(...el.childNodes)
+  }
+}
+
 // ── Internal link rewriting ────────────────────────────────────────────────
 
 /**
@@ -565,6 +689,8 @@ export function transformChapterHtml(xhtml: string, ctx: ChapterContext): string
     inlineImageNodes(doc, ctx.xhtmlDir, ctx.zip)
     inlineSvgImageNodes(doc, ctx.xhtmlDir, ctx.zip)
     markCoverImageNode(doc)
+    normalizeBlockquoteParagraphs(doc.body)
+    unwrapRedundantContainers(doc.body)
     rewriteLinkNodes(doc, ctx.xhtmlDir, ctx.spineHrefToIndex)
     stripLeadingTitleNodes(doc.body, ctx.bookTitle)
     return sanitizeHtml(doc.body.innerHTML, SANITIZE_OPTIONS)

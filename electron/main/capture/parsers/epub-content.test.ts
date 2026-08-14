@@ -228,6 +228,163 @@ describe('transformChapterHtml (F9 DOM rewriting)', () => {
   })
 })
 
+describe('transformChapterHtml — redundant container flattening', () => {
+  // WHY: side padding is applied to `.epub-page-content > *` (direct children).
+  // A chapter wrapped in one container is a single direct child spanning every
+  // column, so multicolumn's default box-decoration-break paints its horizontal
+  // padding on only the first/last column and interior pages render flush to the
+  // edges. Flattening pure wrappers makes each real block a direct child.
+
+  const bodyChildTags = (out: string): string[] =>
+    Array.from(parse(out).body.children).map((el) => el.tagName)
+
+  it('hoists a single wrapper <div> so paragraphs become top-level', () => {
+    const out = transformChapterHtml('<div><p>a</p><p>b</p></div>', ctx())
+    expect(out).not.toMatch(/<div/i)
+    expect(bodyChildTags(out)).toEqual(['P', 'P'])
+  })
+
+  it('flattens nested pure wrappers to the leaf block', () => {
+    const out = transformChapterHtml('<section><div><p>a</p></div></section>', ctx())
+    expect(out).not.toMatch(/<div|<section/i)
+    expect(bodyChildTags(out)).toEqual(['P'])
+  })
+
+  it('flattens a multi-<section> book into top-level paragraphs', () => {
+    const out = transformChapterHtml(
+      '<section><p>a</p></section><section><p>b</p></section>',
+      ctx(),
+    )
+    expect(out).not.toMatch(/<section/i)
+    expect(bodyChildTags(out)).toEqual(['P', 'P'])
+  })
+
+  it('keeps a <div> that holds its own text (div-as-paragraph leaf)', () => {
+    // Such a div is a paragraph unit, not a layout wrapper — kept so the
+    // renderer's baseline CSS can give it paragraph spacing.
+    const out = transformChapterHtml('<div>hello</div><div>world</div>', ctx())
+    expect(bodyChildTags(out)).toEqual(['DIV', 'DIV'])
+    expect(parse(out).body.textContent).toBe('helloworld')
+  })
+
+  it('unwraps a pure wrapper but preserves a div-paragraph nested inside it', () => {
+    const out = transformChapterHtml('<div><div>line one</div><p>line two</p></div>', ctx())
+    // Outer wrapper (no direct text) is removed; the inner text-bearing div stays.
+    expect(bodyChildTags(out)).toEqual(['DIV', 'P'])
+    expect(parse(out).body.querySelector('div')?.textContent).toBe('line one')
+  })
+
+  it('does not flatten meaningful block containers (blockquote, pre, lists)', () => {
+    const out = transformChapterHtml('<blockquote><p>q</p></blockquote><pre>code</pre>', ctx())
+    expect(bodyChildTags(out)).toEqual(['BLOCKQUOTE', 'PRE'])
+  })
+
+  it('leaves already-flat content unchanged', () => {
+    const out = transformChapterHtml('<p>a</p><p>b</p>', ctx())
+    expect(bodyChildTags(out)).toEqual(['P', 'P'])
+  })
+
+  it('still resolves a full-page cover wrapped in a <div> to a bare cover <img>', () => {
+    const out = transformChapterHtml(
+      '<div><img src="images/c.png"/></div>',
+      ctx({ xhtmlDir: 'text/', zip: zipWith({ 'text/images/c.png': PNG_1x1 }) }),
+    )
+    const doc = parse(out)
+    const img = doc.querySelector('img')
+    expect(img?.hasAttribute('data-epub-cover')).toBe(true)
+    expect(img?.parentElement?.tagName).toBe('BODY')
+    expect(doc.querySelector('div')).toBeNull()
+  })
+
+  it('strips a book-title running header buried inside a wrapper', () => {
+    // Flattening runs before title stripping, so a title inside a wrapper is now
+    // reachable as a leading node.
+    const out = transformChapterHtml(
+      '<div><h1>My Book</h1><p>Real text.</p></div>',
+      ctx({ bookTitle: 'My Book' }),
+    )
+    expect(out).not.toMatch(/my book/i)
+    expect(out).toContain('Real text.')
+  })
+
+  it('keeps a div that wraps only inline content as its own block', () => {
+    // A chapter-number `<div><b>7</b></div>` must stay a block, not dissolve into
+    // an inline run — it holds no block child, so it is a paragraph-like leaf.
+    const out = transformChapterHtml('<div><b>7</b></div><div>Body.</div>', ctx())
+    expect(bodyChildTags(out)).toEqual(['DIV', 'DIV'])
+    expect(parse(out).body.firstElementChild?.querySelector('b')?.textContent).toBe('7')
+  })
+})
+
+describe('transformChapterHtml — phantom layout anchors', () => {
+  const bodyChildTags = (out: string): string[] =>
+    Array.from(parse(out).body.children).map((el) => el.tagName)
+
+  it('unwraps a self-closing chapter anchor that the HTML parser wraps around the body', () => {
+    // `<a id="c1"/>` is not valid HTML self-close: the parser leaves <a> open and
+    // reconstructs it around the following blocks. Every paragraph ends up inside
+    // one spanning <a> — the exact "flush to the edges" cause in real Penguin EPUBs.
+    const out = transformChapterHtml('<p><a id="c1"/></p><div>One.</div><div>Two.</div>', ctx())
+    // No anchor should wrap block content.
+    expect(/<a[^>]*>\s*<div/i.test(out)).toBe(false)
+    expect(parse(out).body.querySelectorAll('div').length).toBe(2)
+  })
+
+  it('leaves a real (href-bearing) link that wraps a block intact', () => {
+    const out = transformChapterHtml('<a href="https://example.com"><div>card</div></a>', ctx())
+    const a = parse(out).querySelector('a')
+    expect(a?.getAttribute('href')).toBe('https://example.com')
+    expect(a?.querySelector('div')?.textContent).toBe('card')
+  })
+
+  it('leaves an href-less anchor around inline content alone', () => {
+    const out = transformChapterHtml('<p>see <a id="n1">note</a> here</p>', ctx())
+    expect(parse(out).querySelector('a')?.textContent).toBe('note')
+  })
+
+  it('after unwrapping, block paragraphs become top-level and keep their text', () => {
+    const out = transformChapterHtml('<p><a id="c1"/></p><div>Alpha.</div><div>Beta.</div>', ctx())
+    const divs = Array.from(parse(out).body.querySelectorAll('div'))
+    expect(divs.map((d) => d.textContent)).toEqual(['Alpha.', 'Beta.'])
+    expect(bodyChildTags(out)).toContain('DIV')
+  })
+})
+
+describe('transformChapterHtml — blockquote-as-paragraph normalization', () => {
+  const many = (n: number, cls = 'calibre15') =>
+    Array.from({ length: n }, (_, i) => `<blockquote class="${cls}">Para ${i}.</blockquote>`).join(
+      '',
+    )
+
+  it('retags Calibre blockquote-paragraphs to plain blocks (no quote styling)', () => {
+    const out = transformChapterHtml(`<div class="calibre1">${many(8)}</div>`, ctx())
+    expect(out).not.toMatch(/<blockquote/i)
+    expect(parse(out).body.querySelectorAll('div').length).toBe(8)
+  })
+
+  it('retags when blockquotes dominate even without a Calibre marker', () => {
+    const out = transformChapterHtml(many(7, 'x'), ctx())
+    expect(out).not.toMatch(/<blockquote/i)
+  })
+
+  it('collapses a nested blockquote heading to a single block, preserving text', () => {
+    const out = transformChapterHtml(
+      `<blockquote class="calibre5"><blockquote class="calibre6"><span>Twenty-six</span></blockquote></blockquote>${many(5)}`,
+      ctx(),
+    )
+    expect(out).not.toMatch(/<blockquote/i)
+    expect(parse(out).body.textContent).toContain('Twenty-six')
+  })
+
+  it('leaves a genuine, occasional blockquote quote styled as a quote', () => {
+    // One quote amid many paragraphs → not dominant, no marker → untouched.
+    const paras = Array.from({ length: 10 }, (_, i) => `<p>Body ${i}.</p>`).join('')
+    const out = transformChapterHtml(`${paras}<blockquote>An actual quotation.</blockquote>`, ctx())
+    expect(out).toMatch(/<blockquote/i)
+    expect(out).toContain('An actual quotation.')
+  })
+})
+
 describe('extractEpubPlainText (import / FTS text-only path)', () => {
   afterAll(() => cleanupTempEpubs())
 
