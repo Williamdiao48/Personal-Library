@@ -1,5 +1,7 @@
 import { describe, it, expect, afterAll } from 'vitest'
+import { randomBytes } from 'node:crypto'
 import { parseEpubMetadata } from './epub'
+import { COVER_MAX_BYTES } from '../../security/validation'
 import {
   buildEpub,
   makeEpubFile,
@@ -31,6 +33,27 @@ describe('parseEpubMetadata', () => {
     const meta = parseEpubMetadata(path)
     expect(meta.coverBuffer).not.toBeNull()
     expect(meta.coverExt).toBe('png')
+  })
+
+  it('drops a cover over the 10 MiB cap so local matches the cloud path', () => {
+    // A 10–25 MiB cover passes assertEntryInflateOk (ZIP_ENTRY_MAX_BYTES = 25 MiB)
+    // but is dropped by cloudExtractEpub's SEC-4 cap — local must agree, or the
+    // same file imports with a cover locally and cover-less through the cloud.
+    // Random (incompressible) bytes so the zip-bomb ratio guard doesn't fire —
+    // the cover-size cap must be what drops it, not assertEntryInflateOk.
+    const oversized = randomBytes(COVER_MAX_BYTES + 1)
+    const path = makeEpubFile({ cover: { href: 'big.png', data: oversized } })
+    const meta = parseEpubMetadata(path)
+    expect(meta.coverBuffer).toBeNull()
+    expect(meta.coverExt).toBeNull()
+  })
+
+  it('keeps a cover exactly at the cap (boundary is inclusive)', () => {
+    const atCap = randomBytes(COVER_MAX_BYTES)
+    const path = makeEpubFile({ cover: { href: 'edge.png', data: atCap } })
+    const meta = parseEpubMetadata(path)
+    expect(meta.coverBuffer).not.toBeNull()
+    expect(meta.coverBuffer!.length).toBe(COVER_MAX_BYTES)
   })
 
   it('returns null cover when none is declared', () => {

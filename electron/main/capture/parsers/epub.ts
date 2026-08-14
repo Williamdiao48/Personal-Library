@@ -4,6 +4,7 @@ import {
   readEntryTextCapped,
   assertEntryInflateOk,
   normalizeCoverExt,
+  COVER_MAX_BYTES,
 } from '../../security/validation'
 
 function escapeRegExp(s: string): string {
@@ -63,8 +64,17 @@ export function parseEpubMetadata(filePath: string): EpubMetadata {
       const entry = zip.getEntry(coverZipPath)
       if (entry) {
         assertEntryInflateOk(entry)
-        coverBuffer = entry.getData()
-        coverExt = normalizeCoverExt(extname(coverHref).slice(1))
+        // Enforce the shared 10 MiB cover cap here (mirrors cloudExtractEpub's
+        // SEC-4 cap) so local and cloud imports agree: an over-cap cover is
+        // dropped — the book imports cover-less rather than with a 10–25 MiB
+        // cover the cloud path would have discarded. `assertEntryInflateOk`
+        // already bounds the decompressed size to ZIP_ENTRY_MAX_BYTES (25 MiB),
+        // so getData() here is safe before this tighter cover-specific check.
+        const data = entry.getData()
+        if (data.length <= COVER_MAX_BYTES) {
+          coverBuffer = data
+          coverExt = normalizeCoverExt(extname(coverHref).slice(1))
+        }
       }
     }
 
