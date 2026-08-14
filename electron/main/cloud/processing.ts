@@ -212,7 +212,16 @@ export async function cloudExtractPdf(filePath: string): Promise<PdfParseResult>
 export async function resolveEpubParse(filePath: string): Promise<EpubParseResult> {
   if (await canCloudProcess()) {
     try {
-      return await cloudExtractEpub(filePath)
+      const res = await cloudExtractEpub(filePath)
+      // A cloud SUCCESS with empty text AND no title is a strong "the container
+      // mis-parsed this EPUB" signal (every real EPUB has spine text) — the local
+      // worker would likely handle it, so treat it as a soft failure and fall
+      // through. (PDFs are NOT retried this way: an empty PDF result is legitimately
+      // ambiguous — a scanned/image-only PDF really has no extractable text.)
+      if (res.plainText.trim() || res.title) return res
+      console.warn(
+        '[cloud-processing] cloud returned an empty EPUB result, retrying with local parse',
+      )
     } catch (err) {
       console.warn(
         '[cloud-processing] cloud extract failed, falling back to local parse:',
