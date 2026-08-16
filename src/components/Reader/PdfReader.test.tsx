@@ -18,6 +18,8 @@ import PdfReader, {
   scaleRectToPx,
   pointInRects,
   parseRects,
+  flattenTextLayer,
+  rangeForFoldedSpan,
   type TextItem,
 } from './PdfReader'
 import type { Item } from '../../types'
@@ -48,7 +50,15 @@ const h = vi.hoisted(() => {
     getPageIndex: async () => 0,
     destroy: () => {},
   }
-  return { fakeDoc }
+  // Mutable so a test can inject search matches before rendering.
+  const searchState: {
+    matches: { page: number; rects: number[][] }[]
+    matchCount: number
+    currentMatch: number
+    activeMatch: { page: number; rects: number[][] } | null
+    navNonce: number
+  } = { matches: [], matchCount: 0, currentMatch: 0, activeMatch: null, navNonce: 0 }
+  return { fakeDoc, searchState }
 })
 
 vi.mock('pdfjs-dist', () => ({
@@ -78,14 +88,18 @@ vi.mock('../../hooks/useReadingSession', () => ({
   useReadingSession: () => ({ recordActivity: vi.fn() }),
 }))
 vi.mock('../../hooks/usePdfSearch', () => ({
+  // Real folding — the reader uses it to measure text-layer rects.
+  foldText: (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(),
   usePdfSearch: () => ({
     buildIndex: vi.fn(),
     search: vi.fn(),
     goNext: vi.fn(),
     goPrev: vi.fn(),
-    matchCount: 0,
-    currentMatch: 0,
-    targetPage: null,
+    matches: h.searchState.matches,
+    matchCount: h.searchState.matchCount,
+    currentMatch: h.searchState.currentMatch,
+    activeMatch: h.searchState.activeMatch,
+    navNonce: h.searchState.navNonce,
     indexBuilt: false,
     indexing: false,
   }),
@@ -141,6 +155,13 @@ const ti = (str: string, x: number, y: number, width = str.length * 6): TextItem
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  Object.assign(h.searchState, {
+    matches: [],
+    matchCount: 0,
+    currentMatch: 0,
+    activeMatch: null,
+    navNonce: 0,
+  })
   reader.loadBinaryContent.mockResolvedValue(new Uint8Array([1, 2, 3]))
   convert.pdfToEpub.mockResolvedValue({ id: 'e9' })
   ;(HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = vi.fn(() => ({
@@ -161,6 +182,58 @@ beforeEach(() => {
 describe('toSpreadStart', () => {
   it('snaps every page to the odd left page of its two-page spread', () => {
     expect([1, 2, 3, 4, 5].map(toSpreadStart)).toEqual([1, 1, 3, 3, 5])
+  })
+})
+
+describe('flattenTextLayer', () => {
+  const layer = (html: string) => {
+    const d = document.createElement('div')
+    d.innerHTML = html
+    return d
+  }
+
+  it('folds and concatenates text spans with per-node offsets', () => {
+    const { folded, segs } = flattenTextLayer(layer('<span>the </span><span>quick</span>'))
+    expect(folded).toBe('the quick')
+    expect(segs.map((s) => s.foldedStart)).toEqual([0, 4])
+    expect(segs.map((s) => s.foldedLen)).toEqual([4, 5])
+  })
+
+  it('inserts a space at a <br> line break', () => {
+    const { folded } = flattenTextLayer(layer('<span>end</span><br><span>start</span>'))
+    expect(folded).toBe('end start')
+  })
+
+  it('descends into markedContent wrappers and folds diacritics', () => {
+    const { folded } = flattenTextLayer(
+      layer('<span class="markedContent"><span>Café</span></span>'),
+    )
+    expect(folded).toBe('cafe')
+  })
+})
+
+describe('rangeForFoldedSpan', () => {
+  const layer = (html: string) => {
+    const d = document.createElement('div')
+    d.innerHTML = html
+    return d
+  }
+
+  it('spans a match that sits inside a single text node', () => {
+    const { segs } = flattenTextLayer(layer('<span>the quick fox</span>'))
+    const range = rangeForFoldedSpan(segs, 4, 9)! // "quick"
+    expect(range.startContainer).toBe(segs[0].node)
+    expect(range.startOffset).toBe(4)
+    expect(range.endOffset).toBe(9)
+  })
+
+  it('spans a match that crosses two text nodes', () => {
+    const { segs } = flattenTextLayer(layer('<span>wor</span><span>ld</span>')) // "world"
+    const range = rangeForFoldedSpan(segs, 0, 5)!
+    expect(range.startContainer).toBe(segs[0].node)
+    expect(range.startOffset).toBe(0)
+    expect(range.endContainer).toBe(segs[1].node)
+    expect(range.endOffset).toBe(2)
   })
 })
 
@@ -401,6 +474,30 @@ describe('PdfReader — header interactions', () => {
     expect(screen.getByText('SEARCH BAR')).toBeInTheDocument()
     fireEvent.click(screen.getByText('close-search'))
     expect(screen.queryByText('SEARCH BAR')).toBeNull()
+  })
+
+  it('draws search-match overlays and emphasizes + centers the active match', async () => {
+    Object.assign(h.searchState, {
+      matches: [
+        { page: 1, rects: [[100, 100, 40, 12]] },
+        { page: 1, rects: [[200, 300, 40, 12]] },
+      ],
+      matchCount: 2,
+      currentMatch: 1,
+      activeMatch: { page: 1, rects: [[100, 100, 40, 12]] },
+      navNonce: 1,
+    })
+    const { container } = renderPdf()
+    await screen.findByText('A PDF')
+    fireEvent.click(screen.getByRole('button', { name: 'Search in content' }))
+
+    // Both occurrences drawn; exactly one is the active (emphasized) match.
+    await waitFor(() => {
+      expect(container.querySelectorAll('.pdf-search-rect').length).toBeGreaterThanOrEqual(2)
+    })
+    expect(container.querySelectorAll('.pdf-search-rect.is-active')).toHaveLength(1)
+    // The active match is scrolled to center once its overlay is laid out.
+    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled())
   })
 
   it('opens zoom settings and resets to 75% via the Default preset', async () => {

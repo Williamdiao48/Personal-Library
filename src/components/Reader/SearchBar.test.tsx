@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import SearchBar from './SearchBar'
+import { readerService } from '../../services/reader'
+
+vi.mock('../../services/reader', () => ({
+  readerService: { resyncFocus: vi.fn() },
+}))
 
 function renderBar(over: Partial<React.ComponentProps<typeof SearchBar>> = {}) {
   const props = {
@@ -20,6 +25,19 @@ function renderBar(over: Partial<React.ComponentProps<typeof SearchBar>> = {}) {
 beforeEach(() => vi.clearAllMocks())
 
 describe('SearchBar', () => {
+  it('auto-focuses the input on open', () => {
+    renderBar()
+    expect(document.activeElement).toBe(screen.getByPlaceholderText('Search in content…'))
+  })
+
+  it('requests a focus resync on open only when resyncFocusOnOpen is set (PDF reader)', () => {
+    renderBar()
+    expect(readerService.resyncFocus).not.toHaveBeenCalled()
+    vi.clearAllMocks()
+    renderBar({ resyncFocusOnOpen: true })
+    expect(readerService.resyncFocus).toHaveBeenCalledTimes(1)
+  })
+
   it('emits query changes', () => {
     const props = renderBar()
     fireEvent.change(screen.getByPlaceholderText('Search in content…'), {

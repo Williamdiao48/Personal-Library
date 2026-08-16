@@ -375,6 +375,26 @@
   color: rgba(140, 100, 255, 1);
 }
 
+/* ── PDF search-match highlights ───────────────────────────────
+   Separate layer above the annotation overlays so search never interferes with
+   annotation hit-testing. Every occurrence stays highlighted (soft yellow); the
+   active match is emphasized (orange), matching browser find. */
+.pdf-search-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+.pdf-search-rect {
+  position: absolute;
+  border-radius: 1px;
+  background: rgba(250, 204, 21, 0.45);
+}
+.pdf-search-rect.is-active {
+  background: rgba(249, 115, 22, 0.6);
+  box-shadow: 0 0 0 1.5px rgba(234, 88, 12, 0.9);
+}
+
 /* ── PDF → EPUB conversion modal ───────────────────────────── */
 
 .convert-overlay {

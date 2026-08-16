@@ -18,7 +18,7 @@ import { libraryService } from '../../services/library'
 import { readerService } from '../../services/reader'
 import { convertService } from '../../services/convert'
 import { useReadingSession } from '../../hooks/useReadingSession'
-import { usePdfSearch } from '../../hooks/usePdfSearch'
+import { usePdfSearch, foldText } from '../../hooks/usePdfSearch'
 import { useAnnotations } from '../../hooks/useAnnotations'
 import SearchBar from './SearchBar'
 import AnnotationsPanel from './AnnotationsPanel'
@@ -148,6 +148,115 @@ export function parseRects(json: string | null): number[][] {
   } catch {
     return []
   }
+}
+
+// ── Search-highlight geometry from the rendered text layer ──────────────────
+// item.width-derived rects assume uniform per-character advance, which drifts on
+// proportional fonts (an "i" ≠ a "W") and mis-boxes matches inside a one-item
+// line. So for *visible* pages we measure the real glyph rects from the pdf.js
+// text layer with a DOM Range — pixel-identical to a text selection. The
+// item-based index (usePdfSearch) still drives match counting/navigation across
+// off-screen pages, where an approximate rect is never actually seen.
+
+export interface TextLayerSeg {
+  node: Text
+  foldedStart: number // offset of this node's text in the folded page string
+  foldedLen: number
+  rawLen: number // raw (unfolded) length, for mapping a folded offset → DOM offset
+}
+
+/** Flatten a rendered pdf.js text layer into one folded string + the text nodes
+ *  it came from, inserting a space at each <br> line break so the folded text
+ *  lines up with the item-based index's EOL handling. */
+export function flattenTextLayer(container: HTMLElement): {
+  folded: string
+  segs: TextLayerSeg[]
+} {
+  let folded = ''
+  const segs: TextLayerSeg[] = []
+  const walk = (node: Node) => {
+    for (let c = node.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType === 3 /* TEXT_NODE */) {
+        const raw = c.textContent ?? ''
+        const f = foldText(raw)
+        if (f.length > 0) {
+          segs.push({
+            node: c as Text,
+            foldedStart: folded.length,
+            foldedLen: f.length,
+            rawLen: raw.length,
+          })
+          folded += f
+        }
+      } else if ((c as Element).tagName === 'BR') {
+        if (folded && !/\s$/.test(folded)) folded += ' '
+      } else {
+        walk(c) // markedContent wrapper / any nesting
+      }
+    }
+  }
+  walk(container)
+  return { folded, segs }
+}
+
+/** Map a folded [start,end) span to a DOM Range across the layer's text nodes.
+ *  Folding is per-character length-preserving for the precomposed accents PDFs
+ *  use, so a folded offset within a node maps 1:1 to its DOM offset (clamped). */
+export function rangeForFoldedSpan(segs: TextLayerSeg[], s: number, e: number): Range | null {
+  let start: { node: Text; off: number } | null = null
+  let end: { node: Text; off: number } | null = null
+  let prevEnd: { node: Text; off: number } | null = null
+  for (const seg of segs) {
+    const segEnd = seg.foldedStart + seg.foldedLen
+    if (start === null && s < segEnd) {
+      const within = Math.max(0, s - seg.foldedStart)
+      start = { node: seg.node, off: Math.min(seg.rawLen, within) }
+    }
+    if (e <= segEnd) {
+      end =
+        e > seg.foldedStart
+          ? { node: seg.node, off: Math.min(seg.rawLen, e - seg.foldedStart) }
+          : prevEnd
+      break
+    }
+    prevEnd = { node: seg.node, off: seg.rawLen }
+  }
+  if (!start) return null
+  if (!end) end = prevEnd
+  if (!end) return null
+  const range = document.createRange()
+  try {
+    range.setStart(start.node, start.off)
+    range.setEnd(end.node, end.off)
+  } catch {
+    return null
+  }
+  return range
+}
+
+/** Accurate scale-1 rects for every occurrence of `foldedQuery` on a rendered
+ *  page, measured from its text layer. `[]` if the layer isn't built/scaled. */
+export function measureTextLayerMatches(container: HTMLElement, foldedQuery: string): number[][][] {
+  const wrap = container.closest<HTMLElement>('[data-page]')
+  const scale = parseFloat(container.style.getPropertyValue('--scale-factor'))
+  if (!wrap || !scale || !foldedQuery) return []
+  const { folded, segs } = flattenTextLayer(container)
+  if (!folded) return []
+  const origin = wrap.getBoundingClientRect()
+  const out: number[][][] = []
+  let from = 0
+  for (;;) {
+    const s = folded.indexOf(foldedQuery, from)
+    if (s < 0) break
+    const e = s + foldedQuery.length
+    const range = rangeForFoldedSpan(segs, s, e)
+    if (range) {
+      const rects = clientRectsToScale1(range.getClientRects(), origin.left, origin.top, scale)
+      if (rects.length) out.push(rects)
+    }
+    from = e
+  }
+  return out
 }
 
 export interface PdfLine {
@@ -618,6 +727,15 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   const scrollTextLayerRefs = useRef<Map<number, HTMLDivElement>>(new Map()) // page → textLayer div
   const textLayerInstances = useRef<Map<number, { cancel: () => void }>>(new Map()) // page → TextLayer
 
+  // Search: the active match's first overlay rect (for scroll-into-center) + a
+  // flag that a center is pending, so unrelated re-renders (scroll, zoom) that
+  // refire the centering effect don't yank the view back onto the match.
+  const activeSearchRectRef = useRef<HTMLDivElement>(null)
+  const pendingCenterRef = useRef(false)
+  // Latest per-page measure fn (reassigned each render so buildTextLayer, a
+  // stable callback, can call it with the current query/state via a ref).
+  const measureRef = useRef<((pageNum: number) => void) | null>(null)
+
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
   const [totalPages, setTotalPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
@@ -627,6 +745,9 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   const [showSettings, setShowSettings] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  // Accurate, text-layer-measured search rects per (visible) page: page → match →
+  // rects (scale-1 px). Off-screen pages fall back to the index's item rects.
+  const [searchRects, setSearchRects] = useState<Record<number, number[][][]>>({})
   const [editing, setEditing] = useState(false)
   const [pageInput, setPageInput] = useState('')
   const [editingZoom, setEditingZoom] = useState(false)
@@ -847,6 +968,72 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       })
   }
 
+  // The rendered text-layer container for a page, if it's currently mounted.
+  function textLayerContainer(pageNum: number): HTMLDivElement | null {
+    if (viewModeRef.current === 'scroll') return scrollTextLayerRefs.current.get(pageNum) ?? null
+    if (pageNum === currentPageRef.current) return leftTextLayerRef.current
+    if (pageNum === currentPageRef.current + 1) return rightTextLayerRef.current
+    return null
+  }
+
+  // Measure accurate search rects for one page from its text layer and merge them
+  // in. No-op unless search is active with a ≥2-char query and the layer exists.
+  function measurePage(pageNum: number) {
+    if (!showSearch) return
+    const q = foldText(searchQuery.trim())
+    if (q.length < 2) return
+    const container = textLayerContainer(pageNum)
+    if (!container || container.childNodes.length === 0) return
+    const rects = measureTextLayerMatches(container, q)
+    setSearchRects((prev) => ({ ...prev, [pageNum]: rects }))
+  }
+  measureRef.current = measurePage
+
+  // Render the search-match overlays for one page. Percentage-of-scale-1 boxes
+  // (like pageOverlays) in a separate layer so they never touch annotation
+  // hit-testing. Prefers text-layer-measured rects (accurate on visible pages),
+  // falling back to the index's item rects for pages not yet measured. Every
+  // occurrence stays highlighted; the active one gets .is-active (+ the ref used
+  // for scroll-into-center).
+  function pageSearchOverlays(pageNum: number) {
+    if (!showSearch) return null
+    const dim = pageDims[pageNum - 1]
+    if (!dim) return null
+    const { width: pw, height: ph } = dim
+    if (!pw || !ph) return null
+    const pageMatches = pdfSearch.matches.filter((m) => m.page === pageNum)
+    if (pageMatches.length === 0) return null
+    const measured = searchRects[pageNum] // aligned with pageMatches order
+    // Active global match → its page + ordinal within that page.
+    const activeGlobal = pdfSearch.matches[pdfSearch.currentMatch - 1]
+    const activePage = activeGlobal?.page
+    const activeOrdinal = activeGlobal
+      ? pdfSearch.matches.slice(0, pdfSearch.currentMatch - 1).filter((m) => m.page === activePage)
+          .length
+      : -1
+    const out: React.ReactNode[] = []
+    pageMatches.forEach((m, ord) => {
+      const rects = measured?.[ord] ?? m.rects
+      const isActive = pageNum === activePage && ord === activeOrdinal
+      rects.forEach((rect, ri) => {
+        out.push(
+          <div
+            key={`s${ord}-${ri}`}
+            ref={isActive && ri === 0 ? activeSearchRectRef : undefined}
+            className={`pdf-search-rect${isActive ? ' is-active' : ''}`}
+            style={{
+              left: `${(rect[0] / pw) * 100}%`,
+              top: `${(rect[1] / ph) * 100}%`,
+              width: `${(rect[2] / pw) * 100}%`,
+              height: `${(rect[3] / ph) * 100}%`,
+            }}
+          />,
+        )
+      })
+    })
+    return out
+  }
+
   // Conversion state
   const [converting, setConverting] = useState(false)
   const [convertStep, setConvertStep] = useState('')
@@ -1048,6 +1235,8 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
       // Note: pageScales (read by capture/hit-testing) is set by the render paths
       // the moment the canvas resizes, not here — waiting on the text-layer render
       // left it a frame stale right after a zoom.
+      // Now that the layer's glyphs exist, (re)measure this page's search rects.
+      measureRef.current?.(pageNum)
     },
     [],
   )
@@ -1352,16 +1541,75 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     [scheduleSave, recordActivity],
   )
 
-  // Drive PDF search navigation: whenever targetPage changes, jump to it.
-  // We skip page 0 (means no match selected) and only act when ready.
+  // Drive PDF search navigation: on every active-match change (navNonce bumps
+  // even when the page is unchanged), jump to the match's page and flag that a
+  // center is pending. The centering effect below finishes the job once the
+  // overlay rect is actually laid out.
   useEffect(() => {
-    if (pdfSearch.targetPage > 0 && !loading) goTo(pdfSearch.targetPage)
-  }, [pdfSearch.targetPage]) // eslint-disable-line react-hooks/exhaustive-deps
+    const m = pdfSearch.activeMatch
+    if (!m || loading) return
+    pendingCenterRef.current = true
+    goTo(m.page)
+  }, [pdfSearch.navNonce, loading]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Center the active match once its overlay rect exists and is sized. Refires on
+  // the renders that change that geometry (page mount after goTo, zoom, relayout)
+  // but only acts while a center is pending, so scrolling/zooming later doesn't
+  // pull the view back. scrollIntoView walks the right scroll container in either
+  // view mode, so it centers correctly in both spread and scroll.
+  useEffect(() => {
+    if (!pendingCenterRef.current) return
+    if (!activeSearchRectRef.current) return
+    const id = requestAnimationFrame(() => {
+      activeSearchRectRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+        inline: 'center',
+      })
+      pendingCenterRef.current = false
+    })
+    return () => cancelAnimationFrame(id)
+    // Broad deps so the center retries once the overlay rect actually exists and
+    // is sized (page mount after load/goTo, dims fetch, zoom, relayout); the
+    // pendingCenterRef guard makes every extra fire a cheap no-op.
+  }, [
+    pdfSearch.navNonce,
+    showSearch,
+    loading,
+    currentPage,
+    viewMode,
+    zoom,
+    renderKey,
+    pageScales,
+    pageDims,
+  ])
 
   // Re-run search whenever the query changes (after index is built).
   useEffect(() => {
     if (pdfSearch.indexBuilt) pdfSearch.search(searchQuery)
   }, [searchQuery, pdfSearch.indexBuilt]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // (Re)measure text-layer search rects for every currently-mounted page when the
+  // query or search state changes, replacing any rects from a previous query.
+  // As other pages render/scroll into view, buildTextLayer measures them and
+  // merges in. Empty query / closed search clears everything.
+  useEffect(() => {
+    const q = foldText(searchQuery.trim())
+    if (!showSearch || q.length < 2) {
+      setSearchRects({})
+      return
+    }
+    const pages =
+      viewMode === 'scroll'
+        ? [...scrollTextLayerRefs.current.keys()]
+        : [currentPage, currentPage + 1].filter((p) => p >= 1 && p <= totalPages)
+    const next: Record<number, number[][][]> = {}
+    for (const p of pages) {
+      const c = textLayerContainer(p)
+      if (c && c.childNodes.length > 0) next[p] = measureTextLayerMatches(c, q)
+    }
+    setSearchRects(next)
+  }, [searchQuery, showSearch, currentPage, viewMode, totalPages])
 
   function openSearch() {
     setShowSearch(true)
@@ -1908,6 +2156,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
             onPrev={pdfSearch.goPrev}
             onClose={closeSearch}
             statusOverride={pdfSearch.indexing ? 'Indexing…' : undefined}
+            resyncFocusOnOpen
           />
         ) : (
           <span className="reader-header-title">{item.title}</span>
@@ -2169,6 +2418,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
                   <canvas ref={leftCanvasRef} />
                   <div className="textLayer" ref={leftTextLayerRef} />
                   <div className="pdf-highlight-layer">{pageOverlays(currentPage)}</div>
+                  <div className="pdf-search-layer">{pageSearchOverlays(currentPage)}</div>
                 </div>
                 {showRight && (
                   <div
@@ -2180,6 +2430,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
                     <canvas ref={rightCanvasRef} />
                     <div className="textLayer" ref={rightTextLayerRef} />
                     <div className="pdf-highlight-layer">{pageOverlays(currentPage + 1)}</div>
+                    <div className="pdf-search-layer">{pageSearchOverlays(currentPage + 1)}</div>
                   </div>
                 )}
               </div>
@@ -2212,6 +2463,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
                     <canvas ref={setScrollCanvas(pageNum)} />
                     <div className="textLayer" ref={setScrollTextLayer(pageNum)} />
                     <div className="pdf-highlight-layer">{pageOverlays(pageNum)}</div>
+                    <div className="pdf-search-layer">{pageSearchOverlays(pageNum)}</div>
                   </div>
                 )
               })}
