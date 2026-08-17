@@ -198,14 +198,18 @@ describe('usePdfSearch — indexing', () => {
 })
 
 describe('usePdfSearch — search', () => {
-  it('finds every occurrence in reading order and selects the first', async () => {
+  it('finds every occurrence in reading order but selects none until you navigate', async () => {
     const { result } = renderHook(() => usePdfSearch())
     await build(result, ['cat dog cat', 'bird', 'cat fish'])
     act(() => result.current.search('cat'))
     expect(result.current.matchCount).toBe(3) // 2 on page 1, 1 on page 3
+    expect(result.current.currentMatch).toBe(0) // decoupled — no jump while typing
+    expect(result.current.activeMatch).toBeNull()
+    expect(result.current.matches.map((m) => m.page)).toEqual([1, 1, 3])
+    // The first goNext selects the first match.
+    act(() => result.current.goNext())
     expect(result.current.currentMatch).toBe(1)
     expect(result.current.activeMatch?.page).toBe(1)
-    expect(result.current.matches.map((m) => m.page)).toEqual([1, 1, 3])
     expect(result.current.activeMatch?.rects.length).toBeGreaterThan(0)
   })
 
@@ -216,15 +220,16 @@ describe('usePdfSearch — search', () => {
     expect(result.current.matchCount).toBe(1)
     act(() => result.current.search('cafe'))
     expect(result.current.matchCount).toBe(1)
-    expect(result.current.activeMatch?.page).toBe(1)
   })
 
-  it('bumps navNonce on each search so the reader re-navigates', async () => {
+  it('does NOT bump navNonce on search (no jump while typing), only on navigation', async () => {
     const { result } = renderHook(() => usePdfSearch())
     await build(result, ['cat'])
     const before = result.current.navNonce
     act(() => result.current.search('cat'))
-    expect(result.current.navNonce).toBeGreaterThan(before)
+    expect(result.current.navNonce).toBe(before) // typing doesn't move the page
+    act(() => result.current.goNext())
+    expect(result.current.navNonce).toBeGreaterThan(before) // Enter/↑↓ does
   })
 
   it('resets to zero for a blank or too-short query', async () => {
@@ -257,10 +262,13 @@ describe('usePdfSearch — search', () => {
 })
 
 describe('usePdfSearch — navigation', () => {
-  it('goNext cycles through matches and wraps back to the first', async () => {
+  it('goNext selects the first match, then cycles and wraps', async () => {
     const { result } = renderHook(() => usePdfSearch())
     await build(result, ['cat', 'cat'])
     act(() => result.current.search('cat'))
+    act(() => result.current.goNext())
+    expect(result.current.currentMatch).toBe(1) // first goNext = first match
+    expect(result.current.activeMatch?.page).toBe(1)
     act(() => result.current.goNext())
     expect(result.current.currentMatch).toBe(2)
     expect(result.current.activeMatch?.page).toBe(2)
@@ -269,11 +277,11 @@ describe('usePdfSearch — navigation', () => {
     expect(result.current.activeMatch?.page).toBe(1)
   })
 
-  it('goPrev wraps from the first match to the last', async () => {
+  it('goPrev from a fresh search selects the last match', async () => {
     const { result } = renderHook(() => usePdfSearch())
     await build(result, ['cat', 'bird', 'cat'])
     act(() => result.current.search('cat'))
-    expect(result.current.currentMatch).toBe(1)
+    expect(result.current.currentMatch).toBe(0) // none selected yet
     act(() => result.current.goPrev())
     expect(result.current.currentMatch).toBe(2) // 2 matches: pages 1 and 3
     expect(result.current.activeMatch?.page).toBe(3) // last match's page

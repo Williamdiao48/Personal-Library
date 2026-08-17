@@ -29,7 +29,7 @@ export function useTextHighlight(
   const [matchCount, setMatchCount] = useState(0)
   const [currentMatch, setCurrentMatch] = useState(0)
   const marksRef = useRef<HTMLElement[]>([])
-  const currentRef = useRef(0)
+  const currentRef = useRef(-1) // -1 = matches exist but none navigated-to yet
   const onActivateRef = useRef(onActivate)
   onActivateRef.current = onActivate // keep ref in sync without adding it to effect deps
 
@@ -50,17 +50,13 @@ export function useTextHighlight(
 
     const marks = applyHighlights(container, trimmed)
     marksRef.current = marks
-    const total = marks.length
-    setMatchCount(total)
+    setMatchCount(marks.length)
 
-    if (total > 0) {
-      currentRef.current = 0
-      setCurrentMatch(1)
-      activateMark(marks, 0, onActivateRef.current)
-    } else {
-      currentRef.current = 0
-      setCurrentMatch(0)
-    }
+    // Decoupled: highlight all matches as the user types, but DON'T activate/scroll
+    // to one. Navigation (scroll / page-flip via onActivate) is deferred to
+    // goNext/goPrev (Enter/↑/↓) so the page never moves mid-type. -1 = none selected.
+    currentRef.current = -1
+    setCurrentMatch(0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, contentKey])
 
@@ -76,7 +72,7 @@ export function useTextHighlight(
   const goNext = useCallback(() => {
     const marks = marksRef.current
     if (marks.length === 0) return
-    const next = (currentRef.current + 1) % marks.length
+    const next = currentRef.current < 0 ? 0 : (currentRef.current + 1) % marks.length
     currentRef.current = next
     setCurrentMatch(next + 1)
     activateMark(marks, next, onActivateRef.current)
@@ -85,7 +81,10 @@ export function useTextHighlight(
   const goPrev = useCallback(() => {
     const marks = marksRef.current
     if (marks.length === 0) return
-    const prev = (currentRef.current - 1 + marks.length) % marks.length
+    const prev =
+      currentRef.current < 0
+        ? marks.length - 1
+        : (currentRef.current - 1 + marks.length) % marks.length
     currentRef.current = prev
     setCurrentMatch(prev + 1)
     activateMark(marks, prev, onActivateRef.current)

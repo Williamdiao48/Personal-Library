@@ -148,6 +148,7 @@ export default function EpubReader({ item, onBack }: Props) {
   const bookRef = useRef<EpubBook | null>(null)
   const outerWidthRef = useRef(0) // mirrors outerWidth
   const xAnimRef = useRef<XAnim | null>(null) // mirrors xAnim
+  const showSearchRef = useRef(false) // mirrors showSearch (read in handleSearchActivate)
   const chapterPageCountsRef = useRef<number[]>([]) // mirrors chapterPageCounts
   // Carries the within-chapter page from initial localStorage read to the first
   // page-count measurement (effect 3), where totalPages is known for clamping.
@@ -156,6 +157,7 @@ export default function EpubReader({ item, onBack }: Props) {
   const pendingJumpAnnotationId = useRef<string | null>(null)
   // Set when a link click targets a fragment; consumed in the post-render rAF
   const pendingFragmentRef = useRef<string | null>(null)
+  showSearchRef.current = showSearch // mirror each render for stable handlers
 
   // Keep both state and ref in sync for xAnim
   function updateXAnim(next: XAnim | null) {
@@ -188,6 +190,11 @@ export default function EpubReader({ item, onBack }: Props) {
     if (target !== pageRef.current) {
       pageRef.current = target
       setPage(target)
+      // The column-flip repaint desyncs the search input's macOS text-input context
+      // (keys stop inserting though it stays focused — same class as the PDF/open-time
+      // resync). Re-sync after the repaint, but only while searching: this callback is
+      // also used for fragment-link jumps, which shouldn't bounce key status.
+      if (showSearchRef.current) requestAnimationFrame(() => readerService.resyncFocus())
     }
   }, []) // refs are stable — no deps needed
 

@@ -43,7 +43,7 @@ describe('useTextHighlight — highlighting', () => {
     const el = container('<p>foo bar foo</p>')
     const { result } = mount(el, 'foo')
     expect(result.current.matchCount).toBe(2)
-    expect(result.current.currentMatch).toBe(1)
+    expect(result.current.currentMatch).toBe(0) // none selected until you navigate
     expect(marks(el)).toHaveLength(2)
     expect(el.textContent).toBe('foo bar foo') // original text preserved
   })
@@ -54,12 +54,15 @@ describe('useTextHighlight — highlighting', () => {
     expect(result.current.matchCount).toBe(3)
   })
 
-  it('activates only the first mark on a fresh highlight', () => {
+  it('does not activate any mark on a fresh highlight (navigation is deferred)', () => {
     const el = container('<p>foo foo</p>')
-    mount(el, 'foo')
+    const { result } = mount(el, 'foo')
     const m = marks(el)
-    expect(m[0].classList.contains('search-mark-active')).toBe(true)
+    expect(m[0].classList.contains('search-mark-active')).toBe(false)
     expect(m[1].classList.contains('search-mark-active')).toBe(false)
+    // The first goNext selects the first match.
+    act(() => result.current.goNext())
+    expect(marks(el)[0].classList.contains('search-mark-active')).toBe(true)
   })
 
   it('excludes script and style text', () => {
@@ -116,9 +119,11 @@ describe('useTextHighlight — highlighting', () => {
 })
 
 describe('useTextHighlight — navigation', () => {
-  it('goNext cycles forward and wraps back to the first', () => {
+  it('goNext selects the first match, then cycles forward and wraps', () => {
     const el = container('<p>foo foo foo</p>')
     const { result } = mount(el, 'foo')
+    act(() => result.current.goNext())
+    expect(result.current.currentMatch).toBe(1) // first goNext = first match
     act(() => result.current.goNext())
     expect(result.current.currentMatch).toBe(2)
     act(() => result.current.goNext())
@@ -126,7 +131,7 @@ describe('useTextHighlight — navigation', () => {
     expect(result.current.currentMatch).toBe(1) // wrapped
   })
 
-  it('goPrev wraps from the first match to the last', () => {
+  it('goPrev from a fresh highlight selects the last match', () => {
     const el = container('<p>foo foo foo</p>')
     const { result } = mount(el, 'foo')
     act(() => result.current.goPrev())
@@ -135,9 +140,11 @@ describe('useTextHighlight — navigation', () => {
 
   // Headline B: activateMark makes the active class exclusive — stepping to a new
   // match removes the active class from every other mark.
-  it('keeps exactly one active mark as you navigate', () => {
+  it('keeps exactly one active mark once you start navigating', () => {
     const el = container('<p>foo foo foo</p>')
     const { result } = mount(el, 'foo')
+    expect(active(el)).toHaveLength(0) // nothing active until navigation
+    act(() => result.current.goNext())
     expect(active(el)).toHaveLength(1)
     act(() => result.current.goNext())
     expect(active(el)).toHaveLength(1)
@@ -145,18 +152,22 @@ describe('useTextHighlight — navigation', () => {
     expect(marks(el)[0].classList.contains('search-mark-active')).toBe(false)
   })
 
-  it('invokes onActivate with the active mark on highlight and each step', () => {
+  it('invokes onActivate only on navigation, not on highlight', () => {
     const el = container('<p>foo foo</p>')
     const onActivate = vi.fn()
     const { result } = mount(el, 'foo', onActivate)
-    expect(onActivate).toHaveBeenCalledWith(marks(el)[0])
+    expect(onActivate).not.toHaveBeenCalled() // no jump while typing
+    act(() => result.current.goNext())
+    expect(onActivate).toHaveBeenLastCalledWith(marks(el)[0])
     act(() => result.current.goNext())
     expect(onActivate).toHaveBeenLastCalledWith(marks(el)[1])
   })
 
-  it('falls back to scrollIntoView when no onActivate is given', () => {
+  it('does not scrollIntoView on highlight, but does on navigation', () => {
     const el = container('<p>foo</p>')
-    mount(el, 'foo')
+    const { result } = mount(el, 'foo')
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+    act(() => result.current.goNext())
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
   })
 

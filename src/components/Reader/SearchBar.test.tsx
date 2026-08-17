@@ -51,6 +51,16 @@ describe('SearchBar', () => {
     expect(screen.getByText('2 / 5')).toBeInTheDocument()
   })
 
+  it('shows just the match count until a match is selected (currentMatch 0)', () => {
+    renderBar({ query: 'foo', matchCount: 5, currentMatch: 0 })
+    expect(screen.getByText('5 matches')).toBeInTheDocument()
+  })
+
+  it('singularizes the match-count label for a single match', () => {
+    renderBar({ query: 'foo', matchCount: 1, currentMatch: 0 })
+    expect(screen.getByText('1 match')).toBeInTheDocument()
+  })
+
   it('shows "No results" and disables nav when a query has no matches', () => {
     renderBar({ query: 'foo', matchCount: 0 })
     expect(screen.getByText('No results')).toBeInTheDocument()

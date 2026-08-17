@@ -732,6 +732,15 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   // refire the centering effect don't yank the view back onto the match.
   const activeSearchRectRef = useRef<HTMLDivElement>(null)
   const pendingCenterRef = useRef(false)
+  // Set when a search jump changed the page: the canvas repaint desyncs the search
+  // input's macOS text-input context (keys stop inserting though it stays focused),
+  // so we re-sync once the new page has painted — in the centering rAF (spread) or
+  // at lazy render completion (scroll). See resyncFocus.
+  const searchJumpResyncRef = useRef(false)
+  const showSearchRef = useRef(false) // mirror of showSearch for the render closures
+  // Scroll mode paints canvases in a burst during a search jump; debounce the resync
+  // so it fires once, after the last paint settles (see renderScrollPage).
+  const searchResyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Latest per-page measure fn (reassigned each render so buildTextLayer, a
   // stable callback, can call it with the current query/state via a ref).
   const measureRef = useRef<((pageNum: number) => void) | null>(null)
@@ -744,6 +753,7 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
   const [zoom, setZoom] = useState<number>(loadSavedZoom)
   const [showSettings, setShowSettings] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
+  showSearchRef.current = showSearch // mirror each render for the async render closures
   const [searchQuery, setSearchQuery] = useState('')
   // Accurate, text-layer-measured search rects per (visible) page: page → match →
   // rects (scale-1 px). Off-screen pages fall back to the index's item rects.
@@ -1412,6 +1422,21 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
           prev[pageNum] === vp.scale ? prev : { ...prev, [pageNum]: vp.scale },
         )
         await buildTextLayer(pageNum, page, scrollTextLayerRefs.current.get(pageNum) ?? null, vp)
+        // These lazy canvas paints are what desync the search input's macOS
+        // text-input context after a scroll-mode search jump. A jump paints several
+        // pages in a burst (target + neighbors in the render margin) in an unknown
+        // order, so debounce: (re)arm a short timer on each paint and re-sync only
+        // once it settles — that catches the *last* paint. See resyncFocus.
+        if (searchJumpResyncRef.current && showSearchRef.current) {
+          if (searchResyncTimerRef.current) clearTimeout(searchResyncTimerRef.current)
+          searchResyncTimerRef.current = setTimeout(() => {
+            searchResyncTimerRef.current = null
+            if (searchJumpResyncRef.current && showSearchRef.current) {
+              searchJumpResyncRef.current = false
+              readerService.resyncFocus()
+            }
+          }, 120)
+        }
       } catch (err: unknown) {
         if (err instanceof Error && err.name !== 'RenderingCancelledException') {
           console.error('[PdfReader] scroll render error p', pageNum, err)
@@ -1549,7 +1574,12 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
     const m = pdfSearch.activeMatch
     if (!m || loading) return
     pendingCenterRef.current = true
-    goTo(m.page)
+    const prevPage = currentPageRef.current
+    goTo(m.page) // updates currentPageRef synchronously (both view modes)
+    // Only a real page change repaints the canvas and desyncs the macOS text-input
+    // context; a same-page/same-spread match doesn't, so don't bounce key status
+    // (and its faint flicker) for nothing.
+    if (currentPageRef.current !== prevPage) searchJumpResyncRef.current = true
   }, [pdfSearch.navNonce, loading]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Center the active match once its overlay rect exists and is sized. Refires on
@@ -1567,6 +1597,16 @@ export default function PdfReader({ item, onBack, hasEpub = false }: Props) {
         inline: 'center',
       })
       pendingCenterRef.current = false
+      // Spread mode: the active-match overlay only mounts after the text layer (so
+      // after the canvas has painted), making this rAF a safe "after repaint" point
+      // to re-sync the input's macOS text-input context so typing keeps landing in
+      // the search box. Scroll mode paints the canvas lazily *after* this fires, so
+      // it re-syncs at render completion instead (see renderScrollPage). Gated on an
+      // actual page change (set above) so same-page matches don't flicker.
+      if (searchJumpResyncRef.current && showSearch && viewMode === 'spread') {
+        searchJumpResyncRef.current = false
+        readerService.resyncFocus()
+      }
     })
     return () => cancelAnimationFrame(id)
     // Broad deps so the center retries once the overlay rect actually exists and

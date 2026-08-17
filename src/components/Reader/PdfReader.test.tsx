@@ -78,7 +78,10 @@ vi.mock('../../services/library', () => ({
   libraryService: { updateProgress: vi.fn(), setCover: vi.fn(), saveScrollPos: vi.fn() },
 }))
 vi.mock('../../services/reader', () => ({
-  readerService: { loadBinaryContent: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])) },
+  readerService: {
+    loadBinaryContent: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
+    resyncFocus: vi.fn(),
+  },
 }))
 vi.mock('../../services/convert', () => ({
   convertService: { pdfToEpub: vi.fn() },

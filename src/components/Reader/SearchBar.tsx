@@ -43,9 +43,17 @@ export default function SearchBar({
 
   const hasQuery = query.length > 0
   const noResults = hasQuery && matchCount === 0 && !statusOverride
+  // currentMatch === 0 means matches exist but none is selected yet — we highlight
+  // as you type but only navigate on Enter/↑/↓, so show the count until then.
   const countLabel =
     statusOverride ??
-    (hasQuery ? (matchCount === 0 ? 'No results' : `${currentMatch} / ${matchCount}`) : '')
+    (hasQuery
+      ? matchCount === 0
+        ? 'No results'
+        : currentMatch === 0
+          ? `${matchCount} match${matchCount === 1 ? '' : 'es'}`
+          : `${currentMatch} / ${matchCount}`
+      : '')
 
   return (
     <div className="reader-search-bar">

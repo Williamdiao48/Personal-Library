@@ -42,9 +42,10 @@ interface UsePdfSearchResult {
   currentMatch: number // 1-based; 0 = no matches
   /** The currently-selected match (page + rects), or null. */
   activeMatch: PdfSearchMatch | null
-  /** Bumped on every navigation-worthy change (search / goNext / goPrev) so the
-   *  reader can drive "jump to + center on the active match" from one effect,
-   *  even when the target page is unchanged. */
+  /** Bumped on each deliberate navigation (goNext / goPrev) — NOT on search, which
+   *  only updates highlights without moving the page — so the reader can drive
+   *  "jump to + center on the active match" from one effect, even when the target
+   *  page is unchanged. */
   navNonce: number
   goNext: () => void
   goPrev: () => void
@@ -188,7 +189,7 @@ export function usePdfSearch(): UsePdfSearchResult {
   const [activeMatch, setActiveMatch] = useState<PdfSearchMatch | null>(null)
   const [navNonce, setNavNonce] = useState(0)
   const matchesRef = useRef<PdfSearchMatch[]>([])
-  const currentRef = useRef(0)
+  const currentRef = useRef(-1) // -1 = matches exist but none navigated-to yet
 
   const buildIndex = useCallback(async (doc: PDFDocumentProxy) => {
     if (pageIndexRef.current.length > 0) return // already built
@@ -215,6 +216,14 @@ export function usePdfSearch(): UsePdfSearchResult {
     setNavNonce((n) => n + 1)
   }, [])
 
+  // Reset navigation to "matches present, none selected" without jumping. Keeps the
+  // page still while the user types; navigation is deferred to goNext/goPrev.
+  const resetNav = useCallback(() => {
+    currentRef.current = -1
+    setCurrentMatch(0)
+    setActiveMatch(null)
+  }, [])
+
   const search = useCallback(
     (query: string) => {
       const folded = foldText(query.trim())
@@ -222,7 +231,7 @@ export function usePdfSearch(): UsePdfSearchResult {
         matchesRef.current = []
         setMatches([])
         setMatchCount(0)
-        activate([], 0)
+        resetNav()
         return
       }
       const found: PdfSearchMatch[] = []
@@ -234,21 +243,30 @@ export function usePdfSearch(): UsePdfSearchResult {
       matchesRef.current = found
       setMatches(found)
       setMatchCount(found.length)
-      activate(found, 0)
+      // Decoupled: update matches/highlights but DON'T navigate. Jumping to a match
+      // on every keystroke repaints the page (desyncing macOS text input → dropped
+      // keys) and yanks the view to premature substring matches. The user navigates
+      // deliberately with Enter/↑/↓.
+      resetNav()
     },
-    [activate],
+    [resetNav],
   )
 
   const goNext = useCallback(() => {
     const list = matchesRef.current
     if (list.length === 0) return
-    activate(list, (currentRef.current + 1) % list.length)
+    activate(list, currentRef.current < 0 ? 0 : (currentRef.current + 1) % list.length)
   }, [activate])
 
   const goPrev = useCallback(() => {
     const list = matchesRef.current
     if (list.length === 0) return
-    activate(list, (currentRef.current - 1 + list.length) % list.length)
+    activate(
+      list,
+      currentRef.current < 0
+        ? list.length - 1
+        : (currentRef.current - 1 + list.length) % list.length,
+    )
   }, [activate])
 
   return {
