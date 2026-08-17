@@ -400,6 +400,7 @@ export interface Api {
     loadEpub: (relativePath: string) => Promise<EpubBook>
     getChapterCount: (relativePath: string) => Promise<number>
     loadChapter: (relativePath: string, index: number) => Promise<string>
+    resyncFocus: () => Promise<void>
   }
   collections: {
     getAll: () => Promise<Collection[]>

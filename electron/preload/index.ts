@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('reader:getChapterCount', relativePath),
     loadChapter: (relativePath: string, index: number) =>
       ipcRenderer.invoke('reader:loadChapter', relativePath, index),
+    resyncFocus: () => ipcRenderer.invoke('reader:resyncFocus'),
   },
 
   // Collections

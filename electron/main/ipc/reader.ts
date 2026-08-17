@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, BrowserWindow } from 'electron'
 import { readFile, stat } from 'fs/promises'
 import { extractEpubContent } from '../capture/parsers/epub-content'
 import { safeContentPath } from '../security/paths'
@@ -12,8 +12,57 @@ import {
   assertEpubBuffer,
 } from '../security/validation'
 
+// Tiny offscreen child window used only to bounce macOS key status away from and
+// back to the reader window (see reader:resyncFocus). Lazily created, reused.
+let focusHelper: BrowserWindow | null = null
+
+// How long key status rests on the helper window before returning to the reader.
+// Must be long enough for the native key-status transition to register (which is
+// what re-syncs the text-input context); shorter = less perceptible flicker. Tune
+// here if typing ever fails to catch (raise) or the flicker is noticeable (lower).
+const RESYNC_KEY_BOUNCE_MS = 30
+
 export function registerReaderHandlers(): void {
   // Path-traversal guard lives in security/paths.ts (safeContentPath).
+
+  // When the PDF reader's search input is focused programmatically on macOS,
+  // keydowns reach it but Chromium never syncs the input's text-input state to the
+  // OS, so no text is inserted until the window loses and regains key status
+  // (observed: Cmd-Tab away and back, or a physical click on the input, both fix
+  // it). webContents.focus()/focusOnWebView() are no-ops — they only move
+  // first-responder inside the window without the OS-level key-status change that
+  // re-queries the macOS text-input context. Calling win.blur()/win.focus() works
+  // but visibly deactivates the window (title bar grays). Instead we hand key status
+  // to a tiny offscreen transparent CHILD window and take it straight back: the key
+  // transition still re-queries the input context, but macOS keeps the parent
+  // looking active while its child is key, so there's no visible flicker. The helper
+  // is created once, reused, and dies with its parent. PDF reader only.
+  ipcMain.handle('reader:resyncFocus', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win) return
+    if (!focusHelper || focusHelper.isDestroyed()) {
+      focusHelper = new BrowserWindow({
+        parent: win,
+        show: false,
+        width: 1,
+        height: 1,
+        x: -10000,
+        y: -10000,
+        frame: false,
+        transparent: true,
+        hasShadow: false,
+        skipTaskbar: true,
+        webPreferences: { sandbox: true },
+      })
+    }
+    const helper = focusHelper
+    helper.showInactive()
+    helper.focus() // steal key from the parent (which keeps its active appearance)
+    setTimeout(() => {
+      if (!win.isDestroyed()) win.focus() // key returns to the parent → context re-syncs
+      if (!helper.isDestroyed()) helper.hide()
+    }, RESYNC_KEY_BOUNCE_MS)
+  })
 
   // Returns HTML/text content as a UTF-8 string (articles).
   ipcMain.handle('reader:loadContent', async (_e, relativePath: string) => {

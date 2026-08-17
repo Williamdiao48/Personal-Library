@@ -10,4 +10,8 @@ export const readerService = {
     window.api.reader.getChapterCount(relativePath),
   loadChapter: (relativePath: string, index: number): Promise<string> =>
     window.api.reader.loadChapter(relativePath, index),
+  /** Replay a web-view blur→focus transition — the only thing that syncs the macOS
+   *  text-input state for a programmatically focused input in the PDF reader, so the
+   *  search field is typeable without a manual click (see reader.ts IPC handler). */
+  resyncFocus: (): Promise<void> => window.api.reader.resyncFocus(),
 }

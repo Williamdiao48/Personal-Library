@@ -14,7 +14,7 @@ vi.mock('../../services/library', () => ({
   libraryService: { updateProgress: vi.fn() },
 }))
 vi.mock('../../services/reader', () => ({
-  readerService: { loadEpub: vi.fn() },
+  readerService: { loadEpub: vi.fn(), resyncFocus: vi.fn() },
 }))
 
 vi.mock('../../hooks/useReadingSession', () => ({

@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import SearchBar from './SearchBar'
+import { readerService } from '../../services/reader'
+
+vi.mock('../../services/reader', () => ({
+  readerService: { resyncFocus: vi.fn() },
+}))
 
 function renderBar(over: Partial<React.ComponentProps<typeof SearchBar>> = {}) {
   const props = {
@@ -20,6 +25,19 @@ function renderBar(over: Partial<React.ComponentProps<typeof SearchBar>> = {}) {
 beforeEach(() => vi.clearAllMocks())
 
 describe('SearchBar', () => {
+  it('auto-focuses the input on open', () => {
+    renderBar()
+    expect(document.activeElement).toBe(screen.getByPlaceholderText('Search in content…'))
+  })
+
+  it('requests a focus resync on open only when resyncFocusOnOpen is set (PDF reader)', () => {
+    renderBar()
+    expect(readerService.resyncFocus).not.toHaveBeenCalled()
+    vi.clearAllMocks()
+    renderBar({ resyncFocusOnOpen: true })
+    expect(readerService.resyncFocus).toHaveBeenCalledTimes(1)
+  })
+
   it('emits query changes', () => {
     const props = renderBar()
     fireEvent.change(screen.getByPlaceholderText('Search in content…'), {
@@ -31,6 +49,16 @@ describe('SearchBar', () => {
   it('shows the current/total count when there are matches', () => {
     renderBar({ query: 'foo', matchCount: 5, currentMatch: 2 })
     expect(screen.getByText('2 / 5')).toBeInTheDocument()
+  })
+
+  it('shows just the match count until a match is selected (currentMatch 0)', () => {
+    renderBar({ query: 'foo', matchCount: 5, currentMatch: 0 })
+    expect(screen.getByText('5 matches')).toBeInTheDocument()
+  })
+
+  it('singularizes the match-count label for a single match', () => {
+    renderBar({ query: 'foo', matchCount: 1, currentMatch: 0 })
+    expect(screen.getByText('1 match')).toBeInTheDocument()
   })
 
   it('shows "No results" and disables nav when a query has no matches', () => {
