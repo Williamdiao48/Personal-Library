@@ -374,7 +374,31 @@ describe('SettingsView — Account section', () => {
     expect(sync.now).toHaveBeenCalled()
   })
 
-  it('signed-in with sync on surfaces the last error', async () => {
+  it('signed-in with sync on surfaces the last error + backoff retry line', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })
+    localStorage.setItem('app-settings', JSON.stringify({ enableSync: true }))
+    // A real failure moves lastError + consecutiveFailures together; the panel keys the
+    // error state on the streak and adds a "next retry" countdown while backing off.
+    sync.getStatus.mockResolvedValue({
+      enabled: true,
+      configured: true,
+      signedIn: true,
+      running: false,
+      lastSyncedAt: null,
+      lastError: 'PostgREST down',
+      pendingDirty: 0,
+      consecutiveFailures: 2,
+      nextRetryAt: Date.now() + 8 * 60_000,
+    })
+
+    renderView()
+
+    expect(await screen.findByText(/Last sync failed: PostgREST down/)).toBeInTheDocument()
+    expect(await screen.findByText(/2 failed attempts · next retry/)).toBeInTheDocument()
+  })
+
+  it('signed-in with pending changes shows the waiting-to-sync count', async () => {
     auth.isConfigured.mockResolvedValueOnce(true)
     auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })
     localStorage.setItem('app-settings', JSON.stringify({ enableSync: true }))
@@ -383,12 +407,15 @@ describe('SettingsView — Account section', () => {
       configured: true,
       signedIn: true,
       running: false,
-      lastSyncedAt: null,
-      lastError: 'PostgREST down',
+      lastSyncedAt: Date.now(),
+      lastError: null,
+      pendingDirty: 3,
+      consecutiveFailures: 0,
+      nextRetryAt: null,
     })
 
     renderView()
 
-    expect(await screen.findByText(/Last sync failed: PostgREST down/)).toBeInTheDocument()
+    expect(await screen.findByText(/3 changes waiting to sync/)).toBeInTheDocument()
   })
 })

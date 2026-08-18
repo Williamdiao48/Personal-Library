@@ -11,6 +11,9 @@ const STATUS: SyncStatus = {
   running: false,
   lastSyncedAt: 123,
   lastError: null,
+  pendingDirty: 0,
+  consecutiveFailures: 0,
+  nextRetryAt: null,
 }
 
 const h = vi.hoisted(() => ({

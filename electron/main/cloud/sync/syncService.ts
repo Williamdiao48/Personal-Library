@@ -21,6 +21,8 @@ import { createSupabaseCloudRepo, type CloudRepo } from './cloudRepo'
 import { runSyncRound, type SyncReport } from './syncEngine'
 import { startRealtime, stopRealtime } from './realtime'
 import { scheduleReap } from '../reaper'
+import { SYNC_SPECS } from './specs'
+import { countDirty } from './syncStore'
 
 /** The renderer-facing snapshot of where sync stands right now. */
 export interface SyncStatus {
@@ -36,12 +38,24 @@ export interface SyncStatus {
   lastSyncedAt: number | null
   /** Message from the last failed round, cleared on the next success. */
   lastError: string | null
+  /** Rows queued to push right now (dirty = 1) across all synced tables. */
+  pendingDirty: number
+  /** Consecutive failed rounds; 0 when healthy. Drives the poll backoff. */
+  consecutiveFailures: number
+  /** ms epoch of the next scheduled poll, or null when no poll is armed
+   *  (disabled / signed out). Grows with consecutiveFailures. */
+  nextRetryAt: number | null
 }
 
 // How often to poll while enabled + signed in. A personal app is mostly idle, so
 // this only bounds how stale a second device can get between manual syncs; the
 // push side is snappier via the sign-in event + (future) post-mutation debounce.
 const POLL_MS = 2 * 60_000
+// Ceiling for the exponential backoff so a persistently offline/erroring client
+// settles to a slow retry instead of hammering: base 2m doubles per consecutive
+// failure (2m→4m→8m→16m→30m) and plateaus here. No jitter — a single-user app has
+// no thundering herd to spread.
+const MAX_BACKOFF_MS = 30 * 60_000
 // Coalesce bursts of `schedule()` calls (auth event, future local-change events)
 // into one round shortly after they settle.
 const DEBOUNCE_MS = 4_000
@@ -51,8 +65,12 @@ let signedIn = false
 let running = false
 let lastSyncedAt: number | null = null
 let lastError: string | null = null
+// Consecutive failed rounds — the backoff exponent. Reset to 0 on any success.
+let consecutiveFailures = 0
+// ms epoch of the next armed poll, surfaced for the UI; null when no poll is armed.
+let nextRetryAt: number | null = null
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollTimer: ReturnType<typeof setTimeout> | null = null
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 // Set when a round is requested while one is already running, so we run exactly
 // one more round afterwards (the in-flight one may have missed the newest edit).
@@ -86,6 +104,23 @@ export function getStatus(): SyncStatus {
     running,
     lastSyncedAt,
     lastError,
+    pendingDirty: countPendingDirty(),
+    consecutiveFailures,
+    nextRetryAt,
+  }
+}
+
+/** Total rows queued to push across all synced tables. Computed fresh (a handful of
+ *  COUNT(*)s over tiny tables) so it's always accurate; guarded so a not-yet-open db
+ *  (early boot / tests without a harness) reports 0 rather than throwing. */
+function countPendingDirty(): number {
+  try {
+    const db = getDb()
+    let total = 0
+    for (const spec of SYNC_SPECS) total += countDirty(db, spec)
+    return total
+  } catch {
+    return 0
   }
 }
 
@@ -146,22 +181,27 @@ async function runRound(): Promise<SyncStatus> {
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err)
       }
-      if (report) {
-        if (report.ok) {
-          lastSyncedAt = Date.now()
-          lastError = null
-          // A round just push+pulled, so the local items table mirrors Postgres —
-          // the one moment "is this blob still referenced?" is authoritative. Reap
-          // R2 orphans in the background (best-effort; never blocks the round).
-          scheduleReap()
-        } else {
-          lastError = report.error ?? 'Sync failed'
-        }
+      if (report && report.ok) {
+        lastSyncedAt = Date.now()
+        lastError = null
+        consecutiveFailures = 0 // healthy → poll returns to the base cadence
+        // A round just push+pulled, so the local items table mirrors Postgres —
+        // the one moment "is this blob still referenced?" is authoritative. Reap
+        // R2 orphans in the background (best-effort; never blocks the round).
+        scheduleReap()
+      } else {
+        // A reported failure (report.ok === false) OR an exception above: back off.
+        if (report && !report.ok) lastError = report.error ?? 'Sync failed'
+        consecutiveFailures += 1
       }
     }
   } finally {
     running = false
   }
+  // Arm the next poll at the (possibly backed-off) cadence — this is the single
+  // place the poll is (re)scheduled, so success/failure here directly sets when the
+  // next automatic attempt fires. Set before broadcast so the UI sees nextRetryAt.
+  scheduleNextPoll()
   broadcastStatus()
   return getStatus()
 }
@@ -222,15 +262,36 @@ async function ensureRealtime(): Promise<void> {
   startRealtime(supabase, session.access_token, () => schedule())
 }
 
-function startPoll(): void {
-  if (pollTimer) return
-  pollTimer = setInterval(() => void syncNow(), POLL_MS)
+/**
+ * (Re)arm the periodic poll as a single self-rescheduling timeout whose delay grows
+ * with consecutiveFailures: min(POLL_MS * 2^failures, MAX_BACKOFF_MS). Called after
+ * every round (so the cadence tracks the latest success/failure) and from the
+ * enable/sign-in lifecycle. Only armed while enabled AND signed in — otherwise the
+ * poll would just no-op against a null repo — so nextRetryAt is nulled in that case.
+ * Event triggers (schedule/syncNow) fire immediately regardless of this timer.
+ */
+function scheduleNextPoll(): void {
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
+  if (!(enabled && signedIn)) {
+    nextRetryAt = null
+    return
+  }
+  const delay = Math.min(POLL_MS * 2 ** consecutiveFailures, MAX_BACKOFF_MS)
+  nextRetryAt = Date.now() + delay
+  pollTimer = setTimeout(() => {
+    pollTimer = null
+    void syncNow()
+  }, delay)
   pollTimer.unref?.()
 }
 
 function stopPoll(): void {
-  if (pollTimer) clearInterval(pollTimer)
+  if (pollTimer) clearTimeout(pollTimer)
   pollTimer = null
+  nextRetryAt = null
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = null
 }
@@ -242,7 +303,7 @@ export function setEnabled(next: boolean): void {
   if (next === enabled) return
   enabled = next
   if (enabled) {
-    startPoll()
+    scheduleNextPoll()
     schedule()
   } else {
     stopPoll()
@@ -256,7 +317,7 @@ export function notifyAuthChange(nowSignedIn: boolean): void {
   signedIn = nowSignedIn
   if (nowSignedIn) {
     if (enabled) {
-      startPoll()
+      scheduleNextPoll()
       schedule()
     }
   } else {
@@ -285,6 +346,8 @@ export function __resetForTest(): void {
   running = false
   lastSyncedAt = null
   lastError = null
+  consecutiveFailures = 0
+  nextRetryAt = null
   rerunQueued = false
   activeRound = null
   repoFactory = defaultRepoFactory

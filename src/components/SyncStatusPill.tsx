@@ -15,22 +15,30 @@ interface Pill {
 const BACKED_UP_FLASH_MS = 4000
 
 /**
- * Ambient **backup** status — a small display-only pill in the bottom-right corner.
+ * Ambient sync/backup status — a small display-only pill in the bottom-right corner.
  *
- * Deliberately a *backup* indicator, NOT a metadata-sync indicator: ordinary edits
- * (reading progress, ratings, scroll position) all trigger sync rounds, so surfacing
- * "Syncing…" for them is pure noise. The meaningful, expensive cloud operation is
- * uploading book **files** (`blob_sync`), so the pill keys on that:
- *   • Backing up N…  — book files uploading (capture-with-backup / "Back up to cloud")
- *   • Backup failed  — a real blob upload error (retry on the item's card)
- *   • ✓ Backed up    — flashes only when an upload actually finishes, then auto-hides
- *   • Sync issue     — a genuine sync-round failure (rare; real signal, kept)
+ * Backup states lead (the expensive, user-initiated book-file uploads), then
+ * metadata-sync states. Precedence, highest first:
+ *   • Backing up N…       — book files uploading (capture-with-backup / "Back up to cloud")
+ *   • Backup failed       — a real blob upload error (retry on the item's card)
+ *   • Retrying in … (N)   — the metadata sync round is in a backoff retry loop (a live
+ *                           countdown to the next attempt + the failure streak)
+ *   • Syncing N…          — N local changes are queued to push to the other devices
+ *   • ✓ Backed up         — flashes only when an upload actually finishes, then auto-hides
  *   • otherwise hidden
  *
- * Counts come from the authoritative `cloud:getBackupCounts`, refetched on every
- * `cloud:blobState` AND `sync:status` event so a missed event self-corrects. Hidden
- * unless sync is enabled AND signed in. Display-only: the fix for a failed backup
- * lives on the item's card, so the pill points there via its tooltip, not a click.
+ * The metadata states were once deliberately suppressed (ordinary edits sync
+ * constantly, so a permanent "Syncing…" was noise). They're surfaced now for
+ * observability, kept quiet by precedence: pending "Syncing N…" is the LOWEST active
+ * state and its window is short (a debounced round clears dirty in seconds), and the
+ * retry state only appears once a round has actually failed — the idle case is still
+ * silent (null).
+ *
+ * Backup counts come from the authoritative `cloud:getBackupCounts`, refetched on every
+ * `cloud:blobState` AND `sync:status` event so a missed event self-corrects; the
+ * pending/retry fields ride the `SyncStatus` stream. Hidden unless sync is enabled AND
+ * signed in. Display-only: the fix for a failed backup lives on the item's card, so the
+ * pill points there via its tooltip, not a click.
  */
 export default function SyncStatusPill(): React.ReactElement | null {
   const [status, setStatus] = useState<SyncStatus | null>(null)
@@ -74,6 +82,16 @@ export default function SyncStatusPill(): React.ReactElement | null {
     return undefined
   }, [counts.pending, counts.error])
 
+  // While in the retry-backoff state, tick every second so the "Retrying in …"
+  // countdown stays live between the (minutes-apart) status broadcasts.
+  const failing = (status?.consecutiveFailures ?? 0) > 0
+  const [, forceTick] = useState(0)
+  useEffect(() => {
+    if (!failing) return
+    const t = setInterval(() => forceTick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [failing])
+
   if (!status || !status.enabled || !status.signedIn) return null
 
   const pill = derivePill(status, counts, flashBackedUp)
@@ -91,13 +109,22 @@ export default function SyncStatusPill(): React.ReactElement | null {
   )
 }
 
-/** Pure state-precedence, backup-first. Returns null when there's nothing worth
- *  showing (the common case — ordinary metadata sync is intentionally silent).
+/** Compact forward countdown for the retry label: "in 45s" / "in 6 min" / "soon". */
+function untilLabel(ms: number, now: number): string {
+  const secs = Math.round((ms - now) / 1000)
+  if (secs <= 0) return 'soon'
+  if (secs < 60) return `in ${secs}s`
+  return `in ${Math.round(secs / 60)} min`
+}
+
+/** Pure state-precedence, backup-first then metadata-sync. Returns null when there's
+ *  nothing worth showing (the common idle case). `now` is injectable for tests.
  *  Exported for tests. */
 export function derivePill(
   status: SyncStatus,
   counts: { pending: number; error: number },
   flashBackedUp: boolean,
+  now: number = Date.now(),
 ): Pill | null {
   if (counts.pending > 0) {
     return {
@@ -114,8 +141,23 @@ export function derivePill(
       tooltip: `${n} backup${n > 1 ? 's' : ''} failed — open the item to retry`,
     }
   }
-  if (status.lastError) {
-    return { tone: 'error', label: 'Sync issue', tooltip: `Last sync failed: ${status.lastError}` }
+  if (status.consecutiveFailures > 0) {
+    const n = status.consecutiveFailures
+    const when = status.nextRetryAt != null ? ` ${untilLabel(status.nextRetryAt, now)}` : ''
+    return {
+      tone: 'error',
+      label: `Retrying${when} (${n} failed)`,
+      tooltip: status.lastError
+        ? `Last sync failed: ${status.lastError} — retrying automatically`
+        : 'Sync is retrying automatically',
+    }
+  }
+  if (status.pendingDirty > 0) {
+    return {
+      tone: 'busy',
+      label: `Syncing ${status.pendingDirty}…`,
+      tooltip: 'Syncing your changes to your other devices',
+    }
   }
   if (flashBackedUp) {
     return { tone: 'idle', label: 'Backed up', tooltip: 'Your books are backed up' }
