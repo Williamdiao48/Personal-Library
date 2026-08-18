@@ -264,6 +264,46 @@ describe('pull pagination — a tie on the max updated_at must not skip the trun
   })
 })
 
+describe('FK ordering — a self-referential derived_from applied before its source', () => {
+  // Regression: items.derived_from → items(id) is an immediate, self-referential FK.
+  // The pull applies rows in updated_at order, NOT dependency order — so if a derived
+  // item (a converted PDF↔EPUB pair) has an OLDER updated_at than its source (source
+  // edited after the derivation), a fresh device pulls the derived row first and the
+  // insert trips the FK, aborting the whole round. Deterministic → sync stays broken.
+  const seedDerived = (
+    db: Database.Database,
+    id: string,
+    derivedFrom: string,
+    updated_at: number,
+  ): void => {
+    db.prepare(
+      `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, cover_path, description, date_saved, date_modified, derived_from, updated_at)
+       VALUES (?, 'D', NULL, NULL, 'epub', ?, 1, NULL, NULL, 100, 100, ?, ?)`,
+    ).run(id, `${id}.epub`, derivedFrom, updated_at)
+  }
+
+  it('pulls the pair without a FOREIGN KEY failure even when the source is newer', async () => {
+    // A: source + its derived child, both pushed.
+    seedItem(A, 'src')
+    seedDerived(A, 'der', 'src', 150)
+    await runSyncRound(A, server.repo)
+
+    // A edits the source later, so on the server src.updated_at > der.updated_at.
+    A.prepare("UPDATE items SET title = 'src-v2', dirty = 1 WHERE id = 'src'").run()
+    await runSyncRound(A, server.repo)
+
+    // B (fresh) pulls: ascending updated_at ⇒ der BEFORE src ⇒ der.derived_from='src'
+    // references a not-yet-applied row. Must not fail the round.
+    const report = await runSyncRound(B, server.repo)
+    expect(report.ok).toBe(true)
+    expect(report.error).toBeUndefined()
+    expect(liveIds(B).sort()).toEqual(['der', 'src'])
+    expect(B.prepare("SELECT derived_from FROM items WHERE id = 'der'").get()).toMatchObject({
+      derived_from: 'src',
+    })
+  })
+})
+
 describe('resilience', () => {
   it('a failing pull ends the round cleanly (ok=false, no throw)', async () => {
     seedItem(A, 'i1')

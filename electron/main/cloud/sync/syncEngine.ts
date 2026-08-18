@@ -96,6 +96,15 @@ async function pullTable(
 
     const now = Date.now()
     db.transaction(() => {
+      // Defer FK enforcement to COMMIT for this apply. A pulled page is ordered by
+      // updated_at, NOT by dependency, so a row can reference a sibling that arrives
+      // later in the same batch — most sharply items.derived_from → items(id), a
+      // self-referential FK where a source edited after its derived child sorts AFTER
+      // it. Immediate FK checking then aborts the whole round on the out-of-order
+      // insert (a fresh device's first pull deterministically breaks). Deferring makes
+      // the batch consistent-as-a-set: any genuine dangling ref still fails at commit,
+      // so this relaxes ordering without masking real corruption. Auto-resets at commit.
+      db.pragma('defer_foreign_keys = ON')
       // C4 first: free any losing UNIQUE name before applyPull inserts winners.
       if (spec.naturalKey) resolveNameCollisions(db, spec, remote, now)
       const plan = planPull(spec, remote, localByKeys(db, spec, remote))
