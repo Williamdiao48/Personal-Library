@@ -394,3 +394,106 @@ describe('notifyLocalMutation', () => {
     }
   })
 })
+
+// A repo whose push always throws → runSyncRound reports the round as failed
+// (surfaced via the driver's catch). pull is a no-op so the pre-pull phase is clean.
+const failingRepo = (): CloudRepo => ({
+  push: async () => {
+    throw new Error('PostgREST down')
+  },
+  pull: async () => [],
+})
+
+const POLL_MS = 2 * 60_000
+
+describe('exponential backoff', () => {
+  it('each consecutive failure doubles the next poll delay', async () => {
+    vi.useFakeTimers()
+    try {
+      __setRepoFactoryForTest(async () => failingRepo())
+      setEnabled(true) // arms the debounce (signedIn flips true inside the first round)
+      seedDirtyItem(db, 'i1')
+
+      // 1st round fires via the debounce, fails → streak 1, poll re-armed backed off.
+      await vi.advanceTimersByTimeAsync(4_000)
+      const now1 = Date.now()
+      expect(getStatus().consecutiveFailures).toBe(1)
+      const delay1 = getStatus().nextRetryAt! - now1
+      expect(delay1).toBe(POLL_MS * 2) // 2m base → 4m after one failure
+
+      // Advancing by exactly delay1 lands on the poll → 2nd failure → delay doubles.
+      await vi.advanceTimersByTimeAsync(delay1)
+      const now2 = Date.now()
+      expect(getStatus().consecutiveFailures).toBe(2)
+      const delay2 = getStatus().nextRetryAt! - now2
+      expect(delay2).toBe(delay1 * 2) // 8m
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('caps the backoff at MAX_BACKOFF_MS and never fires before it', async () => {
+    vi.useFakeTimers()
+    try {
+      __setRepoFactoryForTest(async () => failingRepo())
+      setEnabled(true)
+      seedDirtyItem(db, 'i1')
+      await vi.advanceTimersByTimeAsync(4_000) // failure 1
+
+      // Drive several more failures by advancing to each armed retry.
+      for (let i = 0; i < 6; i++) {
+        const wait = getStatus().nextRetryAt! - Date.now()
+        await vi.advanceTimersByTimeAsync(wait)
+      }
+      // The delay has plateaued at the 30-minute ceiling, not kept doubling.
+      expect(getStatus().nextRetryAt! - Date.now()).toBe(30 * 60_000)
+      expect(getStatus().consecutiveFailures).toBeGreaterThanOrEqual(6)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a success resets the streak and returns the poll to the base cadence', async () => {
+    vi.useFakeTimers()
+    try {
+      let mode: 'fail' | 'ok' = 'fail'
+      const server = makeFakeServer()
+      __setRepoFactoryForTest(async () => (mode === 'fail' ? failingRepo() : server.repo))
+      setEnabled(true)
+      seedDirtyItem(db, 'i1')
+
+      await vi.advanceTimersByTimeAsync(4_000) // failure 1
+      const backedOff = getStatus().nextRetryAt! - Date.now()
+      expect(getStatus().consecutiveFailures).toBe(1)
+      expect(backedOff).toBe(POLL_MS * 2)
+
+      // A manual syncNow runs IMMEDIATELY — it doesn't wait out the 4m backoff — and
+      // now succeeds, so the streak clears and the poll returns to the 2m base.
+      mode = 'ok'
+      await syncNow()
+      expect(getStatus().consecutiveFailures).toBe(0)
+      expect(getStatus().lastError).toBeNull()
+      expect(getStatus().nextRetryAt! - Date.now()).toBe(POLL_MS) // base cadence
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('pendingDirty observability', () => {
+  it('counts rows queued to push and drops to 0 after a successful round', async () => {
+    const server = makeFakeServer()
+    __setRepoFactoryForTest(async () => server.repo)
+    seedDirtyItem(db, 'i1')
+    seedDirtyItem(db, 'i2')
+
+    // Before syncing, the two items (plus the fresh DB's default dirty rows) are queued.
+    expect(getStatus().pendingDirty).toBeGreaterThanOrEqual(2)
+
+    setEnabled(true)
+    await syncNow()
+
+    // Everything pushed + read back → nothing left dirty.
+    expect(getStatus().pendingDirty).toBe(0)
+  })
+})

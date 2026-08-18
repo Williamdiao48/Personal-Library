@@ -348,6 +348,12 @@ export interface SyncStatus {
   lastSyncedAt: number | null
   /** Message from the last failed round, cleared on the next success. */
   lastError: string | null
+  /** Rows queued to push right now (dirty = 1) across all synced tables. */
+  pendingDirty: number
+  /** Consecutive failed rounds; 0 when healthy. Drives the poll backoff. */
+  consecutiveFailures: number
+  /** ms epoch of the next scheduled poll, or null when no poll is armed. */
+  nextRetryAt: number | null
 }
 
 // Type the window.api surface so the renderer gets full type-safety

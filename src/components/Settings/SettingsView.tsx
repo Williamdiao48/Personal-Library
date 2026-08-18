@@ -417,6 +417,14 @@ function relativeTime(ms: number): string {
   return `${Math.round(hrs / 24)} d ago`
 }
 
+/** Forward-looking counterpart to relativeTime: "in 45s" / "in 6 min" / "now". */
+export function untilTime(ms: number): string {
+  const secs = Math.round((ms - Date.now()) / 1000)
+  if (secs <= 0) return 'now'
+  if (secs < 60) return `in ${secs}s`
+  return `in ${Math.round(secs / 60)} min`
+}
+
 function SyncSettings() {
   const { settings, updateSettings } = useSettings()
   const [status, setStatus] = useState<SyncStatus | null>(null)
@@ -430,8 +438,20 @@ function SyncSettings() {
   }, [])
 
   const running = status?.running ?? false
-  const detail = status?.lastError
-    ? `Last sync failed: ${status.lastError}`
+  const failing = (status?.consecutiveFailures ?? 0) > 0
+  const pending = status?.pendingDirty ?? 0
+
+  // While backing off, tick every second so the "next retry" countdown stays live
+  // even though status only broadcasts on rounds (which, mid-backoff, are minutes apart).
+  const [, forceTick] = useState(0)
+  useEffect(() => {
+    if (!failing) return
+    const t = setInterval(() => forceTick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [failing])
+
+  const detail = failing
+    ? `Last sync failed: ${status?.lastError ?? 'unknown error'}`
     : running
       ? 'Syncing…'
       : status?.lastSyncedAt
@@ -449,10 +469,19 @@ function SyncSettings() {
           signed-in devices. Off keeps this device’s library unchanged.
         </span>
         {settings.enableSync && (
-          <span
-            className={`settings-feedback${status?.lastError ? ' settings-feedback--err' : ''}`}
-          >
+          <span className={`settings-feedback${failing ? ' settings-feedback--err' : ''}`}>
             {detail}
+          </span>
+        )}
+        {settings.enableSync && failing && status?.nextRetryAt != null && (
+          <span className="settings-feedback settings-feedback--err">
+            {status.consecutiveFailures} failed attempt
+            {status.consecutiveFailures > 1 ? 's' : ''} · next retry {untilTime(status.nextRetryAt)}
+          </span>
+        )}
+        {settings.enableSync && pending > 0 && (
+          <span className="settings-feedback">
+            {pending} change{pending > 1 ? 's' : ''} waiting to sync
           </span>
         )}
       </div>

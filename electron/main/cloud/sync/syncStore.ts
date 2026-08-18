@@ -48,6 +48,14 @@ export function selectDirty(db: Database, spec: SyncSpec): SyncRow[] {
     .all() as SyncRow[]
 }
 
+/** How many rows are queued to push (dirty = 1) for this table — the count-only
+ *  form of selectDirty, for the pending-to-push observability tally. */
+export function countDirty(db: Database, spec: SyncSpec): number {
+  return (
+    db.prepare(`SELECT COUNT(*) AS n FROM ${spec.table} WHERE dirty = 1`).get() as { n: number }
+  ).n
+}
+
 /**
  * After a push, write the server-stamped updated_at back and clear dirty — but
  * ONLY for rows unchanged since we snapshotted them (a concurrent local edit
