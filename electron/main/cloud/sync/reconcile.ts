@@ -31,6 +31,31 @@ export function stableStringify(spec: SyncSpec, row: SyncRow): string {
   return JSON.stringify(spec.columns.map((c) => (row[c] === undefined ? null : row[c])))
 }
 
+/**
+ * Fold a spec's `merge` (grow-only max) columns of `base` against `other`, returning
+ * `base` UNCHANGED (same reference) when no register grows — so the caller can cheaply
+ * detect "nothing to write" by identity. Only 'max' is defined today: the column
+ * becomes max(base, other), treating null/undefined as absent (two absent values stay
+ * absent rather than collapsing to 0). This is what makes a monotonic field converge
+ * independently of the row-level LWW winner — it can never move backward across sync.
+ */
+export function foldMerge(spec: SyncSpec, base: SyncRow, other: SyncRow): SyncRow {
+  if (!spec.merge) return base
+  let out: SyncRow | null = null
+  for (const [col, strat] of Object.entries(spec.merge)) {
+    if (strat !== 'max') continue
+    const a = typeof base[col] === 'number' ? (base[col] as number) : null
+    const b = typeof other[col] === 'number' ? (other[col] as number) : null
+    if (a == null && b == null) continue // both absent — leave the field as-is
+    const folded = Math.max(a ?? 0, b ?? 0)
+    if (folded !== a) {
+      out = out ?? { ...base }
+      out[col] = folded
+    }
+  }
+  return out ?? base
+}
+
 /** Whether the incoming (remote) row should win LWW over the local row. */
 export function incomingWins(spec: SyncSpec, incoming: SyncRow, local: SyncRow): boolean {
   const ci = clockOf(incoming)
@@ -58,12 +83,20 @@ export interface PullPlan {
  *
  * Rule (per table): apply incoming iff
  *   - the local row is MISSING, or
- *   - the local row is NOT dirty AND incoming wins LWW.
+ *   - the local row is NOT dirty AND (incoming wins LWW OR a merge register grew).
  * A locally-dirty row (unpushed local edit) is NEVER clobbered by a pull — this
  * is what makes conflict resolution skew-proof (the client wall clock never
  * decides whether a local edit survives; the row pushes next cycle and the
- * server-stamped clock decides). Append tables (reading_sessions) are a pure
+ * server-stamped clock decides; a dirty row's monotonic register re-converges via
+ * applyReadback after that push). Append tables (reading_sessions) are a pure
  * union: apply iff the local side lacks the row.
+ *
+ * `merge` columns (grow-only max registers) sit OUTSIDE the LWW pick: whichever row
+ * wins the row is folded with the loser's register so the register takes max(both).
+ * That fixes the whole-row-LWW regression in BOTH directions — a newer-but-shallower
+ * incoming row can't drag the field down (it wins the row but the fold keeps local's
+ * higher value), and an older incoming row with a higher register still lifts local
+ * even though it loses the row.
  */
 export function planPull(
   spec: SyncSpec,
@@ -84,7 +117,19 @@ export function planPull(
       skippedDirty.push(k)
       continue
     }
-    if (incomingWins(spec, inc, local)) apply.push(inc)
+    if (incomingWins(spec, inc, local)) {
+      // Incoming wins the row; fold local's registers in so a shallower incoming
+      // write can't regress a monotonic field.
+      apply.push(foldMerge(spec, inc, local))
+    } else {
+      // Local wins the row, but an incoming register may still exceed it — apply a
+      // register-lifted copy of local iff the fold actually grew something (foldMerge
+      // returns local by identity when nothing changed, so this writes nothing in the
+      // common case). The lifted value came from the server, so applyPull's dirty=0 is
+      // correct — no re-push needed.
+      const lifted = foldMerge(spec, local, inc)
+      if (lifted !== local) apply.push(lifted)
+    }
   }
   return { apply, skippedDirty }
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { SYNC_SPEC_BY_TABLE, type SyncRow, type SyncSpec } from './specs'
-import { keyOf, clockOf, incomingWins, planPull, planNaturalKeyMerge } from './reconcile'
+import { keyOf, clockOf, incomingWins, planPull, planNaturalKeyMerge, foldMerge } from './reconcile'
 
 // The pure conflict engine. These tests ARE the C1–C6 conflict matrix — no DB,
 // no mocks, just rows in and a plan out.
@@ -10,6 +10,16 @@ const tags = SYNC_SPEC_BY_TABLE.tags
 const itemTags = SYNC_SPEC_BY_TABLE.item_tags
 const collItems = SYNC_SPEC_BY_TABLE.collection_items
 const sessions = SYNC_SPEC_BY_TABLE.reading_sessions
+const progress = SYNC_SPEC_BY_TABLE.progress
+
+const prog = (over: Partial<SyncRow> = {}): SyncRow => ({
+  item_id: 'i1',
+  scroll_position: 0,
+  max_scroll_position: 0,
+  updated_at: 100,
+  deleted_at: null,
+  ...over,
+})
 
 const byKey = (spec: SyncSpec, rows: SyncRow[]) => new Map(rows.map((r) => [keyOf(spec, r), r]))
 
@@ -199,5 +209,89 @@ describe('tie-break — equal updated_at converges deterministically', () => {
     const remoteLo = item({ title: 'AAA', updated_at: 500 })
     expect(incomingWins(items, remoteHi, local)).toBe(true) // ZZZ > AAA
     expect(incomingWins(items, remoteLo, local)).toBe(false) // identical → keep local
+  })
+})
+
+describe('foldMerge — grow-only max register (pure)', () => {
+  it('lifts a max column to the larger of the two', () => {
+    expect(
+      foldMerge(progress, prog({ max_scroll_position: 0.1 }), prog({ max_scroll_position: 0.8 }))
+        .max_scroll_position,
+    ).toBe(0.8)
+  })
+  it('returns base BY IDENTITY when nothing grows (no needless write)', () => {
+    const base = prog({ max_scroll_position: 0.8 })
+    expect(foldMerge(progress, base, prog({ max_scroll_position: 0.1 }))).toBe(base)
+  })
+  it('treats null/undefined as absent, not 0 (both absent → stays null)', () => {
+    const base = prog({ max_scroll_position: null })
+    // other also absent → no change, same reference
+    expect(foldMerge(progress, base, prog({ max_scroll_position: null }))).toBe(base)
+    // other present → lifts from null
+    expect(foldMerge(progress, base, prog({ max_scroll_position: 0.5 })).max_scroll_position).toBe(
+      0.5,
+    )
+  })
+  it('does not mutate the base row', () => {
+    const base = prog({ max_scroll_position: 0.1 })
+    foldMerge(progress, base, prog({ max_scroll_position: 0.9 }))
+    expect(base.max_scroll_position).toBe(0.1)
+  })
+  it('is a no-op for a spec without merge columns (items)', () => {
+    const base = item({ title: 'A' })
+    expect(foldMerge(items, base, item({ title: 'B' }))).toBe(base)
+  })
+})
+
+describe('C7 — max_scroll_position is a grow-only register, NOT whole-row LWW', () => {
+  // The regression this whole change exists to kill: whole-row LWW would let a
+  // newer-but-shallower peer write drag the high-water mark backward.
+  it('RED: a newer incoming row with a LOWER max does NOT regress the high-water mark', () => {
+    const local = prog({ max_scroll_position: 0.8, scroll_position: 0.8, updated_at: 100 })
+    // Peer opened the book and barely scrolled, but its write is newer → wins the row.
+    const remote = prog({ max_scroll_position: 0.1, scroll_position: 0.1, updated_at: 200 })
+    const plan = planPull(progress, [remote], byKey(progress, [local]))
+    expect(plan.apply).toHaveLength(1)
+    expect(plan.apply[0].max_scroll_position).toBe(0.8) // register held; NOT 0.1
+    expect(plan.apply[0].scroll_position).toBe(0.1) // ordinary field still follows LWW winner
+  })
+
+  it('an OLDER incoming row with a HIGHER max still lifts the register (loses the row, wins the field)', () => {
+    const local = prog({ max_scroll_position: 0.2, scroll_position: 0.2, updated_at: 300 })
+    const remote = prog({ max_scroll_position: 0.9, scroll_position: 0.9, updated_at: 100 })
+    const plan = planPull(progress, [remote], byKey(progress, [local]))
+    expect(plan.apply).toHaveLength(1)
+    expect(plan.apply[0].max_scroll_position).toBe(0.9) // register lifted
+    expect(plan.apply[0].scroll_position).toBe(0.2) // local won the row → keep local position
+  })
+
+  it('writes NOTHING when local wins the row AND already holds the higher max', () => {
+    const local = prog({ max_scroll_position: 0.9, updated_at: 300 })
+    const remote = prog({ max_scroll_position: 0.4, updated_at: 100 })
+    const plan = planPull(progress, [remote], byKey(progress, [local]))
+    expect(plan.apply).toEqual([]) // no LWW change, no register growth → no-op
+  })
+
+  it('still applies plainly when incoming wins the row and also has the higher max', () => {
+    const local = prog({ max_scroll_position: 0.2, scroll_position: 0.2, updated_at: 100 })
+    const remote = prog({ max_scroll_position: 0.7, scroll_position: 0.7, updated_at: 200 })
+    const plan = planPull(progress, [remote], byKey(progress, [local]))
+    expect(plan.apply[0].max_scroll_position).toBe(0.7)
+    expect(plan.apply[0].scroll_position).toBe(0.7)
+  })
+
+  it('a locally-dirty row is still never clobbered (register re-converges via readback after push)', () => {
+    const localDirty = prog({ max_scroll_position: 0.1, updated_at: 100, dirty: 1 })
+    const remote = prog({ max_scroll_position: 0.9, updated_at: 200 })
+    const plan = planPull(progress, [remote], byKey(progress, [localDirty]))
+    expect(plan.apply).toEqual([])
+    expect(plan.skippedDirty).toEqual([keyOf(progress, localDirty)])
+  })
+
+  it('applies a missing progress row as-is (nothing to fold against)', () => {
+    const remote = prog({ max_scroll_position: 0.5 })
+    const plan = planPull(progress, [remote], byKey(progress, []))
+    expect(plan.apply).toHaveLength(1)
+    expect(plan.apply[0].max_scroll_position).toBe(0.5)
   })
 })
