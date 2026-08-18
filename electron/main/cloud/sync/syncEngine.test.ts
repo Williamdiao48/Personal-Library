@@ -27,8 +27,17 @@ function makeFakeServer(): { repo: CloudRepo; clock: () => number } {
       const out: SyncRow[] = []
       for (const r of rows) {
         clock += 1
+        const prev = m.get(keyOf(spec, r))
         const stamped: SyncRow = {}
         for (const c of spec.columns) stamped[c] = r[c] ?? null
+        // Model the server-side grow-only max trigger (specs.merge → GREATEST(new,old)),
+        // so a shallower push can't lower the authoritative high-water mark.
+        for (const [col, strat] of Object.entries(spec.merge ?? {})) {
+          if (strat !== 'max' || !prev) continue
+          const a = typeof stamped[col] === 'number' ? (stamped[col] as number) : null
+          const b = typeof prev[col] === 'number' ? (prev[col] as number) : null
+          if (a != null || b != null) stamped[col] = Math.max(a ?? 0, b ?? 0)
+        }
         stamped.updated_at = clock // server trigger overwrites the client value
         m.set(keyOf(spec, stamped), stamped)
         out.push(stamped)
@@ -261,6 +270,72 @@ describe('pull pagination — a tie on the max updated_at must not skip the trun
     const report = await runSyncRound(B, repo)
     expect(report.applied.items ?? 0).toBe(0)
     expect(liveIds(B)).toEqual(['i1', 'i2'])
+  })
+})
+
+describe('grow-only max register (progress.max_scroll_position) — end to end', () => {
+  const seedProgress = (
+    db: Database.Database,
+    itemId: string,
+    max: number,
+    scroll: number,
+    updated_at: number,
+  ): void => {
+    db.prepare(
+      `INSERT INTO progress (item_id, scroll_position, max_scroll_position, updated_at, dirty)
+       VALUES (?, ?, ?, ?, 1)`,
+    ).run(itemId, scroll, max, updated_at)
+  }
+  const maxOf = (db: Database.Database, itemId: string): number =>
+    (
+      db.prepare('SELECT max_scroll_position AS m FROM progress WHERE item_id = ?').get(itemId) as {
+        m: number
+      }
+    ).m
+
+  it('a newer-but-shallower peer write cannot drag the high-water mark backward', async () => {
+    // Both devices hold the item; A read to 80% and synced, B never pulled that progress.
+    seedItem(A, 'i1')
+    await runSyncRound(A, server.repo)
+    await runSyncRound(B, server.repo) // B pulls item metadata only (no progress yet)
+
+    seedProgress(A, 'i1', 0.8, 0.8, 500)
+    await runSyncRound(A, server.repo) // server high-water = 0.8
+
+    // B, unaware of A's 0.8, opens at 10% and syncs. progress has no naturalKey, so B
+    // PUSHES 0.1 before it pulls — the exact ordering that plain LWW would regress.
+    seedProgress(B, 'i1', 0.1, 0.1, 600)
+    await runSyncRound(B, server.repo)
+
+    // The server GREATEST trigger clamped B's push up to 0.8, and applyReadback wrote
+    // that back — so B's furthest-read never went below what the account already knew.
+    expect(maxOf(B, 'i1')).toBe(0.8)
+    expect(
+      B.prepare('SELECT scroll_position AS s FROM progress WHERE item_id = ?').get('i1'),
+    ).toMatchObject({
+      s: 0.1, // current position still follows B's latest write
+    })
+
+    // And it propagates back to A undamaged.
+    await runSyncRound(A, server.repo)
+    expect(maxOf(A, 'i1')).toBe(0.8)
+  })
+
+  it('a peer’s deeper read lifts a caught-up (non-dirty) device on pull', async () => {
+    seedItem(A, 'i1')
+    seedProgress(A, 'i1', 0.2, 0.2, 300)
+    await runSyncRound(A, server.repo)
+    await runSyncRound(B, server.repo) // B pulls item + progress 0.2 (now non-dirty on B)
+    expect(maxOf(B, 'i1')).toBe(0.2)
+
+    // A reads deeper to 90% and syncs.
+    A.prepare(
+      'UPDATE progress SET scroll_position = 0.9, max_scroll_position = 0.9, updated_at = 400, dirty = 1 WHERE item_id = ?',
+    ).run('i1')
+    await runSyncRound(A, server.repo)
+
+    await runSyncRound(B, server.repo) // B pulls A's deeper read
+    expect(maxOf(B, 'i1')).toBe(0.9)
   })
 })
 

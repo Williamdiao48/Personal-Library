@@ -47,6 +47,17 @@ export interface SyncSpec {
    * loser's references onto the survivor. Only set on naturalKey tables.
    */
   referencedBy?: { table: string; col: string }[]
+  /**
+   * Per-column merge overrides that OPT OUT of whole-row LWW for a monotonic field
+   * so it converges independently of which row wins the row-level LWW:
+   *   'max' — a grow-only max register. The field is folded to max(local, incoming)
+   *           on every pull/readback, so it can never regress across the sync
+   *           boundary (mirrors the local MAX(...) upsert). Backed server-side by a
+   *           GREATEST trigger (see the progress_max_register migration) so the
+   *           authoritative copy is order-independent too.
+   * Columns absent here follow the row's LWW winner as usual.
+   */
+  merge?: Record<string, 'max'>
 }
 
 const LWW = 'lww' as const
@@ -110,6 +121,13 @@ export const SYNC_SPECS: SyncSpec[] = [
       'deleted_at',
     ],
     mode: LWW,
+    // max_scroll_position is the "furthest point ever read" high-water mark: locally
+    // monotonic (library.ts writes it via MAX(...)), and three subsystems depend on
+    // that (progress, the recommender's depth/status signal, stats' words-read). Plain
+    // whole-row LWW would let a peer's newer-but-shallower write drag it backward, so
+    // it's a grow-only max register instead — folded to max(local, incoming) on every
+    // pull/readback and clamped by a server-side GREATEST trigger.
+    merge: { max_scroll_position: 'max' },
   },
   {
     table: 'tags',

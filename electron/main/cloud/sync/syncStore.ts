@@ -70,17 +70,29 @@ export function applyReadback(
     return
   }
 
+  // Grow-only max registers (specs.merge): the server's GREATEST trigger may have
+  // lifted the value above what we pushed (a peer had a higher one), so write the
+  // server's echoed value back too — otherwise a device that pushed the shallower row
+  // would keep its stale, lower max. Never regresses local: the guard below only
+  // touches the still-unchanged pushed row, and server >= pushed by GREATEST.
+  const mergeCols = spec.merge ? Object.keys(spec.merge) : []
+
   for (const pre of preRows) {
     const server = serverByKey.get(keyOf(spec, pre))
     if (!server) continue // server didn't echo this row back — leave dirty, retry
     const preClock = pre.updated_at
     // Clear only if the local row is still the one we pushed (dirty + same clock).
-    // Param order must match the SQL: SET updated_at=?, WHERE key=?…, [clock=?].
+    // Param order must match the SQL: SET updated_at=?, [merge=?…], WHERE key=?…, [clock=?].
     const clockPred = preClock == null ? 'updated_at IS NULL' : 'updated_at = ?'
-    const params: unknown[] = [server.updated_at, ...keyParams(spec, pre)]
+    const setCols = ['updated_at = ?', ...mergeCols.map((c) => `${c} = ?`)]
+    const params: unknown[] = [
+      server.updated_at,
+      ...mergeCols.map((c) => (server[c] === undefined ? null : server[c])),
+      ...keyParams(spec, pre),
+    ]
     if (preClock != null) params.push(preClock)
     db.prepare(
-      `UPDATE ${spec.table} SET updated_at = ?, dirty = 0
+      `UPDATE ${spec.table} SET ${setCols.join(', ')}, dirty = 0
        WHERE ${where} AND dirty = 1 AND ${clockPred}`,
     ).run(...params)
   }
