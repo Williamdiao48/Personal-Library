@@ -1,7 +1,15 @@
 import { describe, it, expect, afterAll } from 'vitest'
 import AdmZip from 'adm-zip'
 import { JSDOM } from 'jsdom'
-import { transformChapterHtml, extractEpubPlainText, type ChapterContext } from './epub-content'
+import {
+  transformChapterHtml,
+  extractEpubContent,
+  extractEpubPlainText,
+  realignSkewedToc,
+  type ChapterContext,
+  type EpubChapter,
+  type EpubTocEntry,
+} from './epub-content'
 import { makeEpubFile, writeTempEpub, cleanupTempEpubs } from '../../../../test/fixtures/epub'
 
 // F9: the per-chapter rewrite now happens on a parsed DOM (no regex over raw
@@ -382,6 +390,252 @@ describe('transformChapterHtml — blockquote-as-paragraph normalization', () =>
     const out = transformChapterHtml(`${paras}<blockquote>An actual quotation.</blockquote>`, ctx())
     expect(out).toMatch(/<blockquote/i)
     expect(out).toContain('An actual quotation.')
+  })
+})
+
+describe('extractEpubContent — front/back matter classification', () => {
+  afterAll(() => cleanupTempEpubs())
+
+  const flags = (opts: Parameters<typeof makeEpubFile>[0]) =>
+    extractEpubContent(makeEpubFile(opts)).chapters.map((c) => c.frontMatter)
+
+  it('flags front/back matter by title and leaves body chapters unflagged', () => {
+    const opts = {
+      chapters: [
+        { href: 'a.xhtml', title: 'Cover', body: '<p>x</p>' },
+        { href: 'b.xhtml', title: 'Title Page', body: '<p>x</p>' },
+        { href: 'c.xhtml', title: 'Introduction', body: '<p>x</p>' },
+        { href: 'd.xhtml', title: 'Chapter 1', body: '<p>x</p>' },
+        { href: 'e.xhtml', title: 'Chapter 2', body: '<p>x</p>' },
+        { href: 'f.xhtml', title: 'Epilogue', body: '<p>x</p>' },
+        { href: 'g.xhtml', title: 'About the Author', body: '<p>x</p>' },
+      ],
+    }
+    expect(flags(opts)).toEqual([true, true, true, false, false, true, true])
+  })
+
+  it('treats Prologue/Epilogue/Introduction/Appendix as standalone (unnumbered)', () => {
+    const opts = {
+      chapters: [
+        { href: 'a.xhtml', title: 'Prologue', body: '<p>x</p>' },
+        { href: 'b.xhtml', title: 'The Long Road', body: '<p>x</p>' },
+        { href: 'c.xhtml', title: 'Appendix B', body: '<p>x</p>' },
+      ],
+    }
+    // Prologue + Appendix are matter (unnumbered); the middle title is a body chapter.
+    expect(flags(opts)).toEqual([true, false, true])
+  })
+
+  it('does not flag a real chapter that merely starts like matter (Notes from…)', () => {
+    const opts = {
+      chapters: [
+        { href: 'a.xhtml', title: 'Notes from Underground', body: '<p>x</p>' },
+        { href: 'b.xhtml', title: 'The Index Case', body: '<p>x</p>' },
+      ],
+    }
+    expect(flags(opts)).toEqual([false, false])
+  })
+
+  it('flags untitled front matter before the EPUB2 <guide> start-of-reading', () => {
+    // Neither title matches the heuristic; the guide marks story.xhtml as body,
+    // so the earlier spine entry is front matter purely by structure.
+    const opts = {
+      chapters: [
+        { href: 'plate.xhtml', title: 'Frontispiece Plate', body: '<p>x</p>' },
+        { href: 'story.xhtml', title: 'The Beginning', body: '<p>x</p>' },
+      ],
+      guide: { textHref: 'story.xhtml' },
+    }
+    expect(flags(opts)).toEqual([true, false])
+  })
+
+  it('flags front matter before the EPUB3 bodymatter landmark', () => {
+    const opts = {
+      chapters: [
+        { href: 'fm.xhtml', title: 'Some Publisher Blurb', body: '<p>x</p>' },
+        { href: 'ch1.xhtml', title: 'The Beginning', body: '<p>x</p>' },
+        { href: 'ch2.xhtml', title: 'The Middle', body: '<p>x</p>' },
+      ],
+      landmarks: { bodymatterHref: 'ch1.xhtml' },
+    }
+    expect(flags(opts)).toEqual([true, false, false])
+  })
+})
+
+describe('extractEpubContent — TOC (logical chapter list)', () => {
+  afterAll(() => cleanupTempEpubs())
+
+  const toc = (opts: Parameters<typeof makeEpubFile>[0]) =>
+    extractEpubContent(makeEpubFile(opts)).toc.map((e) => [e.title, e.chapterIndex, e.frontMatter])
+
+  it('is empty when the EPUB has no nav/ncx (reader falls back to the spine list)', () => {
+    const book = extractEpubContent(
+      makeEpubFile({ chapters: [{ href: 'c1.xhtml', title: 'Chapter 1', body: '<p>x</p>' }] }),
+    )
+    expect(book.toc).toEqual([])
+  })
+
+  it('marks a TOC entry equal to the book title, and a "Map of …" entry, as front matter', () => {
+    const opts = {
+      title: 'Eagle Strike',
+      chapters: [
+        { href: 't.xhtml', title: 'x', body: '<p>title page</p>' }, // idx 0
+        { href: 'm.xhtml', title: 'x', body: '<p>map</p>' }, // idx 1
+        { href: 'c1.xhtml', title: 'x', body: '<p>a</p>' }, // idx 2
+      ],
+      navToc: [
+        { label: 'Eagle Strike', href: 't.xhtml' }, // == book title → matter
+        { label: 'Map of Cornwall', href: 'm.xhtml' }, // "Map of …" → matter
+        { label: 'The Gift', href: 'c1.xhtml' }, // real chapter
+      ],
+    }
+    expect(toc(opts)).toEqual([
+      ['Eagle Strike', 0, true],
+      ['Map of Cornwall', 1, true],
+      ['The Gift', 2, false],
+    ])
+  })
+
+  it('builds the chapter list from toc.ncx, not the spine — the Calibre-split case', () => {
+    // Mirrors "Fire in the Sky": every spine file shares the book <title>, and
+    // real chapters live only in the NCX, landing on every other split file.
+    const split = (n: number) => ({
+      href: `s${n}.html`,
+      title: 'Fire in the Sky', // identical running title on every fragment
+      body: `<p>fragment ${n}</p>`,
+    })
+    const opts = {
+      title: 'Fire in the Sky',
+      chapters: [
+        { href: 'titlepage.xhtml', title: 'Cover', body: '<p>c</p>' }, // idx 0
+        split(0), // idx 1 — front fragment, not in the TOC
+        split(1), // idx 2 — Maps
+        split(2), // idx 3 — Chapter One
+        split(3), // idx 4 — Ch1 continuation, not in the TOC
+        split(4), // idx 5 — Chapter Two
+      ],
+      ncx: [
+        { label: 'Maps', href: 's1.html#filepos1' },
+        { label: 'Chapter One', href: 's2.html#filepos2' },
+        { label: 'Chapter Two', href: 's4.html#filepos3' },
+      ],
+    }
+    // The TOC lists real chapters (no repeated "Fire in the Sky"); Maps is
+    // unnumbered matter, the two chapters number 1, 2; indices point at the
+    // right spine files.
+    expect(toc(opts)).toEqual([
+      ['Maps', 2, true],
+      ['Chapter One', 3, false],
+      ['Chapter Two', 5, false],
+    ])
+    // The spine itself is untouched — still one entry per physical file.
+    expect(extractEpubContent(makeEpubFile(opts)).chapters).toHaveLength(6)
+  })
+
+  it('builds the chapter list from an EPUB3 nav toc', () => {
+    const opts = {
+      chapters: [
+        { href: 'cover.xhtml', title: 'Cover', body: '<p>c</p>' }, // idx 0
+        { href: 'ch1.xhtml', title: 'x', body: '<p>a</p>' }, // idx 1
+        { href: 'ch2.xhtml', title: 'x', body: '<p>b</p>' }, // idx 2
+      ],
+      navToc: [
+        { label: 'Cover', href: 'cover.xhtml' },
+        { label: 'The Start', href: 'ch1.xhtml' },
+        { label: 'The Middle', href: 'ch2.xhtml' },
+      ],
+    }
+    expect(toc(opts)).toEqual([
+      ['Cover', 0, true],
+      ['The Start', 1, false],
+      ['The Middle', 2, false],
+    ])
+  })
+
+  it('drops TOC entries that point outside the spine', () => {
+    const opts = {
+      chapters: [{ href: 'ch1.xhtml', title: 'x', body: '<p>a</p>' }],
+      ncx: [
+        { label: 'Real', href: 'ch1.xhtml' },
+        { label: 'Dangling', href: 'nope.xhtml' },
+      ],
+    }
+    expect(toc(opts)).toEqual([['Real', 0, false]])
+  })
+})
+
+describe('realignSkewedToc (malformed one-early TOC repair)', () => {
+  const chap = (text: string): EpubChapter => ({
+    title: '',
+    html: `<p>${text}</p>`,
+    frontMatter: false,
+  })
+  const entry = (title: string, chapterIndex: number, frontMatter = false): EpubTocEntry => ({
+    title,
+    chapterIndex,
+    frontMatter,
+  })
+
+  it('realigns a uniformly one-early skewed TOC (and drops the orphaned last entry)', () => {
+    // content: idx0 Maps, idx1 CHAPTER ONE, idx2 CHAPTER TWO, idx3 CHAPTER THREE
+    const chapters = [
+      chap('Maps'),
+      chap('CHAPTER ONE Lusa'),
+      chap('CHAPTER TWO Kallik'),
+      chap('CHAPTER THREE Toklo'),
+    ]
+    // every link points one entry early
+    const toc = [
+      entry('Chapter One', 0),
+      entry('Chapter Two', 1),
+      entry('Chapter Three', 2),
+      entry('About the Author', 3, true),
+    ]
+    expect(realignSkewedToc(toc, chapters).map((e) => [e.title, e.chapterIndex])).toEqual([
+      ['Chapter One', 1],
+      ['Chapter Two', 2],
+      ['Chapter Three', 3],
+    ])
+  })
+
+  it('is a strict no-op when chapter labels match their own target (correct TOC)', () => {
+    const chapters = [chap('CHAPTER ONE'), chap('CHAPTER TWO'), chap('CHAPTER THREE')]
+    const toc = [entry('Chapter One', 0), entry('Chapter Two', 1), entry('Chapter Three', 2)]
+    expect(realignSkewedToc(toc, chapters)).toBe(toc) // same reference — untouched
+  })
+
+  it('is a no-op when labels are not ordinal chapters (nothing to validate against)', () => {
+    const chapters = [chap('The Shire'), chap('Rivendell'), chap('Moria')]
+    const toc = [entry('The Shire', 1), entry('Rivendell', 2), entry('Moria', 0)]
+    expect(realignSkewedToc(toc, chapters)).toBe(toc)
+  })
+
+  it('end-to-end: extractEpubContent repairs a Calibre-style one-early NCX', () => {
+    const opts = {
+      title: 'Fire in the Sky',
+      chapters: [
+        { href: 'contents.html', title: 'x', body: '<p>Contents</p>' }, // idx0
+        { href: 'maps.html', title: 'x', body: '<p>Maps</p>' }, // idx1
+        { href: 'c1.html', title: 'x', body: '<p>CHAPTER ONE Lusa</p>' }, // idx2
+        { href: 'c2.html', title: 'x', body: '<p>CHAPTER TWO Kallik</p>' }, // idx3
+        { href: 'c3.html', title: 'x', body: '<p>CHAPTER THREE Toklo</p>' }, // idx4
+      ],
+      ncx: [
+        { label: 'Maps', href: 'contents.html' }, // skewed →idx0
+        { label: 'Chapter One', href: 'maps.html' }, // →idx1
+        { label: 'Chapter Two', href: 'c1.html' }, // →idx2
+        { label: 'Chapter Three', href: 'c2.html' }, // →idx3
+        { label: 'Acknowledgments', href: 'c3.html' }, // →idx4
+      ],
+    }
+    expect(
+      extractEpubContent(makeEpubFile(opts)).toc.map((e) => [e.title, e.chapterIndex]),
+    ).toEqual([
+      ['Maps', 1], // maps.html
+      ['Chapter One', 2], // c1.html (CHAPTER ONE)
+      ['Chapter Two', 3], // c2.html
+      ['Chapter Three', 4], // c3.html (CHAPTER THREE)
+    ])
   })
 })
 

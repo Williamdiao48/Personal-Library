@@ -153,9 +153,25 @@ export interface RefreshResult {
 export interface EpubChapter {
   title: string
   html: string
+  /** True for front/back matter (cover, title page, intro, prologue, appendix, …)
+   *  — the chapter list shows these with no number; only body chapters are numbered. */
+  frontMatter: boolean
+}
+export interface EpubTocEntry {
+  /** Display label from the EPUB's nav/ncx TOC. */
+  title: string
+  /** Index into EpubBook.chapters — the spine file to open for this entry. */
+  chapterIndex: number
+  /** Front/back matter (Cover, Maps, Table of Contents, …) — shown without a number. */
+  frontMatter: boolean
 }
 export interface EpubBook {
   chapters: EpubChapter[]
+  /** Logical chapter list from the EPUB's TOC (nav/ncx), in reading order. Empty
+   *  when the EPUB has no usable TOC — the reader then lists the spine files.
+   *  Decouples navigation from the physical spine so Calibre-split books (many
+   *  page-sized files per chapter) still show real chapters, not fragments. */
+  toc: EpubTocEntry[]
 }
 
 export interface ConvertChapter {

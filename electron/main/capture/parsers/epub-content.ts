@@ -10,9 +10,20 @@ import {
 export interface EpubChapter {
   title: string
   html: string
+  /** True for front/back matter (cover, title page, intro, prologue, appendix, …).
+   *  The reader shows these unnumbered; only body chapters get a running number. */
+  frontMatter: boolean
+}
+export interface EpubTocEntry {
+  title: string
+  /** Index into EpubBook.chapters — the spine file this TOC entry opens. */
+  chapterIndex: number
+  frontMatter: boolean
 }
 export interface EpubBook {
   chapters: EpubChapter[]
+  /** Logical chapter list from the nav/ncx TOC, in reading order; empty if none. */
+  toc: EpubTocEntry[]
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -355,6 +366,102 @@ function buildTitleMap(
   return titleMap
 }
 
+/** Strip tags + decode entities + collapse whitespace from a raw TOC label. */
+function cleanTitle(s: string): string {
+  return decodeEntities(s.replace(/<[^>]+>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+interface RawTocEntry {
+  title: string
+  /** Resolved zip path of the spine file this entry targets (fragment dropped). */
+  targetPath: string
+}
+
+/**
+ * Build the ordered logical chapter list from the EPUB's TOC — EPUB3 nav
+ * (`epub:type="toc"`) first, then EPUB2 `toc.ncx`. Unlike buildTitleMap
+ * (filename→title, order-lossy, one-per-file), this preserves reading order and
+ * emits one entry PER TOC item, so a Calibre-split book (many page-sized spine
+ * files per chapter, all sharing the book's `<title>`) still lists real chapters
+ * rather than page fragments. Hrefs are resolved to spine zip paths; the caller
+ * maps each to a chapter index. Fragments are dropped — navigation targets the
+ * file, not the intra-file anchor.
+ */
+function buildToc(zip: AdmZip, opfDir: string, manifest: Map<string, ManifestItem>): RawTocEntry[] {
+  // ── EPUB3 nav document ──
+  for (const [, item] of manifest) {
+    if (!item.mediaType.includes('xhtml')) continue
+    const navZipPath = resolveZipPath(opfDir, item.href)
+    let navText: string | null
+    try {
+      navText = readEntryTextCapped(zip, navZipPath)
+    } catch {
+      continue
+    }
+    if (!navText) continue
+    if (!navText.includes('epub:type="toc"') && !navText.includes("epub:type='toc'")) continue
+
+    const navDir = navZipPath.includes('/')
+      ? navZipPath.slice(0, navZipPath.lastIndexOf('/') + 1)
+      : ''
+    // Scope to the toc <nav> so a landmarks/page-list nav in the same file can't leak in.
+    const tocNav =
+      /<nav\b[^>]*epub:type=["'][^"']*\btoc\b[^"']*["'][\s\S]*?<\/nav>/i.exec(navText)?.[0] ??
+      navText
+
+    const entries: RawTocEntry[] = []
+    const linkRe = /<a\s[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi
+    let lm: RegExpExecArray | null
+    while ((lm = linkRe.exec(tocNav)) !== null) {
+      const target = resolveZipPath(navDir, lm[1])
+      const title = cleanTitle(lm[2])
+      if (target && title) entries.push({ title, targetPath: target })
+    }
+    if (entries.length > 0) return entries
+  }
+
+  // ── EPUB2 toc.ncx ──
+  for (const [, item] of manifest) {
+    if (!item.mediaType.includes('ncx')) continue
+    const ncxZipPath = resolveZipPath(opfDir, item.href)
+    let ncxText: string | null
+    try {
+      ncxText = readEntryTextCapped(zip, ncxZipPath)
+    } catch {
+      continue
+    }
+    if (!ncxText) continue
+
+    const ncxDir = ncxZipPath.includes('/')
+      ? ncxZipPath.slice(0, ncxZipPath.lastIndexOf('/') + 1)
+      : ''
+    // navLabel texts and content srcs each appear once per navPoint, in document
+    // order (nesting preserves order), so the k-th of each pair up — robust to
+    // nested navPoints that a per-block regex would drop.
+    const labels: string[] = []
+    const labelRe = /<navLabel\b[\s\S]*?<text[^>]*>([\s\S]*?)<\/text>/gi
+    let lm: RegExpExecArray | null
+    while ((lm = labelRe.exec(ncxText)) !== null) labels.push(cleanTitle(lm[1]))
+
+    const srcs: string[] = []
+    const srcRe = /<content\b[^>]*\bsrc=["']([^"']+)["']/gi
+    let sm: RegExpExecArray | null
+    while ((sm = srcRe.exec(ncxText)) !== null) srcs.push(sm[1])
+
+    const entries: RawTocEntry[] = []
+    const n = Math.min(labels.length, srcs.length)
+    for (let i = 0; i < n; i++) {
+      const target = resolveZipPath(ncxDir, srcs[i])
+      if (target && labels[i]) entries.push({ title: labels[i], targetPath: target })
+    }
+    if (entries.length > 0) return entries
+  }
+
+  return []
+}
+
 /** Extract a title from a single XHTML document as a fallback. */
 function extractTitleFromXhtml(xhtml: string, index: number): string {
   // <title> element
@@ -369,6 +476,94 @@ function extractTitleFromXhtml(xhtml: string, index: number): string {
   if (heading) return heading
 
   return `Chapter ${index + 1}`
+}
+
+// ── Front/back matter classification ─────────────────────────────────────────
+
+// Titles that NAME front/back matter — these render without a chapter number.
+// Prefix match: a distinctive leading word, optionally followed by " A" / " I" /
+// ":" / a number (e.g. "Appendix B", "Author's Note:").
+const MATTER_PREFIX_RE =
+  /^(half[\s-]?title|title\s?page|frontispiece|copyright|colophon|imprint|dedication|epigraph|foreword|preface|prologue|prelude|introduction|epilogue|afterword|postscript|acknowledge?ments?|appendix|appendices|glossary|bibliography|discography|filmography|maps? of|list of|about the author|about the publisher|also by|by the same author|other books(?: by)?|coming soon|praise for|permissions|author.?s note|translator.?s note|publisher.?s note)\b/
+
+// Generic single words that are front/back matter ONLY when they are the whole
+// title — guards against real chapters like "Notes from Underground" or "The
+// Index Case". Allows a trailing colon / dash / period.
+const MATTER_EXACT_RE =
+  /^(cover|contents|table of contents|notes|endnotes?|footnotes?|index|references?|credits|excerpt|newsletter|dramatis personae|maps?)[\s:.-]*$/
+
+/** Does this chapter title name front/back matter (so it should be unnumbered)? */
+function isFrontBackMatterTitle(title: string): boolean {
+  const t = normaliseText(title)
+  return t.length > 0 && (MATTER_PREFIX_RE.test(t) || MATTER_EXACT_RE.test(t))
+}
+
+/** A TOC entry whose label is exactly the book's own title is a title-page entry,
+ *  not a chapter — shown unnumbered. (Applied to TOC labels only, never to the
+ *  spine, where Calibre-split files all carry the book title as a running head.) */
+function isBookTitleLabel(label: string, bookTitle: string): boolean {
+  return bookTitle !== '' && normaliseText(label) === normaliseText(bookTitle)
+}
+
+/**
+ * Find where the book's body matter begins, in OUTPUT-chapter-index space, so
+ * every entry before it can be flagged front matter even when its title gives no
+ * hint (untitled title pages, "Chapter 1" fallbacks on a copyright page, …).
+ *
+ * Two structural signals, cheapest first:
+ *   • EPUB2 `<guide>`: `<reference type="text" href="…">` marks the start of reading.
+ *   • EPUB3 landmarks nav: `<a epub:type="bodymatter" href="…">`.
+ *
+ * Returns the output index of the first body chapter, or -1 if neither signal is
+ * present or resolvable (then classification falls back to titles alone).
+ */
+function findBodyStartIndex(
+  zip: AdmZip,
+  opfDir: string,
+  opfContent: string,
+  manifest: Map<string, ManifestItem>,
+  spineHrefToIndex: Map<string, number>,
+): number {
+  // ── EPUB2 <guide> (lives in the OPF — no extra entry read) ──
+  const guideBlock = /<guide\b[\s\S]*?<\/guide>/i.exec(opfContent)?.[0]
+  if (guideBlock) {
+    const ref =
+      /<reference\b[^>]*\btype=["']text["'][^>]*\bhref=["']([^"'#]+)/i.exec(guideBlock)?.[1] ??
+      /<reference\b[^>]*\bhref=["']([^"'#]+)["'][^>]*\btype=["']text/i.exec(guideBlock)?.[1]
+    if (ref) {
+      const idx = spineHrefToIndex.get(resolveZipPath(opfDir, ref))
+      if (idx !== undefined) return idx
+    }
+  }
+
+  // ── EPUB3 landmarks nav ──
+  for (const [, item] of manifest) {
+    if (!item.mediaType.includes('xhtml')) continue
+    const navZipPath = resolveZipPath(opfDir, item.href)
+    let navText: string | null
+    try {
+      navText = readEntryTextCapped(zip, navZipPath)
+    } catch {
+      continue
+    }
+    if (!navText || !/epub:type=["'][^"']*landmarks/i.test(navText)) continue
+
+    const navDir = navZipPath.includes('/')
+      ? navZipPath.slice(0, navZipPath.lastIndexOf('/') + 1)
+      : ''
+    // The bodymatter landmark link (attribute order varies).
+    const href =
+      /<a\b[^>]*epub:type=["'][^"']*bodymatter[^"']*["'][^>]*href=["']([^"'#]+)/i.exec(
+        navText,
+      )?.[1] ??
+      /<a\b[^>]*href=["']([^"'#]+)["'][^>]*epub:type=["'][^"']*bodymatter/i.exec(navText)?.[1]
+    if (href) {
+      const idx = spineHrefToIndex.get(resolveZipPath(navDir, href))
+      if (idx !== undefined) return idx
+    }
+  }
+
+  return -1
 }
 
 // ── Image inlining ─────────────────────────────────────────────────────────
@@ -699,6 +894,62 @@ export function transformChapterHtml(xhtml: string, ctx: ChapterContext): string
   }
 }
 
+// ── Malformed-TOC skew correction ────────────────────────────────────────────
+
+const CHAPTER_KEY_RE = /\bchapter\s+([\w-]+)/i
+
+/** Comparable key from an ordinal chapter label: "Chapter One" → "one",
+ *  "Chapter 12" → "12"; null if the label isn't a "Chapter N" heading. */
+function chapterLabelKey(label: string): string | null {
+  return CHAPTER_KEY_RE.exec(label)?.[1]?.toLowerCase() ?? null
+}
+
+/** Does a chapter's opening text lead with the given "chapter <key>" heading? */
+function chapterOpensWith(html: string, key: string): boolean {
+  const head = html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60)
+    .toLowerCase()
+  return head.includes(`chapter ${key}`)
+}
+
+/**
+ * Some EPUBs (notably certain Calibre conversions) ship a TOC whose links are
+ * uniformly shifted one entry early — every "Chapter N" points at the *previous*
+ * section's file. Verified on a real book: 0/15 chapter labels matched their own
+ * target, 15/15 matched the NEXT entry's target.
+ *
+ * Detect that with high confidence by comparing ordinal chapter labels to the
+ * actual chapter headings, then realign each entry to the following entry's
+ * target (dropping the now-orphaned last one). A correctly authored TOC has its
+ * labels matching in place, so this is a strict no-op for it — the gate needs
+ * several chapter entries, almost none matching in place, and almost all matching
+ * one entry over, or the TOC is returned untouched.
+ */
+export function realignSkewedToc(toc: EpubTocEntry[], chapters: EpubChapter[]): EpubTocEntry[] {
+  let n = 0
+  let inPlace = 0
+  let shifted = 0
+  for (let k = 0; k < toc.length; k++) {
+    const key = chapterLabelKey(toc[k].title)
+    if (key === null) continue
+    n++
+    if (chapterOpensWith(chapters[toc[k].chapterIndex]?.html ?? '', key)) inPlace++
+    const nextIdx = toc[k + 1]?.chapterIndex
+    if (nextIdx !== undefined && chapterOpensWith(chapters[nextIdx]?.html ?? '', key)) shifted++
+  }
+  const skewed = n >= 3 && inPlace / n < 0.3 && shifted / n > 0.7
+  if (!skewed) return toc
+
+  const corrected: EpubTocEntry[] = []
+  for (let k = 0; k < toc.length - 1; k++) {
+    corrected.push({ ...toc[k], chapterIndex: toc[k + 1].chapterIndex })
+  }
+  return corrected
+}
+
 // ── Main export ────────────────────────────────────────────────────────────
 
 export function extractEpubContent(filePath: string): EpubBook {
@@ -735,6 +986,9 @@ export function extractEpubContent(filePath: string): EpubBook {
     if (zp && zip.getEntry(zp)) spineHrefToIndex.set(zp, outIdxPre++)
   }
 
+  // 4c. Locate where body matter begins (front matter before it is unnumbered).
+  const bodyStartIndex = findBodyStartIndex(zip, opfDir, opfContent, manifest, spineHrefToIndex)
+
   // 5. Extract each chapter
   const chapters: EpubChapter[] = []
   let totalInflated = 0
@@ -766,14 +1020,36 @@ export function extractEpubContent(filePath: string): EpubBook {
     // titles, then sanitize as the final step (see transformChapterHtml / F9).
     const html = transformChapterHtml(xhtml, { xhtmlDir, zip, spineHrefToIndex, bookTitle })
 
-    chapters.push({ title, html })
+    // Classify: a title that names front/back matter, OR anything before the
+    // structural body-matter start, is unnumbered. `chapters.length` is this
+    // entry's output index — the same space as bodyStartIndex/spineHrefToIndex.
+    const frontMatter =
+      isFrontBackMatterTitle(title) || (bodyStartIndex > 0 && chapters.length < bodyStartIndex)
+
+    chapters.push({ title, html, frontMatter })
   }
 
   if (chapters.length === 0) {
     throw new Error('Could not extract any chapters from this EPUB.')
   }
 
-  return { chapters }
+  // 6. Logical chapter list from the TOC (nav/ncx), mapped to spine chapter
+  //    indices. Entries pointing outside the spine are dropped. Empty when the
+  //    book has no usable TOC — the reader then falls back to the spine list.
+  const toc: EpubTocEntry[] = []
+  for (const raw of buildToc(zip, opfDir, manifest)) {
+    const chapterIndex = spineHrefToIndex.get(raw.targetPath)
+    if (chapterIndex === undefined) continue
+    const frontMatter =
+      isFrontBackMatterTitle(raw.title) ||
+      isBookTitleLabel(raw.title, bookTitle) ||
+      (bodyStartIndex > 0 && chapterIndex < bodyStartIndex)
+    toc.push({ title: raw.title, chapterIndex, frontMatter })
+  }
+
+  // 7. Repair a uniformly one-early TOC (malformed Calibre conversions); no-op
+  //    for a correctly authored TOC.
+  return { chapters, toc: realignSkewedToc(toc, chapters) }
 }
 
 // ── Text-only extraction (import / FTS) ──────────────────────────────────────

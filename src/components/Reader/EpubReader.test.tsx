@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import EpubReader, { columnForMark, pageCount } from './EpubReader'
+import EpubReader, {
+  columnForMark,
+  pageCount,
+  chapterNumbers,
+  activeNavEntry,
+  isSelfNumbered,
+} from './EpubReader'
 import type { Item, EpubBook } from '../../types'
 
 // EpubReader parses the EPUB in the main process (readerService.loadEpub → plain
@@ -59,10 +65,12 @@ const mkItem = (over: Partial<Item> = {}): Item =>
 
 const mkBook = (): EpubBook => ({
   chapters: [
-    { title: 'Chapter One', html: '<p>Alpha body</p>' },
-    { title: 'Chapter Two', html: '<p>Beta body</p>' },
-    { title: 'Chapter Three', html: '<p>Gamma body</p>' },
+    // Named (not self-numbered) chapters, so the reader's own numbering applies.
+    { title: 'The Shire', html: '<p>Alpha body</p>', frontMatter: false },
+    { title: 'Rivendell', html: '<p>Beta body</p>', frontMatter: false },
+    { title: 'Moria', html: '<p>Gamma body</p>', frontMatter: false },
   ],
+  toc: [],
 })
 
 beforeEach(() => {
@@ -72,6 +80,81 @@ beforeEach(() => {
 })
 
 // ── Pure helpers ────────────────────────────────────────────────────────────────
+describe('chapterNumbers', () => {
+  it('numbers only body chapters, skipping front/back matter', () => {
+    const nums = chapterNumbers([
+      { frontMatter: true }, // Cover
+      { frontMatter: true }, // Title Page
+      { frontMatter: false }, // Chapter → 1
+      { frontMatter: false }, // Chapter → 2
+      { frontMatter: true }, // Epilogue
+      { frontMatter: false }, // Chapter → 3
+    ])
+    expect(nums).toEqual([null, null, 1, 2, null, 3])
+  })
+
+  it('numbers every chapter when there is no front matter', () => {
+    expect(chapterNumbers([{ frontMatter: false }, { frontMatter: false }])).toEqual([1, 2])
+  })
+
+  it('returns all-null when every entry is matter', () => {
+    expect(chapterNumbers([{ frontMatter: true }, { frontMatter: true }])).toEqual([null, null])
+  })
+})
+
+describe('isSelfNumbered', () => {
+  const e = (title: string, frontMatter = false) => ({ title, frontMatter })
+
+  it('detects a book whose labels already carry numbers ("1: …", "Chapter 3")', () => {
+    expect(
+      isSelfNumbered([e('1: STORMBLESSED'), e('2: HONOR IS DEAD'), e('3: CITY OF BELLS')]),
+    ).toBe(true)
+    expect(
+      isSelfNumbered([e('Chapter 1 - Funeral Voices'), e('Chapter 2 - Heaven'), e('Chapter 3')]),
+    ).toBe(true)
+  })
+
+  it('is false when labels are bare names (we should add numbers)', () => {
+    expect(isSelfNumbered([e('EAGLE STRIKE'), e('The Gift'), e('Trapped')])).toBe(false)
+  })
+
+  it('ignores front matter and tolerates a few section headers (majority rules)', () => {
+    // Cover/Contents excluded; Part header is a minority among numbered chapters.
+    expect(
+      isSelfNumbered([
+        e('Cover', true),
+        e('Part One: Above Silence'),
+        e('1: STORMBLESSED'),
+        e('2: HONOR IS DEAD'),
+        e('3: CITY OF BELLS'),
+      ]),
+    ).toBe(true)
+  })
+
+  it('needs at least three body entries to decide', () => {
+    expect(isSelfNumbered([e('1. One'), e('2. Two')])).toBe(false)
+  })
+})
+
+describe('activeNavEntry', () => {
+  const toc = [
+    { chapterIndex: 2 }, // Maps
+    { chapterIndex: 3 }, // Chapter One (spans spine 3–4)
+    { chapterIndex: 5 }, // Chapter Two
+  ]
+
+  it('picks the last entry at or before the current spine chapter', () => {
+    expect(activeNavEntry(toc, 3)).toBe(1) // in Chapter One
+    expect(activeNavEntry(toc, 4)).toBe(1) // still Chapter One (its continuation file)
+    expect(activeNavEntry(toc, 5)).toBe(2) // Chapter Two
+  })
+
+  it('returns -1 before the first entry, and clamps to the last', () => {
+    expect(activeNavEntry(toc, 0)).toBe(-1)
+    expect(activeNavEntry(toc, 99)).toBe(2)
+  })
+})
+
 describe('columnForMark', () => {
   it('returns the current page when the mark sits at the left edge of that page', () => {
     // mark flush with outer-left, on page 2, column width 100 → logicalX = 200 → page 2
@@ -123,7 +206,7 @@ describe('EpubReader — load states', () => {
     render(<EpubReader item={mkItem()} onBack={() => {}} />)
     expect(await screen.findByText('Alpha body')).toBeInTheDocument()
     expect(reader.loadEpub).toHaveBeenCalledWith('book.epub')
-    expect(screen.getByRole('button', { name: /1\. Chapter One/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /1\. The Shire/ })).toBeInTheDocument()
   })
 
   it('surfaces a load error', async () => {
@@ -133,13 +216,67 @@ describe('EpubReader — load states', () => {
   })
 })
 
+describe('EpubReader — TOC-driven chapter list', () => {
+  // A Calibre-split shape: spine files all share the book <title>, real chapters
+  // live in the TOC. The dropdown must show TOC labels (numbered from the body),
+  // never the repeated spine title.
+  const mkTocBook = (): EpubBook => ({
+    chapters: [
+      { title: 'Fire in the Sky', html: '<p>Alpha body</p>', frontMatter: false },
+      { title: 'Fire in the Sky', html: '<p>Beta body</p>', frontMatter: false },
+      { title: 'Fire in the Sky', html: '<p>Gamma body</p>', frontMatter: false },
+    ],
+    toc: [
+      { title: 'Maps', chapterIndex: 0, frontMatter: true },
+      { title: 'Chapter One', chapterIndex: 1, frontMatter: false },
+      { title: 'Chapter Two', chapterIndex: 2, frontMatter: false },
+    ],
+  })
+
+  it('lists TOC chapters (numbered from the body), not the repeated spine title', async () => {
+    reader.loadEpub.mockResolvedValue(mkTocBook())
+    render(<EpubReader item={mkItem()} onBack={() => {}} />)
+    await screen.findByText('Alpha body')
+
+    // Open the chapter dropdown (label reflects the active TOC entry: "Maps").
+    fireEvent.click(screen.getByRole('button', { name: /Maps/ }))
+
+    expect(screen.getByRole('button', { name: /1\. Chapter One/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /2\. Chapter Two/ })).toBeInTheDocument()
+    // The repeated spine title never appears as a chapter entry.
+    expect(screen.queryByText('Fire in the Sky')).not.toBeInTheDocument()
+  })
+
+  it('does not add its own numbers when the book already self-numbers its labels', async () => {
+    reader.loadEpub.mockResolvedValue({
+      chapters: [
+        { title: 'x', html: '<p>Alpha body</p>', frontMatter: false },
+        { title: 'x', html: '<p>Beta body</p>', frontMatter: false },
+        { title: 'x', html: '<p>Gamma body</p>', frontMatter: false },
+      ],
+      toc: [
+        { title: 'Chapter 1 - The Gift', chapterIndex: 0, frontMatter: false },
+        { title: 'Chapter 2 - Trapped', chapterIndex: 1, frontMatter: false },
+        { title: 'Chapter 3 - Escape', chapterIndex: 2, frontMatter: false },
+      ],
+    } as EpubBook)
+    render(<EpubReader item={mkItem()} onBack={() => {}} />)
+    await screen.findByText('Alpha body')
+    fireEvent.click(screen.getByRole('button', { name: /Chapter 1 - The Gift/ }))
+
+    // Labels verbatim — no prepended "1. Chapter 1".
+    expect(screen.getByRole('button', { name: /^Chapter 2 - Trapped$/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /\d+\.\s*Chapter 2/ })).not.toBeInTheDocument()
+  })
+})
+
 describe('EpubReader — chapter navigation', () => {
   it('advances chapters with the next arrow (instant jump)', async () => {
     render(<EpubReader item={mkItem()} onBack={() => {}} />)
     await screen.findByText('Alpha body')
     fireEvent.click(screen.getByRole('button', { name: '›' }))
     expect(screen.getByText('Beta body')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /2\. Chapter Two/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /2\. Rivendell/ })).toBeInTheDocument()
   })
 })
 
@@ -149,6 +286,6 @@ describe('EpubReader — restore', () => {
     // round(0.5 * (3 - 1)) = 1 → second chapter
     render(<EpubReader item={mkItem({ scroll_position: 0.5 })} onBack={() => {}} />)
     expect(await screen.findByText('Beta body')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /2\. Chapter Two/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /2\. Rivendell/ })).toBeInTheDocument()
   })
 })
