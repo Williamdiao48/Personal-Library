@@ -3,6 +3,7 @@ import { okJson, notOk, type FakeResponse } from '../../../test/stubs/httpRespon
 import { openTestDb, closeTestDb, type TestDb } from '../../../test/db/harness'
 import {
   normalizeOpenLibraryDoc,
+  contentTokens,
   coverUrlFromId,
   fetchCandidates,
   extractOlDescription,
@@ -94,6 +95,44 @@ describe('normalizeOpenLibraryDoc', () => {
       doc({ key: undefined, title: 'Dune', author_name: ['Herbert'] }),
     )!
     expect(c.sourceId).toBe('synthetic:dune|herbert')
+  })
+
+  it('rejects graphic novels / comics / manga by subject (text-first reader)', () => {
+    for (const s of [
+      'Comics & graphic novels',
+      'Graphic novels',
+      'Comic books, strips, etc.',
+      'Manga',
+      'Cartoons and comics',
+    ]) {
+      expect(normalizeOpenLibraryDoc(doc({ subject: ['Fantasy', s] }))).toBeNull()
+    }
+  })
+
+  it('rejects a graphic-novel tag even when it appears past the subjects cap', () => {
+    const pad = Array.from({ length: CANDIDATES.MAX_SUBJECTS_PER_DOC + 2 }, (_, i) => `s${i}`)
+    expect(normalizeOpenLibraryDoc(doc({ subject: [...pad, 'Graphic novels'] }))).toBeNull()
+  })
+
+  it('keeps a normal novel whose subjects merely mention adjacent words', () => {
+    // "Comics" adjacent to nothing graphic-novel-ish stays (targeted, not aggressive).
+    expect(
+      normalizeOpenLibraryDoc(doc({ subject: ['Science fiction', 'Adventure'] })),
+    ).not.toBeNull()
+  })
+})
+
+describe('contentTokens', () => {
+  it('strips file-format noise + stopwords from a filename-style title', () => {
+    expect(contentTokens('_OceanofPDF.com_Elantris_-_Brandon_Sanderson')).toEqual([
+      'elantris',
+      'brandon',
+      'sanderson',
+    ])
+  })
+
+  it('keeps real title words and lowercases', () => {
+    expect(contentTokens('The Final Empire')).toEqual(['final', 'empire'])
   })
 })
 
