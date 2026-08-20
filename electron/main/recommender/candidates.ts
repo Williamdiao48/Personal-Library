@@ -119,6 +119,56 @@ export function candidateKey(title: string, author: string | null): string {
   return `${norm(title)}|${norm(author ?? '')}`
 }
 
+// Stopwords + file-format/URL noise stripped before the fuzzy owned-book dedup, so a
+// filename-style title ("_OceanofPDF.com_Elantris_-_Brandon_Sanderson", author NULL)
+// collapses to its real content tokens {elantris, brandon, sanderson}. Deliberately
+// KEEPS real title words (new/final/edited/book) so containment isn't over-loosened.
+const TITLE_NOISE = new Set([
+  'the',
+  'a',
+  'an',
+  'of',
+  'and',
+  'or',
+  'to',
+  'in',
+  'on',
+  'for',
+  'with',
+  'by',
+  'at',
+  'from',
+  'oceanofpdf',
+  'com',
+  'www',
+  'http',
+  'https',
+  'pdf',
+  'epub',
+  'mobi',
+  'azw3',
+  'ebook',
+])
+
+/**
+ * Distinctive content tokens of a title (+author) string for the fuzzy owned-book dedup:
+ * normalized, split on whitespace, with stopwords + file-format noise removed. Pure.
+ * Shared by the snapshot builder (owned side) and `filterCandidates` (candidate side) so
+ * both normalize identically.
+ */
+export function contentTokens(s: string): string[] {
+  return norm(s)
+    .split(' ')
+    .filter((t) => t.length > 0 && !TITLE_NOISE.has(t))
+}
+
+// Subjects marking a graphic novel / comic / manga — content this text-first reader
+// can't render (image-heavy panels). Targeted patterns (not a bare "comics") so a text
+// novel that merely *mentions* comics isn't dropped. Matches OpenLibrary's usual tags:
+// "Comics & graphic novels", "Graphic novels", "Comic books, strips, etc.", "Manga".
+const GRAPHIC_NOVEL_SUBJECT_RE =
+  /graphic novel|comic book|comics\s*&\s*graphic|comics,\s*strips|\bmanga\b|cartoons and comics/i
+
 /**
  * Normalize one `search.json` doc → Candidate, or null when it has no usable
  * title. Tolerates every field being absent (OpenLibrary omits them freely).
@@ -131,6 +181,9 @@ export function normalizeOpenLibraryDoc(
 ): Candidate | null {
   const title = doc.title?.trim()
   if (!title) return null
+  // Reject graphic novels / comics / manga at the source. Check the FULL subject list
+  // (before the MAX_SUBJECTS cap) so a late-listed tag isn't missed.
+  if ((doc.subject ?? []).some((s) => GRAPHIC_NOVEL_SUBJECT_RE.test(s))) return null
   const author = doc.author_name?.[0]?.trim() || null
   const subjects = (doc.subject ?? [])
     .map((s) => s.trim())

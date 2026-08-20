@@ -4,7 +4,13 @@ import { itemMetadataText } from './embeddingText'
 import { cosine } from './vectorMath'
 import { buildTaste, type TasteResult } from './taste'
 import { buildTasteSeeds } from './tasteSeeds'
-import { candidateKey, CANDIDATE_TEXT_VERSION, type Candidate, type SourceName } from './candidates'
+import {
+  candidateKey,
+  contentTokens,
+  CANDIDATE_TEXT_VERSION,
+  type Candidate,
+  type SourceName,
+} from './candidates'
 import { unionCandidates, type CandidateSource } from './candidateSource'
 import { loadCandidateVectors, saveCandidateVectors } from './candidateEmbeddings'
 import { openLibrarySource } from './sources/openLibrary'
@@ -96,19 +102,40 @@ export interface ExcludeSets {
   keys: Set<string>
   /** Source ids (OpenLibrary keys / source_urls) + ISBNs of owned + dismissed books. */
   ids: Set<string>
+  /** Per-owned-item content-token sets, for the fuzzy title-containment fallback that
+   *  catches messy imports (filename titles / NULL author) the exact key can't. Optional
+   *  — absent ⇒ exact matching only (the pre-fuzzy behavior). */
+  titleTokens?: Set<string>[]
 }
 
 // ── pure core ─────────────────────────────────────────────────────────────────
 
+/** Distinctiveness guard: a candidate title is eligible for fuzzy owned-book matching
+ *  only if it carries enough signal — ≥2 content tokens, or a single token ≥5 chars —
+ *  so generic short titles ("It", "Us") don't collide with a messy owned filename. */
+function fuzzyEligible(tokens: string[]): boolean {
+  if (tokens.length >= 2) return true
+  return tokens.length === 1 && tokens[0].length >= 5
+}
+
 /**
- * Drop candidates the user already owns or has dismissed: by normalized
- * `title|author` key, by sourceId, or by ISBN (D-C4-5). Pure.
+ * Drop candidates the user already owns or has dismissed: by normalized `title|author`
+ * key, by sourceId, or by ISBN (D-C4-5). Plus a fuzzy fallback — messy owned imports
+ * (filename titles, NULL author, e.g. `_OceanofPDF.com_Elantris_-_Brandon_Sanderson`)
+ * can't match the exact key, so also drop a candidate whose title's content tokens are
+ * all contained in some single owned item's token set (guarded against generic titles).
+ * Pure.
  */
 export function filterCandidates(cands: Candidate[], exclude: ExcludeSets): Candidate[] {
+  const ownedTokens = exclude.titleTokens ?? []
   return cands.filter((c) => {
     if (exclude.keys.has(candidateKey(c.title, c.author))) return false
     if (exclude.ids.has(c.sourceId)) return false
     if (c.isbn && exclude.ids.has(c.isbn)) return false
+    const ct = contentTokens(c.title)
+    if (fuzzyEligible(ct) && ownedTokens.some((owned) => ct.every((t) => owned.has(t)))) {
+      return false
+    }
     return true
   })
 }
@@ -372,14 +399,21 @@ interface LibrarySnapshot {
 function loadLibrarySnapshot(): LibrarySnapshot {
   const keys = new Set<string>()
   const ids = new Set<string>()
+  const titleTokens: Set<string>[] = []
   const ownedAuthors = new Set<string>()
   let book = 0
   let fic = 0
+
+  const addTitleTokens = (title: string, author: string | null) => {
+    const toks = new Set(contentTokens(`${title} ${author ?? ''}`))
+    if (toks.size > 0) titleTokens.push(toks)
+  }
 
   for (const r of all<{ title: string; author: string | null; source_url: string | null }>(
     `SELECT title, author, source_url FROM items WHERE deleted_at IS NULL`,
   )) {
     keys.add(candidateKey(r.title, r.author))
+    addTitleTokens(r.title, r.author)
     const ak = authorKey(r.author)
     if (ak) ownedAuthors.add(ak)
     if (r.source_url) {
@@ -395,11 +429,12 @@ function loadLibrarySnapshot(): LibrarySnapshot {
     `SELECT id, title, author, source FROM dismissed_recommendations`,
   )) {
     keys.add(candidateKey(r.title, r.author))
+    addTitleTokens(r.title, r.author)
     ids.add(r.id)
     if (r.source) ids.add(r.source)
   }
 
-  return { exclude: { keys, ids }, mix: { book, fic }, ownedAuthors }
+  return { exclude: { keys, ids, titleTokens }, mix: { book, fic }, ownedAuthors }
 }
 
 // ── orchestrator ──────────────────────────────────────────────────────────────

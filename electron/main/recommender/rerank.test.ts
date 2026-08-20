@@ -96,6 +96,45 @@ describe('filterCandidates', () => {
     })
     expect(out.map((c) => c.sourceId)).toEqual(['/works/KEEP'])
   })
+
+  it('fuzzy-drops a candidate owned via a messy filename title (Elantris case)', () => {
+    // Owned as a PDF: title = filename, author NULL → exact key can't match the clean
+    // OpenLibrary candidate. Token-containment catches it.
+    const elantris = cand({ title: 'Elantris', author: 'Brandon Sanderson', sourceId: '/works/E' })
+    const other = cand({ title: 'Warbreaker', author: 'Brandon Sanderson', sourceId: '/works/W' })
+    const ownedMessy = new Set(['elantris', 'brandon', 'sanderson']) // from the filename
+    const out = filterCandidates([elantris, other], {
+      keys: new Set(),
+      ids: new Set(),
+      titleTokens: [ownedMessy],
+    })
+    expect(out.map((c) => c.sourceId)).toEqual(['/works/W']) // Warbreaker kept
+  })
+
+  it('does not fuzzy-drop a generic short title (distinctiveness guard)', () => {
+    const it = cand({ title: 'It', author: 'Stephen King', sourceId: '/works/IT' })
+    const out = filterCandidates([it], {
+      keys: new Set(),
+      ids: new Set(),
+      titleTokens: [new Set(['it', 'is', 'a', 'messy', 'owned', 'filename'])],
+    })
+    expect(out.map((c) => c.sourceId)).toEqual(['/works/IT']) // kept — "it" too generic
+  })
+
+  it('fuzzy match needs ALL candidate tokens present in ONE owned set', () => {
+    const kept = cand({
+      title: 'The Final Empire',
+      author: 'Brandon Sanderson',
+      sourceId: '/works/M',
+    })
+    // Tokens {final, empire} split across two different owned items → no single-set match.
+    const out = filterCandidates([kept], {
+      keys: new Set(),
+      ids: new Set(),
+      titleTokens: [new Set(['final', 'countdown']), new Set(['roman', 'empire'])],
+    })
+    expect(out.map((c) => c.sourceId)).toEqual(['/works/M'])
+  })
 })
 
 // ── scoreCandidate (pure) ────────────────────────────────────────────────────
