@@ -32,6 +32,14 @@ export interface EpubOptions {
   opfDir?: string
   chapters?: EpubChapter[]
   cover?: { href: string; data?: Buffer; useProperties?: boolean }
+  /** EPUB2 <guide>: mark the start-of-reading href (→ body matter). */
+  guide?: { textHref: string }
+  /** EPUB3 landmarks nav: emit a nav.xhtml with a bodymatter landmark href. */
+  landmarks?: { bodymatterHref: string }
+  /** EPUB3 nav toc: emit a nav.xhtml <nav epub:type="toc"> with these entries. */
+  navToc?: { label: string; href: string }[]
+  /** EPUB2 toc.ncx: emit navPoints (with a real manifest item + spine toc="ncx"). */
+  ncx?: { label: string; href: string }[]
   omitMimetype?: boolean
   /** Fully override container.xml (malformed-fixture escape hatch). */
   containerXml?: string
@@ -103,6 +111,64 @@ export function buildEpub(opts: EpubOptions = {}): Buffer {
     }
   }
 
+  // Optional EPUB3 nav — a separate xhtml doc (manifest-only, not in spine) that
+  // may hold a landmarks nav (bodymatter marker) and/or a toc nav (chapter list).
+  let navItem = ''
+  if (opts.landmarks || opts.navToc) {
+    const landmarksNav = opts.landmarks
+      ? `<nav epub:type="landmarks"><ol>
+  <li><a epub:type="bodymatter" href="${opts.landmarks.bodymatterHref}">Start Reading</a></li>
+</ol></nav>`
+      : ''
+    const tocNav = opts.navToc
+      ? `<nav epub:type="toc"><ol>
+  ${opts.navToc.map((e) => `<li><a href="${e.href}">${e.label}</a></li>`).join('\n  ')}
+</ol></nav>`
+      : ''
+    zip.addFile(
+      `${opfDir}nav.xhtml`,
+      Buffer.from(
+        `<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head><title>Nav</title></head>
+<body>${landmarksNav}${tocNav}</body>
+</html>`,
+      ),
+    )
+    navItem = `<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`
+  }
+
+  // Optional EPUB2 toc.ncx.
+  let ncxItem = ''
+  let spineToc = ''
+  if (opts.ncx) {
+    const points = opts.ncx
+      .map(
+        (e, i) =>
+          `<navPoint id="np${i}" playOrder="${i + 1}"><navLabel><text>${e.label}</text></navLabel><content src="${e.href}"/></navPoint>`,
+      )
+      .join('\n    ')
+    zip.addFile(
+      `${opfDir}toc.ncx`,
+      Buffer.from(
+        `<?xml version="1.0" encoding="utf-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head/><docTitle><text>${title}</text></docTitle>
+  <navMap>
+    ${points}
+  </navMap>
+</ncx>`,
+      ),
+    )
+    ncxItem = `<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>`
+    spineToc = ' toc="ncx"'
+  }
+
+  // Optional EPUB2 guide.
+  const guideXml = opts.guide
+    ? `<guide><reference type="text" title="Start" href="${opts.guide.textHref}"/></guide>`
+    : ''
+
   const manifestItems = chapters
     .map(
       (ch) =>
@@ -128,10 +194,13 @@ export function buildEpub(opts: EpubOptions = {}): Buffer {
   <manifest>
     ${manifestItems}
     ${coverItem}
+    ${navItem}
+    ${ncxItem}
   </manifest>
-  <spine>
+  <spine${spineToc}>
     ${spineRefs}
   </spine>
+  ${guideXml}
 </package>`,
     ),
   )

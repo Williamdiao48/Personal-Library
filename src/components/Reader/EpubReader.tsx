@@ -84,6 +84,49 @@ export function pageCount(scrollWidth: number, colWidth: number): number {
   return Math.max(1, Math.round(scrollWidth / colWidth))
 }
 
+/**
+ * Chapter-list display numbers. Front/back matter (cover, title page, intro,
+ * prologue, appendix, …) is flagged `frontMatter` by the parser and shown with no
+ * number; only real body chapters get a running 1, 2, 3, aligned to `chapters`.
+ */
+export function chapterNumbers(chapters: { frontMatter: boolean }[]): (number | null)[] {
+  let n = 0
+  return chapters.map((c) => (c.frontMatter ? null : ++n))
+}
+
+// A label that already carries its own number: "1.", "1)", "1 -", "12: Title",
+// or "Chapter 3 - …". When most body entries look like this, the book self-numbers
+// and prepending our own number is redundant.
+const SELF_NUMBERED_LABEL_RE = /^\s*(\d+\s*[.):\s-]|chapter\b)/i
+
+/**
+ * True when the book's TOC already numbers its own chapters, so the reader should
+ * NOT add a second number. Judged on body (non-front-matter) entries: a strong
+ * majority self-numbered ⇒ leave labels verbatim. Needs a few entries to decide.
+ */
+export function isSelfNumbered(entries: { title: string; frontMatter: boolean }[]): boolean {
+  const body = entries.filter((e) => !e.frontMatter)
+  if (body.length < 3) return false
+  const selfNumbered = body.filter((e) => SELF_NUMBERED_LABEL_RE.test(e.title)).length
+  return selfNumbered / body.length >= 0.5
+}
+
+/**
+ * Which nav-list entry is "current" for the spine chapter on screen: the last
+ * entry whose target chapterIndex is at or before it (entries are in reading
+ * order, and a Calibre-split chapter spans several spine files). -1 if none.
+ */
+export function activeNavEntry(
+  entries: { chapterIndex: number }[],
+  currentChapter: number,
+): number {
+  let active = -1
+  for (let k = 0; k < entries.length; k++) {
+    if (entries[k].chapterIndex <= currentChapter) active = k
+  }
+  return active
+}
+
 export default function EpubReader({ item, onBack }: Props) {
   const { recordActivity } = useReadingSession(item.id)
 
@@ -863,6 +906,21 @@ export default function EpubReader({ item, onBack }: Props) {
     return <div className="reader-loading">No readable content found in this EPUB.</div>
 
   const ch = book.chapters[chapter]
+  // Navigation list: the logical TOC when the EPUB has one, else the spine files.
+  // Decoupling this from the spine is what keeps Calibre-split books (many files
+  // per chapter, all titled with the book name) showing real chapters.
+  const navList =
+    book.toc.length > 0
+      ? book.toc
+      : book.chapters.map((c, i) => ({
+          title: c.title,
+          chapterIndex: i,
+          frontMatter: c.frontMatter,
+        }))
+  // Number the list ourselves only when the book doesn't already number its own
+  // labels — otherwise show them verbatim (no redundant "1. Chapter 1").
+  const navNums = isSelfNumbered(navList) ? navList.map(() => null) : chapterNumbers(navList)
+  const activeNav = activeNavEntry(navList, chapter)
   const w = outerWidth
   const offset = w > 0 ? -(page * w) : 0
   const canPrev = page > 0 || chapter > 0
@@ -936,7 +994,15 @@ export default function EpubReader({ item, onBack }: Props) {
 
               <div className="epub-chapter-dropdown-wrapper">
                 <button className="epub-chapter-btn" onClick={() => setShowChapterList((s) => !s)}>
-                  {chapter + 1}. {ch.title} ▾
+                  {activeNav >= 0 ? (
+                    <>
+                      {navNums[activeNav] !== null ? `${navNums[activeNav]}. ` : ''}
+                      {navList[activeNav].title}
+                    </>
+                  ) : (
+                    ch.title
+                  )}{' '}
+                  ▾
                 </button>
 
                 {showChapterList && (
@@ -946,16 +1012,17 @@ export default function EpubReader({ item, onBack }: Props) {
                       onClick={() => setShowChapterList(false)}
                     />
                     <div className="epub-chapter-list" style={{ left: 0, right: 'auto' }}>
-                      {book.chapters.map((c, i) => (
+                      {navList.map((entry, k) => (
                         <button
-                          key={i}
-                          className={`epub-chapter-item${i === chapter ? ' active' : ''}`}
+                          key={k}
+                          className={`epub-chapter-item${k === activeNav ? ' active' : ''}`}
                           onClick={() => {
-                            jumpToChapter(i)
+                            jumpToChapter(entry.chapterIndex)
                             setShowChapterList(false)
                           }}
                         >
-                          {i + 1}. {c.title}
+                          {navNums[k] !== null ? `${navNums[k]}. ` : ''}
+                          {entry.title}
                         </button>
                       ))}
                     </div>
