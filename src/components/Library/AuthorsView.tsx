@@ -9,7 +9,7 @@ type SortMode = 'az' | 'count'
 
 export default function AuthorsView() {
   const navigate = useNavigate()
-  const { captureJobs, dismissJob } = useCaptureJobs()
+  const { captureJobs, dismissJob, batchJobs, cancelBatch, dismissBatch } = useCaptureJobs()
 
   const [allLibraryItems, setAllLibraryItems] = useState<Item[]>([])
   const [allCollections, setAllCollections] = useState<Collection[]>([])
@@ -104,6 +104,9 @@ export default function AuthorsView() {
         collectionMgmt={collectionMgmt}
         captureJobs={captureJobs}
         onDismissJob={dismissJob}
+        batchJobs={batchJobs}
+        onCancelBatch={cancelBatch}
+        onDismissBatch={dismissBatch}
         trashedCount={trashedCount}
       />
 

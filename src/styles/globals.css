@@ -1661,6 +1661,119 @@ html[data-theme-mode='light'] .item-card-tag-pill:hover {
   padding-top: 4px;
 }
 
+/* ── Add-item mode tabs ─────────────────────────────── */
+.modal-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-tab {
+  padding: 8px 14px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: -1px;
+}
+.modal-tab:hover {
+  color: var(--text);
+}
+.modal-tab--active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Favorites import ───────────────────────────────── */
+.modal input[type='text'],
+.modal select {
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 14px;
+  font-family: var(--font-ui);
+}
+.modal input[type='text']:focus,
+.modal select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.fav-source-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.fav-source-row select {
+  flex-shrink: 0;
+}
+.fav-source-row input[type='text'] {
+  flex: 1;
+  min-width: 0;
+}
+.fav-preview {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fav-preview-counts {
+  font-size: 13px;
+  color: var(--text);
+  margin: 0;
+}
+.fav-preview-skips {
+  color: var(--text-muted);
+}
+.fav-preview-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: 12px;
+}
+.fav-preview-list li {
+  padding: 3px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fav-preview-author {
+  color: var(--text-muted);
+}
+.fav-preview-more {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Running-batch Cancel control (a text button, unlike the tiny ✕ dismiss). */
+.capture-job-cancel {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.capture-job-cancel:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+.capture-job--throttled .capture-job-bar,
+.capture-job--cancelled .capture-job-bar {
+  background: var(--warning, #f0a500);
+}
+
 button {
   padding: 8px 16px;
   border-radius: var(--radius);

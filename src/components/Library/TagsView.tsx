@@ -105,7 +105,7 @@ function TagRow({ tag, count, onRename, onSetColor, onDelete, onNavigate }: TagR
 
 export default function TagsView() {
   const navigate = useNavigate()
-  const { captureJobs, dismissJob } = useCaptureJobs()
+  const { captureJobs, dismissJob, batchJobs, cancelBatch, dismissBatch } = useCaptureJobs()
 
   const [tags, setTags] = useState<Tag[]>([])
   const [itemCounts, setItemCounts] = useState<Record<string, number>>({})
@@ -222,6 +222,9 @@ export default function TagsView() {
         collectionMgmt={collectionMgmt}
         captureJobs={captureJobs}
         onDismissJob={dismissJob}
+        batchJobs={batchJobs}
+        onCancelBatch={cancelBatch}
+        onDismissBatch={dismissBatch}
         trashedCount={trashedCount}
       />
 

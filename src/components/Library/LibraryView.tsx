@@ -27,7 +27,8 @@ export default function LibraryView() {
   const { settings, updateSettings } = useSettings()
   const { user, configured } = useAuth()
   const { addToast, updateToast } = useToast()
-  const { captureJobs, startJob, dismissJob } = useCaptureJobs()
+  const { captureJobs, startJob, dismissJob, batchJobs, startBatch, cancelBatch, dismissBatch } =
+    useCaptureJobs()
 
   // "Back up to cloud" is offered only when the user is signed in and the master
   // switch is on (mirrors the capture-time gate in AddItemModal, Decision 8).
@@ -719,6 +720,9 @@ export default function LibraryView() {
         collectionMgmt={collectionMgmt}
         captureJobs={captureJobs}
         onDismissJob={dismissJob}
+        batchJobs={batchJobs}
+        onCancelBatch={cancelBatch}
+        onDismissBatch={dismissBatch}
         trashedCount={trashedCount}
       />
       <main className="library-main" ref={mainRef}>
@@ -1224,6 +1228,10 @@ export default function LibraryView() {
           }}
           onJobStarted={(jobId, url) => {
             startJob(jobId, url)
+            handleCloseModal()
+          }}
+          onBatchStarted={(batchId, source, label, total) => {
+            startBatch(batchId, source, label, total)
             handleCloseModal()
           }}
         />

@@ -186,6 +186,23 @@ export interface BulkImportProgress {
   error?: string // set only when status === 'error'
 }
 
+// A bulk favorites import tracked in the renderer as ONE aggregate sidebar row
+// (not N per-work rows — the batch runs captureUrl internally in main). Mirrors a
+// BulkImportProgress plus the display fields the row needs. `id` is the batchId.
+export interface BatchJob {
+  id: string
+  source: BulkSource
+  label: string // e.g. "AO3 · someuser" — shown in the row
+  total: number
+  done: number
+  failed: number
+  skipped: number
+  current?: string
+  status: BulkImportStatus
+  error?: string
+  startedAt: number
+}
+
 // A background URL capture job tracked in the renderer while the main process
 // fetches and parses the content asynchronously.
 export interface CaptureJob {

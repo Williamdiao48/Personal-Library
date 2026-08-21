@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, memo } from 'react'
 import { Link, useSearchParams, useLocation } from 'react-router-dom'
-import type { Collection, CaptureJob } from '../../types'
+import type { Collection, CaptureJob, BatchJob } from '../../types'
 import { useUpdater } from '../../contexts/UpdaterContext'
 import { useSettings } from '../../contexts/SettingsContext'
 
@@ -16,7 +16,34 @@ interface Props {
   collectionMgmt: CollectionMgmt
   captureJobs: CaptureJob[]
   onDismissJob: (id: string) => void
+  batchJobs: BatchJob[]
+  onCancelBatch: (id: string) => void
+  onDismissBatch: (id: string) => void
   trashedCount: number
+}
+
+// One-line status message for a bulk-import row, given its terminal/live state.
+function batchStatusText(job: BatchJob): string {
+  const imported = `${job.done} imported`
+  const extras = [
+    job.skipped ? `${job.skipped} skipped` : '',
+    job.failed ? `${job.failed} failed` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const tail = extras ? ` · ${extras}` : ''
+  switch (job.status) {
+    case 'done':
+      return `Done — ${imported}${tail}`
+    case 'cancelled':
+      return `Cancelled — ${imported}${tail}`
+    case 'throttled':
+      return `Paused — site may be rate-limiting. ${imported}${tail}. Try again later.`
+    case 'error':
+      return job.error ?? 'Import failed.'
+    default:
+      return `${imported}${tail}`
+  }
 }
 
 // Returns the progress percentage (0–100) for a job, or null for indeterminate.
@@ -66,6 +93,9 @@ const Sidebar = memo(function Sidebar({
   collectionMgmt,
   captureJobs,
   onDismissJob,
+  batchJobs,
+  onCancelBatch,
+  onDismissBatch,
   trashedCount,
 }: Props) {
   const { pendingVersion } = useUpdater()
@@ -409,6 +439,59 @@ const Sidebar = memo(function Sidebar({
                     {job.status === 'running' && job.chapter && job.total && (
                       <span className="capture-job-count">
                         {job.chapter}/{job.total}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </section>
+        )}
+
+        {/* ── Bulk favorites imports ───────────────────── */}
+        {batchJobs.length > 0 && (
+          <section className="sidebar-captures">
+            <h2 className="sidebar-section-title sidebar-captures-title">
+              Importing
+              {batchJobs.some((b) => b.status === 'running') && (
+                <span className="sidebar-captures-pulse" aria-hidden="true" />
+              )}
+            </h2>
+
+            {batchJobs.map((job) => {
+              const processed = job.done + job.skipped + job.failed
+              const pct = job.total > 0 ? Math.round((processed / job.total) * 100) : 0
+              const terminal = job.status !== 'running'
+              return (
+                <div key={job.id} className={`capture-job capture-job--${job.status}`}>
+                  <div className="capture-job-header">
+                    <span className="capture-job-url" title={job.label}>
+                      {job.status === 'done' ? `✓ ${job.label}` : job.label}
+                    </span>
+                    {job.status === 'running' ? (
+                      <button className="capture-job-cancel" onClick={() => onCancelBatch(job.id)}>
+                        Cancel
+                      </button>
+                    ) : (
+                      <button
+                        className="capture-job-dismiss"
+                        onClick={() => onDismissBatch(job.id)}
+                        aria-label="Dismiss"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="capture-job-track">
+                    <div className="capture-job-bar" style={{ width: `${pct}%` }} />
+                  </div>
+
+                  <div className="capture-job-status">
+                    <span className="capture-job-msg">{batchStatusText(job)}</span>
+                    {!terminal && (
+                      <span className="capture-job-count">
+                        {processed}/{job.total}
                       </span>
                     )}
                   </div>

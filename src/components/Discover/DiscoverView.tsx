@@ -49,7 +49,7 @@ export default function DiscoverView() {
   const navigate = useNavigate()
   const { addToast, updateToast } = useToast()
   const { settings, updateSettings } = useSettings()
-  const { startJob } = useCaptureJobs()
+  const { startJob, startBatch } = useCaptureJobs()
 
   const [cards, setCards] = useState<Recommendation[]>([])
   const [generatedAt, setGeneratedAt] = useState<number | null>(null)
@@ -384,6 +384,11 @@ export default function DiscoverView() {
             startJob(jobId, url)
             if (pendingRec) removeCard(pendingRec.sourceId)
             addToast('Adding to library…', 'success')
+            closeModal()
+          }}
+          onBatchStarted={(batchId, source, label, total) => {
+            startBatch(batchId, source, label, total)
+            addToast('Importing favorites…', 'success')
             closeModal()
           }}
         />

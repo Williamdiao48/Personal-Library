@@ -266,6 +266,9 @@ beforeEach(() => {
       return () => {}
     }),
     onCaptureError: vi.fn(() => () => {}),
+    // CaptureJobsContext also subscribes to the bulk-import channels on mount.
+    onBatchProgress: vi.fn(() => () => {}),
+    onBatchComplete: vi.fn(() => () => {}),
     // LibraryView subscribes to live backup-status broadcasts on mount.
     cloud: {
       onBlobState: vi.fn(() => () => {}),
