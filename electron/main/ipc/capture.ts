@@ -1,9 +1,11 @@
 import { ipcMain, dialog } from 'electron'
 import { randomUUID } from 'crypto'
 import { captureUrl, captureFile, appendChapters } from '../capture'
+import { discoverFavorites } from '../capture/bulkImport'
 import { triggerBackfill } from '../recommender/lifecycle'
 import { enqueueItemBackup } from '../cloud/uploader'
 import { notifyLocalMutation } from '../cloud/sync/syncService'
+import type { BulkSource } from '../../../src/types'
 
 /**
  * True only for parseable http(s) URLs. `capture:start` is a trust boundary —
@@ -71,6 +73,22 @@ export function registerCaptureHandlers(): void {
       return jobId
     },
   )
+
+  // Bulk favorites — phase 1: discover an account's works (fast: 1–few requests)
+  // so the UI can preview counts before committing to the import. Awaited (returns
+  // the FavoritesDiscovery), with page progress streamed on capture:discoverProgress
+  // for the AO3 multi-page walk. A bad source / ref rejects the promise so the
+  // renderer surfaces the validation message inline.
+  ipcMain.handle('capture:discoverFavorites', (event, source: BulkSource, ref: string) => {
+    if (source !== 'ao3' && source !== 'ffn') {
+      throw new Error('Unknown import source.')
+    }
+    return discoverFavorites(source, ref, (page, totalPages, found) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('capture:discoverProgress', { source, ref, page, totalPages, found })
+      }
+    })
+  })
 
   ipcMain.handle('capture:append', (event, itemId: string, newEnd: number) => {
     const jobId = randomUUID()

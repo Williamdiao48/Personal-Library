@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { invoke, resetIpc, dialog } from '../../../test/stubs/electron'
+import { invoke, resetIpc, dialog, fakeEvent } from '../../../test/stubs/electron'
 
 // Mock the capture pipeline so this suite never loads the real module (and thus
 // never pulls in better-sqlite3 / the DB): we only care that capture:start's
@@ -18,9 +18,13 @@ vi.mock('../recommender/lifecycle', () => ({ triggerBackfill: vi.fn() }))
 vi.mock('../cloud/uploader', () => ({ enqueueItemBackup: vi.fn(() => Promise.resolve()) }))
 // Tier 1 #3: a new/updated item schedules a debounced sync push — mock the trigger.
 vi.mock('../cloud/sync/syncService', () => ({ notifyLocalMutation: vi.fn() }))
+// Bulk-favorites discovery pulls in ../db via bulkImport — stub it so this suite
+// stays DB-free and we just assert the IPC wiring (dispatch + progress forwarding).
+vi.mock('../capture/bulkImport', () => ({ discoverFavorites: vi.fn() }))
 
 import { registerCaptureHandlers, isHttpUrl } from './capture'
 import { captureUrl, captureFile, appendChapters } from '../capture'
+import { discoverFavorites } from '../capture/bulkImport'
 import { triggerBackfill } from '../recommender/lifecycle'
 import { enqueueItemBackup } from '../cloud/uploader'
 import { notifyLocalMutation } from '../cloud/sync/syncService'
@@ -125,6 +129,57 @@ describe('capture:start — SEC-3 scheme guard', () => {
 
     expect(typeof jobId).toBe('string')
     expect(triggerBackfill).not.toHaveBeenCalled()
+  })
+})
+
+describe('capture:discoverFavorites', () => {
+  const RESULT = {
+    source: 'ao3' as const,
+    ref: 'someuser',
+    works: [{ url: 'https://archiveofourown.org/works/1', title: 'A', author: null }],
+    total: 1,
+    alreadyInLibrary: 0,
+    skippedSeries: 0,
+    skippedExternal: 0,
+  }
+
+  it('dispatches to discoverFavorites and returns the preview result', async () => {
+    ;(discoverFavorites as Mock).mockResolvedValue(RESULT)
+
+    const result = await invoke('capture:discoverFavorites', 'ao3', 'someuser')
+
+    expect(discoverFavorites).toHaveBeenCalledWith('ao3', 'someuser', expect.any(Function))
+    expect(result).toEqual(RESULT)
+  })
+
+  it('forwards page progress to the capture:discoverProgress channel', async () => {
+    ;(discoverFavorites as Mock).mockImplementation((_s, _r, onProgress) => {
+      onProgress(2, 24, 30) // simulate the AO3 multi-page walk reporting page 2/24
+      return Promise.resolve(RESULT)
+    })
+    const sendSpy = vi.spyOn(fakeEvent.sender, 'send')
+
+    await invoke('capture:discoverFavorites', 'ao3', 'someuser')
+
+    expect(sendSpy).toHaveBeenCalledWith('capture:discoverProgress', {
+      source: 'ao3',
+      ref: 'someuser',
+      page: 2,
+      totalPages: 24,
+      found: 30,
+    })
+  })
+
+  it('rejects an unknown source without touching the discoverer', () => {
+    expect(() => invoke('capture:discoverFavorites', 'bogus', 'x')).toThrow(/Unknown import source/)
+    expect(discoverFavorites).not.toHaveBeenCalled()
+  })
+
+  it('propagates a validation rejection (e.g. a bad account ref)', async () => {
+    ;(discoverFavorites as Mock).mockRejectedValue(new Error('Enter a valid AO3 username'))
+    await expect(invoke('capture:discoverFavorites', 'ao3', '!!bad!!')).rejects.toThrow(
+      /valid AO3 username/,
+    )
   })
 })
 
