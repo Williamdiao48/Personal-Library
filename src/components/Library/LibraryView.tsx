@@ -139,6 +139,40 @@ export default function LibraryView() {
     return () => offComplete()
   }, [])
 
+  // ── Bulk-import live refresh ───────────────────────────────────
+  // A bulk favorites import runs captureUrl internally in main and emits NO
+  // per-item capture:complete, so the loop above never hears about the works it
+  // saves. Without this, imported books sit in the DB unseen until a cold reload.
+  // Refetch the item list each time the batch's done count rises (and once at
+  // completion — which also covers a cancelled/throttled stop), tracking the
+  // last-seen done per batchId so we refetch once per newly-imported work, not
+  // on every progress tick.
+  useEffect(() => {
+    const seenDone = new Map<string, number>()
+    const refreshItems = () => {
+      libraryService
+        .getAll()
+        .then(setItems)
+        .catch(() => {
+          /* a transient refetch failure just delays the new cards to the next reload */
+        })
+    }
+    const offBatchProgress = window.api.onBatchProgress((p) => {
+      if (p.done > (seenDone.get(p.batchId) ?? 0)) {
+        seenDone.set(p.batchId, p.done)
+        refreshItems()
+      }
+    })
+    const offBatchComplete = window.api.onBatchComplete((p) => {
+      seenDone.delete(p.batchId)
+      if (p.done > 0) refreshItems()
+    })
+    return () => {
+      offBatchProgress()
+      offBatchComplete()
+    }
+  }, [])
+
   // ── Map builders ──────────────────────────────────────────────
 
   // ── Tag data refresh (after TagsModal closes) ─────────────────
