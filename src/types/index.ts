@@ -165,6 +165,27 @@ export interface FavoritesDiscovery {
   skippedExternal: number // AO3 off-site bookmarks filtered out (0 for FFN)
 }
 
+// Terminal + live states of a bulk import run.
+//   running   — the serialized queue is still working
+//   done      — every work processed (some may have failed/skipped)
+//   cancelled — the user cancelled; stopped after the in-flight work
+//   throttled — too many consecutive failures; stopped to avoid hammering the site
+//   error     — the run itself threw (not a per-work failure)
+export type BulkImportStatus = 'running' | 'done' | 'cancelled' | 'throttled' | 'error'
+
+// Progress snapshot streamed on capture:batchProgress and the final
+// capture:batchComplete for a bulk import. done+failed+skipped ≤ total.
+export interface BulkImportProgress {
+  batchId: string
+  total: number
+  done: number // captured successfully
+  failed: number // capture threw
+  skipped: number // already in library / duplicate within the batch
+  current?: string // URL currently being captured (absent when idle/terminal)
+  status: BulkImportStatus
+  error?: string // set only when status === 'error'
+}
+
 // A background URL capture job tracked in the renderer while the main process
 // fetches and parses the content asynchronously.
 export interface CaptureJob {
@@ -453,6 +474,13 @@ export interface Api {
     // Bulk favorites — discover an account's works for the preview step. Rejects
     // with a user-facing message on an invalid source / account reference.
     discoverFavorites: (source: BulkSource, ref: string) => Promise<FavoritesDiscovery>
+    // Bulk favorites — start the serialized import. Returns { batchId, total } (total
+    // = URLs accepted after host re-validation); progress streams via onBatch*.
+    startBulk: (
+      urls: string[],
+      cloudBackup?: boolean,
+    ) => Promise<{ batchId: string; total: number }>
+    cancelBulk: (batchId: string) => Promise<void>
   }
   reader: {
     loadContent: (relativePath: string) => Promise<string>
@@ -553,6 +581,8 @@ export interface Api {
       found: number
     }) => void,
   ) => () => void
+  onBatchProgress: (callback: (payload: BulkImportProgress) => void) => () => void
+  onBatchComplete: (callback: (payload: BulkImportProgress) => void) => () => void
   onCaptureProgress: (callback: (payload: { jobId: string; msg: string }) => void) => () => void
   onCaptureComplete: (
     callback: (payload: { jobId: string; result: CaptureResult }) => void,

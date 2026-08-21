@@ -1,20 +1,35 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// bulkImport touches the DB only through db.all (owned-id lookup) and the two site
-// discoverers. Mock all three so the validation + dedup + annotation logic runs
-// offline and ABI-free (no better-sqlite3 load).
+// bulkImport touches the DB only through db.all (owned-id lookup), the two site
+// discoverers, captureUrl, and the post-capture hooks. Mock them all so the
+// validation + dedup + queue logic runs offline and ABI-free (no better-sqlite3).
 vi.mock('../db', () => ({ all: vi.fn(() => []) }))
 vi.mock('./sites/ao3-bookmarks', () => ({ discoverAo3Bookmarks: vi.fn() }))
 vi.mock('./sites/ffnet-favorites', () => ({ discoverFfnetFavorites: vi.fn() }))
+vi.mock('../capture', () => ({ captureUrl: vi.fn() }))
+vi.mock('../recommender/lifecycle', () => ({ triggerBackfill: vi.fn() }))
+vi.mock('../cloud/uploader', () => ({ enqueueItemBackup: vi.fn(() => Promise.resolve()) }))
+vi.mock('../cloud/sync/syncService', () => ({ notifyLocalMutation: vi.fn() }))
 
-import { canonicalWorkId, normalizeAccountRef, discoverFavorites } from './bulkImport'
+import {
+  canonicalWorkId,
+  normalizeAccountRef,
+  discoverFavorites,
+  runBulkImport,
+  cancelBulkImport,
+} from './bulkImport'
 import { all } from '../db'
 import { discoverAo3Bookmarks } from './sites/ao3-bookmarks'
 import { discoverFfnetFavorites } from './sites/ffnet-favorites'
+import { captureUrl } from '../capture'
+import { triggerBackfill } from '../recommender/lifecycle'
+import { enqueueItemBackup } from '../cloud/uploader'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 
 const mockAll = vi.mocked(all)
 const mockAo3 = vi.mocked(discoverAo3Bookmarks)
 const mockFfn = vi.mocked(discoverFfnetFavorites)
+const mockCapture = vi.mocked(captureUrl)
 
 /** Seed the owned-id DB lookup with the given source_urls. */
 function owned(...urls: string[]): void {
@@ -160,5 +175,134 @@ describe('discoverFavorites — FFN', () => {
     expect(res.skippedSeries).toBe(0)
     expect(res.skippedExternal).toBe(0)
     expect(onProgress).toHaveBeenCalledWith(1, 1, 1)
+  })
+})
+
+describe('runBulkImport', () => {
+  const AO3 = (id: number) => `https://archiveofourown.org/works/${id}`
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    mockCapture.mockResolvedValue({ id: 'item', title: 't', author: null, wordCount: 1 })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** Run to completion, draining the polite-delay timers. */
+  async function run(opts: Parameters<typeof runBulkImport>[0]) {
+    const promise = runBulkImport(opts)
+    await vi.runAllTimersAsync()
+    return promise
+  }
+
+  it('captures every work serially, in order, and finishes done', async () => {
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout')
+    const final = await run({
+      batchId: 'B1',
+      urls: [AO3(1), AO3(2), AO3(3)],
+      cloudBackup: false,
+    })
+
+    expect(mockCapture.mock.calls.map((c) => c[0])).toEqual([AO3(1), AO3(2), AO3(3)])
+    // captureUrl is called noop-progress, no range, cloudBackup=false.
+    expect(mockCapture).toHaveBeenCalledWith(AO3(1), expect.any(Function), undefined, false)
+    expect(setTimeoutSpy).toHaveBeenCalled() // a polite delay ran between works
+    expect(final).toMatchObject({ status: 'done', total: 3, done: 3, failed: 0, skipped: 0 })
+  })
+
+  it('skips works already in the library (canonical-id match) without capturing', async () => {
+    owned(AO3(1)) // work 1 already owned; queue includes a chapter-URL variant of it
+    const final = await run({
+      batchId: 'B2',
+      urls: ['https://archiveofourown.org/works/1/chapters/9', AO3(2)],
+      cloudBackup: false,
+    })
+
+    expect(mockCapture).toHaveBeenCalledTimes(1)
+    expect(mockCapture).toHaveBeenCalledWith(AO3(2), expect.any(Function), undefined, false)
+    expect(final).toMatchObject({ status: 'done', done: 1, skipped: 1 })
+  })
+
+  it('de-duplicates a repeated work within the same batch', async () => {
+    const final = await run({
+      batchId: 'B3',
+      urls: [AO3(5), 'https://archiveofourown.org/works/5?view_full_work=true', AO3(6)],
+      cloudBackup: false,
+    })
+    expect(mockCapture).toHaveBeenCalledTimes(2) // work 5 once + work 6
+    expect(final).toMatchObject({ done: 2, skipped: 1 })
+  })
+
+  it('fires the post-capture hooks on success; enqueues a backup only when cloudBackup', async () => {
+    await run({ batchId: 'B4', urls: [AO3(1)], cloudBackup: true })
+    expect(triggerBackfill).toHaveBeenCalled()
+    expect(notifyLocalMutation).toHaveBeenCalled()
+    expect(enqueueItemBackup).toHaveBeenCalledWith('item')
+
+    vi.clearAllMocks()
+    mockCapture.mockResolvedValue({ id: 'item', title: 't', author: null, wordCount: 1 })
+    await run({ batchId: 'B4b', urls: [AO3(2)], cloudBackup: false })
+    expect(enqueueItemBackup).not.toHaveBeenCalled()
+  })
+
+  it('trips the circuit breaker after N consecutive failures → throttled', async () => {
+    mockCapture.mockRejectedValue(new Error('403'))
+    const final = await run({
+      batchId: 'B5',
+      urls: [AO3(1), AO3(2), AO3(3), AO3(4), AO3(5), AO3(6)],
+      cloudBackup: false,
+    })
+    // Stops at the 5th failure; the 6th work is never attempted.
+    expect(mockCapture).toHaveBeenCalledTimes(5)
+    expect(final).toMatchObject({ status: 'throttled', failed: 5, done: 0 })
+  })
+
+  it('resets the failure streak on a success (breaker only trips on a consecutive run)', async () => {
+    // fail, fail, succeed, fail, fail → never 5 in a row → completes done.
+    mockCapture
+      .mockRejectedValueOnce(new Error('x'))
+      .mockRejectedValueOnce(new Error('x'))
+      .mockResolvedValueOnce({ id: 'item', title: 't', author: null, wordCount: 1 })
+      .mockRejectedValueOnce(new Error('x'))
+      .mockRejectedValueOnce(new Error('x'))
+    const final = await run({
+      batchId: 'B6',
+      urls: [AO3(1), AO3(2), AO3(3), AO3(4), AO3(5)],
+      cloudBackup: false,
+    })
+    expect(final).toMatchObject({ status: 'done', done: 1, failed: 4 })
+  })
+
+  it('stops promptly when cancelled mid-run and reports cancelled', async () => {
+    const final = await (async () => {
+      const promise = runBulkImport({
+        batchId: 'B7',
+        urls: [AO3(1), AO3(2), AO3(3)],
+        cloudBackup: false,
+      })
+      // Let the first work capture and enter its inter-work delay, then cancel.
+      await vi.advanceTimersByTimeAsync(0)
+      cancelBulkImport('B7')
+      await vi.runAllTimersAsync()
+      return promise
+    })()
+
+    expect(mockCapture).toHaveBeenCalledTimes(1) // only the first work ran
+    expect(final.status).toBe('cancelled')
+  })
+
+  it('emits a progress event per work with current set then cleared', async () => {
+    const events: string[] = []
+    const final = await run({
+      batchId: 'B8',
+      urls: [AO3(1)],
+      cloudBackup: false,
+      onProgress: (p) => events.push(`${p.status}:${p.done}:${p.current ?? '-'}`),
+    })
+    // A "current set" tick (before capture) then a cleared tick (after), then final.
+    expect(events).toContain(`running:0:${AO3(1)}`)
+    expect(events).toContain('running:1:-')
+    expect(final.status).toBe('done')
   })
 })

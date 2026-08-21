@@ -1,12 +1,21 @@
 import { all } from '../db'
+import { captureUrl } from '../capture'
+import { triggerBackfill } from '../recommender/lifecycle'
+import { enqueueItemBackup } from '../cloud/uploader'
+import { notifyLocalMutation } from '../cloud/sync/syncService'
 import { discoverAo3Bookmarks } from './sites/ao3-bookmarks'
 import { discoverFfnetFavorites } from './sites/ffnet-favorites'
-import type { BulkSource, DiscoveredWork, FavoritesDiscovery } from '../../../src/types'
+import type {
+  BulkSource,
+  DiscoveredWork,
+  FavoritesDiscovery,
+  BulkImportProgress,
+} from '../../../src/types'
 
 // ── Bulk favorites import — discovery dispatch, validation, dedup (Phase 2) ────
 // Turns a validated account reference into a de-duplicated, library-annotated
-// preview (DiscoverResult) the UI shows before committing to N downloads. The
-// actual serialized import (runBulkImport) lands in Phase 3 in this same file.
+// preview (FavoritesDiscovery) the UI shows before committing to N downloads. The
+// serialized import queue (runBulkImport) follows in the Phase 3 section below.
 //
 // Dedup is load-bearing and NOT automatic: captureUrl blindly INSERTs the raw
 // source_url with no dedup, and the only existing URL check is renderer-side in
@@ -151,4 +160,151 @@ export async function discoverFavorites(
     skippedSeries,
     skippedExternal,
   }
+}
+
+// ── Serialized import queue (Phase 3) ─────────────────────────────────────────
+// Runs the discovered URLs through captureUrl one at a time, politely: a jittered
+// delay between works (longer for FFN, which rides the slow CF BrowserWindow
+// path), a circuit breaker that halts after a run of consecutive failures rather
+// than hammering a throttling site, and cooperative cancellation. Re-running after
+// a cancel/crash is idempotent — already-imported works skip via the same
+// canonical-id dedup used at discovery time.
+
+// Base inter-work delay by site + shared jitter. Justified by the spike's repeated
+// 503s: serialized + delayed is not optional. FFN is slower because each capture
+// spins the real-browser CF solver. Tunable.
+const AO3_WORK_DELAY_MS = 2500
+const FFN_WORK_DELAY_MS = 5000
+const BULK_JITTER_MS = 1500
+
+// Stop the batch after this many *consecutive* capture failures — a strong signal
+// the site is rate-limiting/blocking us. No auto-resume; the user re-runs (dedup
+// makes that a safe resume).
+const CIRCUIT_BREAKER_THRESHOLD = 5
+
+// How finely a between-works delay is sliced so cancellation is responsive mid-wait
+// instead of blocking for the full (up to ~6.5s) gap.
+const DELAY_SLICE_MS = 250
+
+interface BatchState {
+  cancelled: boolean
+}
+// Live batches, so capture:cancelBulk can flip a run's cancelled flag by id.
+const activeBatches = new Map<string, BatchState>()
+
+/** Request cancellation of a running batch (no-op if unknown/finished). */
+export function cancelBulkImport(batchId: string): void {
+  const state = activeBatches.get(batchId)
+  if (state) state.cancelled = true
+}
+
+/** Base delay for the next work, by site, plus jitter. */
+function workDelayMs(c: CanonicalId | null): number {
+  const base = c?.kind === 'ffn' ? FFN_WORK_DELAY_MS : AO3_WORK_DELAY_MS
+  return base + Math.floor(Math.random() * BULK_JITTER_MS)
+}
+
+/** Sleep `ms`, but wake early (in ≤ DELAY_SLICE_MS) once the batch is cancelled. */
+async function politeDelay(ms: number, state: BatchState): Promise<void> {
+  let elapsed = 0
+  while (elapsed < ms && !state.cancelled) {
+    const slice = Math.min(DELAY_SLICE_MS, ms - elapsed)
+    await new Promise<void>((r) => setTimeout(r, slice))
+    elapsed += slice
+  }
+}
+
+export interface RunBulkImportOptions {
+  batchId: string
+  urls: string[] // already host-validated by the IPC boundary
+  cloudBackup: boolean
+  onProgress?: (progress: BulkImportProgress) => void
+}
+
+/**
+ * Import a list of work URLs serially. Emits a BulkImportProgress after every work
+ * (and once at the end), returns the terminal snapshot. Never throws for a
+ * per-work failure — those are counted; only an unexpected fault (e.g. the owned-id
+ * query) would propagate, which the IPC layer maps to a status:'error' complete.
+ */
+export async function runBulkImport(opts: RunBulkImportOptions): Promise<BulkImportProgress> {
+  const { batchId, urls, cloudBackup, onProgress } = opts
+  const state: BatchState = { cancelled: false }
+  activeBatches.set(batchId, state)
+
+  // Dedup baseline: everything already in the library. Works captured during this
+  // run are added so a duplicate later in the same list (or a re-run) skips.
+  const owned = ownedCanonicalIds()
+
+  const progress: BulkImportProgress = {
+    batchId,
+    total: urls.length,
+    done: 0,
+    failed: 0,
+    skipped: 0,
+    status: 'running',
+  }
+  const emit = (): void => onProgress?.({ ...progress })
+
+  let consecutiveFailures = 0
+
+  try {
+    for (let i = 0; i < urls.length; i++) {
+      if (state.cancelled) {
+        progress.status = 'cancelled'
+        break
+      }
+
+      const url = urls[i]
+      const c = canonicalWorkId(url)
+      const key = c ? canonicalKey(c) : `url:${url}`
+
+      // Skip works already owned (library or earlier in this run) — idempotent.
+      if (owned.has(key)) {
+        progress.skipped++
+        emit()
+        continue
+      }
+
+      progress.current = url
+      emit()
+
+      try {
+        const result = await captureUrl(url, () => {}, undefined, cloudBackup)
+        progress.done++
+        consecutiveFailures = 0
+        owned.add(key) // now owned → a later duplicate / re-run skips
+        // Same post-capture hooks the single-capture IPC path fires. Best-effort:
+        // a hook failure must never fail the batch.
+        triggerBackfill()
+        if (cloudBackup) void enqueueItemBackup(result.id).catch(() => {})
+        notifyLocalMutation()
+      } catch {
+        progress.failed++
+        consecutiveFailures++
+        if (consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+          progress.status = 'throttled'
+          progress.current = undefined
+          emit()
+          break
+        }
+      }
+
+      progress.current = undefined
+      emit()
+
+      // Polite gap before the next work (not after the last, and not if cancelled).
+      if (i < urls.length - 1 && !state.cancelled) {
+        await politeDelay(workDelayMs(c), state)
+      }
+    }
+
+    if (progress.status === 'running') progress.status = 'done'
+  } finally {
+    activeBatches.delete(batchId)
+  }
+
+  progress.current = undefined
+  emit()
+  return progress
 }

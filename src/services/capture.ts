@@ -12,4 +12,9 @@ export const captureService = {
   // few requests). Rejects with a user-facing message on an invalid ref.
   discoverFavorites: (source: BulkSource, ref: string): Promise<FavoritesDiscovery> =>
     window.api.capture.discoverFavorites(source, ref),
+  // Bulk favorites — start the serialized import; subscribe via window.api
+  // onBatchProgress/onBatchComplete for updates.
+  startBulk: (urls: string[], cloudBackup?: boolean): Promise<{ batchId: string; total: number }> =>
+    window.api.capture.startBulk(urls, cloudBackup),
+  cancelBulk: (batchId: string): Promise<void> => window.api.capture.cancelBulk(batchId),
 }

@@ -1,11 +1,30 @@
 import { ipcMain, dialog } from 'electron'
 import { randomUUID } from 'crypto'
 import { captureUrl, captureFile, appendChapters } from '../capture'
-import { discoverFavorites } from '../capture/bulkImport'
+import { discoverFavorites, runBulkImport, cancelBulkImport } from '../capture/bulkImport'
 import { triggerBackfill } from '../recommender/lifecycle'
 import { enqueueItemBackup } from '../cloud/uploader'
 import { notifyLocalMutation } from '../cloud/sync/syncService'
 import type { BulkSource } from '../../../src/types'
+
+// Hosts a bulk import is allowed to fetch. The renderer carries the discovered URL
+// list between the discover and start IPC round-trips, so startBulk MUST re-validate
+// every URL here — never trust a renderer-supplied URL. Matches the site parsers'
+// own hosts (AO3 + FFN), including subdomains (www.).
+export function isAllowedBulkHost(raw: unknown): boolean {
+  if (typeof raw !== 'string') return false
+  try {
+    const host = new URL(raw).hostname.toLowerCase()
+    return (
+      host === 'archiveofourown.org' ||
+      host.endsWith('.archiveofourown.org') ||
+      host === 'fanfiction.net' ||
+      host.endsWith('.fanfiction.net')
+    )
+  } catch {
+    return false
+  }
+}
 
 /**
  * True only for parseable http(s) URLs. `capture:start` is a trust boundary —
@@ -88,6 +107,50 @@ export function registerCaptureHandlers(): void {
         event.sender.send('capture:discoverProgress', { source, ref, page, totalPages, found })
       }
     })
+  })
+
+  // Bulk favorites — phase 2: import the discovered works. The renderer sends the
+  // URL list (the non-owned works from the preview); we re-validate every host,
+  // drop anything invalid, and kick the serialized queue. Fire-and-forget: returns
+  // { batchId, total } immediately, then streams capture:batchProgress and a final
+  // capture:batchComplete. runBulkImport swallows per-work failures, so the only
+  // .catch here is an unexpected fault → a status:'error' completion.
+  ipcMain.handle('capture:startBulk', (event, urls: unknown, cloudBackup?: boolean) => {
+    const valid = (Array.isArray(urls) ? urls : []).filter(
+      (u): u is string => isHttpUrl(u) && isAllowedBulkHost(u),
+    )
+    const batchId = randomUUID()
+
+    runBulkImport({
+      batchId,
+      urls: valid,
+      cloudBackup: cloudBackup === true,
+      onProgress: (progress) => {
+        if (!event.sender.isDestroyed()) event.sender.send('capture:batchProgress', progress)
+      },
+    })
+      .then((final) => {
+        if (!event.sender.isDestroyed()) event.sender.send('capture:batchComplete', final)
+      })
+      .catch((err: unknown) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('capture:batchComplete', {
+            batchId,
+            total: valid.length,
+            done: 0,
+            failed: 0,
+            skipped: 0,
+            status: 'error',
+            error: err instanceof Error ? err.message : 'Bulk import failed.',
+          })
+        }
+      })
+
+    return { batchId, total: valid.length }
+  })
+
+  ipcMain.handle('capture:cancelBulk', (_event, batchId: string) => {
+    cancelBulkImport(batchId)
   })
 
   ipcMain.handle('capture:append', (event, itemId: string, newEnd: number) => {
