@@ -22,6 +22,20 @@ export interface SourceMeta {
   rating?: string // e.g. AO3 "Explicit", FFN "Fiction T"
 }
 
+// One entry discovered from an account's listing page (AO3 bookmarks / FFN
+// favorites). It is NOT a captured item — just enough to dedup, preview, and then
+// feed the URL into captureUrl during the bulk import. `title`/`author` power the
+// preview list; `fandom`/`words`/`chapters` are best-effort extras (FFN exposes
+// them on the row, AO3 leaves them null) shown in the preview but never required.
+export interface DiscoveredWork {
+  url: string
+  title: string
+  author: string | null
+  fandom?: string | null
+  words?: number | null
+  chapters?: number | null
+}
+
 // Shared content shape returned by all site strategies
 export interface SiteContent {
   title: string
