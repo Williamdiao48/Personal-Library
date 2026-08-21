@@ -10,7 +10,13 @@ interface Props {
   onClose: () => void
   onSaved: (item: Item) => void // file imports only
   onJobStarted: (jobId: string, url: string) => void // URL captures
-  onBatchStarted: (batchId: string, source: BulkSource, label: string, total: number) => void
+  onBatchStarted: (
+    batchId: string,
+    source: BulkSource,
+    label: string,
+    total: number,
+    titles: Record<string, string>,
+  ) => void
   initialUrl?: string
 }
 
@@ -140,14 +146,17 @@ export default function AddItemModal({
 
   async function handleImport() {
     if (!discovery) return
-    const urls = discovery.works.filter((w) => !w.alreadyInLibrary).map((w) => w.url)
+    const toImportWorks = discovery.works.filter((w) => !w.alreadyInLibrary)
+    const urls = toImportWorks.map((w) => w.url)
     if (urls.length === 0) return
     setStarting(true)
     setFavError(null)
     try {
       const { batchId, total } = await captureService.startBulk(urls, cloudBackup)
       const label = `${SOURCE_LABEL[discovery.source]} · ${discovery.ref}`
-      onBatchStarted(batchId, discovery.source, label, total)
+      // Carry titles so the sidebar row can name the book currently downloading.
+      const titles = Object.fromEntries(toImportWorks.map((w) => [w.url, w.title]))
+      onBatchStarted(batchId, discovery.source, label, total, titles)
       onClose()
     } catch (err) {
       setFavError(err instanceof Error ? err.message : 'Could not start the import.')

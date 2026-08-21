@@ -334,6 +334,38 @@ describe('Sidebar — bulk import rows', () => {
     expect(props.onCancelBatch).toHaveBeenCalledWith('b1')
   })
 
+  it('names the book currently downloading (by title from the map)', () => {
+    renderSidebar({
+      batchJobs: [
+        batchJob({
+          current: 'https://archiveofourown.org/works/7',
+          titles: { 'https://archiveofourown.org/works/7': 'The Current Book' },
+        }),
+      ],
+    })
+    expect(screen.getByText(/The Current Book/)).toBeInTheDocument()
+  })
+
+  it('falls back to a shortened URL when the current title is unknown', () => {
+    renderSidebar({
+      batchJobs: [batchJob({ current: 'https://archiveofourown.org/works/7', titles: {} })],
+    })
+    expect(screen.getByText(/archiveofourown\.org/)).toBeInTheDocument()
+  })
+
+  it('shows no current-book line once the batch is terminal', () => {
+    renderSidebar({
+      batchJobs: [
+        batchJob({
+          status: 'done',
+          current: 'https://archiveofourown.org/works/7',
+          titles: { 'https://archiveofourown.org/works/7': 'Should Not Show' },
+        }),
+      ],
+    })
+    expect(screen.queryByText(/Should Not Show/)).not.toBeInTheDocument()
+  })
+
   it('shows a dismiss (not cancel) control and summary once finished', () => {
     const props = renderSidebar({
       batchJobs: [batchJob({ status: 'done', done: 8, skipped: 1, failed: 1 })],

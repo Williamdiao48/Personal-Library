@@ -1753,6 +1753,16 @@ html[data-theme-mode='light'] .item-card-tag-pill:hover {
   font-style: italic;
 }
 
+/* Currently-downloading book line in a running batch row. */
+.capture-job-current {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
 /* Running-batch Cancel control (a text button, unlike the tiny ✕ dismiss). */
 .capture-job-cancel {
   flex-shrink: 0;

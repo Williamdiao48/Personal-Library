@@ -197,7 +197,10 @@ export interface BatchJob {
   done: number
   failed: number
   skipped: number
-  current?: string
+  current?: string // URL of the work being downloaded right now
+  // url → title for the works in this batch (from the discovery preview), so the
+  // row can show the CURRENT book's title instead of a bare URL. Renderer-only.
+  titles?: Record<string, string>
   status: BulkImportStatus
   error?: string
   startedAt: number

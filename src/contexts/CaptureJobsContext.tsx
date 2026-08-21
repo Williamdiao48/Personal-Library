@@ -19,8 +19,16 @@ interface CaptureJobsCtx {
   startJob: (jobId: string, url: string) => void
   dismissJob: (jobId: string) => void
   batchJobs: BatchJob[]
-  /** Track a bulk import the moment capture:startBulk returns its batchId. */
-  startBatch: (batchId: string, source: BulkSource, label: string, total: number) => void
+  /** Track a bulk import the moment capture:startBulk returns its batchId. `titles`
+   *  maps each work URL to its title (from the preview) so the row can name the
+   *  book currently downloading. */
+  startBatch: (
+    batchId: string,
+    source: BulkSource,
+    label: string,
+    total: number,
+    titles?: Record<string, string>,
+  ) => void
   /** Ask main to stop a running batch (it finishes the in-flight work, then reports cancelled). */
   cancelBatch: (batchId: string) => void
   dismissBatch: (batchId: string) => void
@@ -65,7 +73,13 @@ export function CaptureJobsProvider({ children }: { children: React.ReactNode })
   }, [])
 
   const startBatch = useCallback(
-    (batchId: string, source: BulkSource, label: string, total: number) => {
+    (
+      batchId: string,
+      source: BulkSource,
+      label: string,
+      total: number,
+      titles?: Record<string, string>,
+    ) => {
       setBatchJobs((prev) => [
         ...prev,
         {
@@ -76,6 +90,7 @@ export function CaptureJobsProvider({ children }: { children: React.ReactNode })
           done: 0,
           failed: 0,
           skipped: 0,
+          titles,
           status: 'running',
           startedAt: Date.now(),
         },

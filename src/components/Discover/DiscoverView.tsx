@@ -386,8 +386,8 @@ export default function DiscoverView() {
             addToast('Adding to library…', 'success')
             closeModal()
           }}
-          onBatchStarted={(batchId, source, label, total) => {
-            startBatch(batchId, source, label, total)
+          onBatchStarted={(batchId, source, label, total, titles) => {
+            startBatch(batchId, source, label, total, titles)
             addToast('Importing favorites…', 'success')
             closeModal()
           }}

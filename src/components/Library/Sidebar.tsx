@@ -487,6 +487,13 @@ const Sidebar = memo(function Sidebar({
                     <div className="capture-job-bar" style={{ width: `${pct}%` }} />
                   </div>
 
+                  {/* Currently-downloading book (running only), by title when known. */}
+                  {!terminal && job.current && (
+                    <div className="capture-job-current" title={job.current}>
+                      ↓ {job.titles?.[job.current] ?? displayUrl(job.current)}
+                    </div>
+                  )}
+
                   <div className="capture-job-status">
                     <span className="capture-job-msg">{batchStatusText(job)}</span>
                     {!terminal && (

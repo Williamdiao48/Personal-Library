@@ -1264,8 +1264,8 @@ export default function LibraryView() {
             startJob(jobId, url)
             handleCloseModal()
           }}
-          onBatchStarted={(batchId, source, label, total) => {
-            startBatch(batchId, source, label, total)
+          onBatchStarted={(batchId, source, label, total, titles) => {
+            startBatch(batchId, source, label, total, titles)
             handleCloseModal()
           }}
         />

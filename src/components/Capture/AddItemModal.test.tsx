@@ -336,7 +336,11 @@ describe('AddItemModal — favorites import', () => {
       ['https://archiveofourown.org/works/1', 'https://archiveofourown.org/works/3'],
       false,
     )
-    expect(props.onBatchStarted).toHaveBeenCalledWith('batch-1', 'ao3', 'AO3 · reader', 2)
+    // titles map (url → title) for only the non-owned works is carried along.
+    expect(props.onBatchStarted).toHaveBeenCalledWith('batch-1', 'ao3', 'AO3 · reader', 2, {
+      'https://archiveofourown.org/works/1': 'One',
+      'https://archiveofourown.org/works/3': 'Three',
+    })
     expect(props.onClose).toHaveBeenCalled()
   })
 
