@@ -422,7 +422,12 @@ export function registerLibraryHandlers(): void {
   })
 
   ipcMain.handle('library:findBySourceUrl', (_e, url: string) => {
-    return get<Item>('SELECT * FROM items WHERE source_url = ? LIMIT 1', [url])
+    // deleted_at IS NULL: a deleted item (soft in Trash, or a hard-deleted purged
+    // tombstone) keeps its source_url row, so without this a re-capture of a URL the
+    // user deleted is wrongly flagged as a duplicate. A deleted item is not a dup.
+    return get<Item>('SELECT * FROM items WHERE source_url = ? AND deleted_at IS NULL LIMIT 1', [
+      url,
+    ])
   })
 
   // Re-fetches a captured article from its source URL and updates the stored content.
