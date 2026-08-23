@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // key logic + the scan run offline and ABI-free (no better-sqlite3).
 vi.mock('../db', () => ({ all: vi.fn(() => []) }))
 
-import { canonicalWorkId, contentKey, norm, findLiveDuplicate } from './dedup'
+import { canonicalWorkId, contentKey, norm, findLiveDuplicate, OwnedIndex } from './dedup'
 import { all } from '../db'
 
 const mockAll = vi.mocked(all)
@@ -63,6 +63,46 @@ describe('contentKey / norm', () => {
     expect(contentKey(null, 'Author')).toBeNull()
     expect(contentKey('', 'Author')).toBeNull()
     expect(contentKey('Title', '   ')).toBeNull()
+  })
+})
+
+describe('OwnedIndex', () => {
+  const item = (id: string) => ({ id, title: id })
+
+  it('matches on the canonical axis across URL variants', () => {
+    const idx = new OwnedIndex()
+    idx.add('https://archiveofourown.org/works/1/chapters/9', 'T', 'A', item('owned'))
+    expect(idx.match('https://archiveofourown.org/works/1', 'Other', 'Nobody')).toEqual(
+      item('owned'),
+    )
+  })
+
+  it('matches on the content axis when the canonical id differs (cross-source)', () => {
+    const idx = new OwnedIndex()
+    idx.add('https://archiveofourown.org/works/1', 'Same Fic', 'Writer', item('ao3'))
+    // Different site id → canonical can't match; normalized title|author must.
+    expect(idx.match('https://www.fanfiction.net/s/2/1/x', 'same fic', 'WRITER')).toEqual(
+      item('ao3'),
+    )
+  })
+
+  it('returns null when neither axis matches', () => {
+    const idx = new OwnedIndex()
+    idx.add('https://archiveofourown.org/works/1', 'A', 'Author', item('owned'))
+    expect(idx.match('https://archiveofourown.org/works/2', 'B', 'Other')).toBeNull()
+  })
+
+  it('indexes nothing usable when a work has no canonical id and no author', () => {
+    const idx = new OwnedIndex()
+    idx.add('https://example.com/page', 'Generic', null, item('x'))
+    expect(idx.match('https://example.com/page', 'Generic', null)).toBeNull()
+  })
+
+  it('keeps the first-added owner for a key (first writer wins)', () => {
+    const idx = new OwnedIndex()
+    idx.add('https://archiveofourown.org/works/1', 'T', 'A', item('first'))
+    idx.add('https://archiveofourown.org/works/1', 'T', 'A', item('second'))
+    expect(idx.match('https://archiveofourown.org/works/1', null, null)).toEqual(item('first'))
   })
 })
 

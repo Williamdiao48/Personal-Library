@@ -4,7 +4,7 @@ import { enqueueItemBackup } from '../cloud/uploader'
 import { notifyLocalMutation } from '../cloud/sync/syncService'
 import { discoverAo3Bookmarks } from './sites/ao3-bookmarks'
 import { discoverFfnetFavorites } from './sites/ffnet-favorites'
-import { canonicalWorkId, canonicalKey, contentKey, ownedKeys } from './dedup'
+import { canonicalWorkId, canonicalKey, buildOwnedIndex } from './dedup'
 import type { CanonicalId } from './dedup'
 import type {
   BulkSource,
@@ -105,14 +105,12 @@ export async function discoverFavorites(
   }
 
   // (3) Flag works already owned — by canonical id (same site, URL variants) OR by
-  // normalized title|author (the same fic cross-posted to the other site).
-  const owned = ownedKeys()
+  // normalized title|author (the same fic cross-posted to the other site). Same index
+  // + match the single-URL capture path uses, so the two can't disagree.
+  const owned = buildOwnedIndex()
   let alreadyInLibrary = 0
   const works = deduped.map((w) => {
-    const c = canonicalWorkId(w.url)
-    const ck = contentKey(w.title, w.author)
-    const isOwned =
-      (c ? owned.canonical.has(canonicalKey(c)) : false) || (ck ? owned.content.has(ck) : false)
+    const isOwned = owned.match(w.url, w.title, w.author) !== null
     if (isOwned) alreadyInLibrary++
     return { ...w, alreadyInLibrary: isOwned }
   })
@@ -208,12 +206,12 @@ export async function runBulkImport(opts: RunBulkImportOptions): Promise<BulkImp
   const state: BatchState = { cancelled: false }
   activeBatches.set(batchId, state)
 
-  // Dedup baseline: everything already in the library. Works captured during this
-  // run are added so a duplicate later in the same list (or a re-run) skips. Canonical
-  // (site+id) only here — the import queue has URLs, not titles, so the content-key
-  // (cross-source) axis lives at discovery time, where the preview already excludes an
-  // owned cross-post from the URLs it sends us.
-  const owned = ownedKeys().canonical
+  // Dedup baseline: everything already in the library, indexed once. Works captured
+  // during this run are add()-ed so a duplicate later in the same list (or a re-run)
+  // skips. The queue holds URLs (no titles), so matches here are effectively canonical
+  // (site+id) — the content-key (cross-source) axis lives at discovery time, where the
+  // preview already excludes an owned cross-post from the URLs it sends us.
+  const owned = buildOwnedIndex()
 
   // A mutable FIFO queue of work URLs + their attempt count. A failed work is
   // pushed to the back (retried after everything else), so `queue` shrinks only as
@@ -246,10 +244,9 @@ export async function runBulkImport(opts: RunBulkImportOptions): Promise<BulkImp
       const item = queue.shift()!
       const url = item.url
       const c = canonicalWorkId(url)
-      const key = c ? canonicalKey(c) : `url:${url}`
 
       // Skip works already owned (library or earlier in this run) — idempotent.
-      if (owned.has(key)) {
+      if (owned.match(url, null, null)) {
         progress.skipped++
         emit()
         continue
@@ -262,7 +259,9 @@ export async function runBulkImport(opts: RunBulkImportOptions): Promise<BulkImp
       try {
         const result = await captureUrl(url, () => {}, undefined, cloudBackup)
         consecutiveFailures = 0
-        owned.add(key) // now owned → a later duplicate / re-run skips
+        // Now owned → a later duplicate / re-run skips. Index title/author too so a
+        // same-run cross-post (different URL) also collapses.
+        owned.add(url, result.title, result.author, { id: result.id, title: result.title })
         // captureUrl's own dedup gate can collapse this work onto an existing item
         // (a cross-source content match the URL-only preview couldn't see) — count
         // that as skipped, not imported, and fire no new-item hooks for it.

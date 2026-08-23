@@ -69,78 +69,109 @@ export function contentKey(
   return `${t}|${a}`
 }
 
-/** The two owned-work dedup indexes, built together in one library scan. */
-export interface OwnedKeys {
-  /** `${kind}:${id}` canonical ids — same-site, URL-variant-proof dedup. */
-  canonical: Set<string>
-  /** normalized `title|author` — cross-source (AO3 ↔ FFN) dedup. */
-  content: Set<string>
-}
-
-// deleted_at IS NULL, in every owned scan below: this app NEVER physically removes an
-// item row — soft delete sets deleted_at (Trash), and even "permanent delete" / "empty
-// trash" keeps the row as a purged tombstone (deleted_at + purged_at set, bytes
-// reclaimed) so the deletion syncs and can't resurrect-on-pull. Both keep source_url +
-// title/author, so without this filter a re-import of a work the user deleted (soft OR
-// hard) is wrongly flagged "already in library". A deleted work is not owned.
-
-/**
- * Build both owned-work dedup indexes from the library, so a discovered work can be
- * flagged in O(1). One pass over owned items (a personal library is small).
- *
- * No source_url filter: a work imported without a fanfic source_url (e.g. an EPUB of a
- * fic) can still content-match an incoming AO3/FFN copy by title+author. The canonical
- * side just skips null urls.
- */
-export function ownedKeys(): OwnedKeys {
-  const rows = all<{ source_url: string | null; title: string | null; author: string | null }>(
-    'SELECT source_url, title, author FROM items WHERE deleted_at IS NULL',
-  )
-  const canonical = new Set<string>()
-  const content = new Set<string>()
-  for (const { source_url, title, author } of rows) {
-    if (source_url) {
-      const c = canonicalWorkId(source_url)
-      if (c) canonical.add(canonicalKey(c))
-    }
-    const ck = contentKey(title, author)
-    if (ck) content.add(ck)
-  }
-  return { canonical, content }
-}
-
-/** A pre-existing LIVE library item a capture collapsed onto (dedup hit). */
+/** A library item a capture matched — the id/title needed to collapse onto it. */
 export interface DuplicateMatch {
   id: string
   title: string
 }
 
 /**
- * Find a LIVE library item that duplicates an about-to-be-saved capture, matched by
- * canonical work id (from the source URL) OR normalized title|author (cross-source).
- * Returns the first match, or null. This is the authoritative gate for the single-URL
- * capture path (which previously deduped only by exact source_url and so re-imported a
- * cross-posted fic). One scan of the (small) live library — canonical takes precedence
- * as the stronger signal, content is the cross-source fallback.
+ * An index of the LIVE library keyed on both dedup axes → the owning item, so "is this
+ * work already owned?" is one O(1) `match` on either axis. Built once, queried many:
+ * the single-URL path builds it and matches once (findLiveDuplicate); the bulk path
+ * builds it once and matches every discovered work, `add`-ing each import so a later
+ * duplicate in the same run also skips.
+ *
+ * Both axes map key → item so a match yields the owning row (not just a boolean):
+ *   • canonical `${kind}:${id}` — same-site, URL-variant-proof (chapter vs work URL).
+ *   • content `title|author` (normalized) — the same fic cross-posted to the other site.
+ * canonical is checked first (the stronger signal); content is the cross-source fallback.
+ */
+export class OwnedIndex {
+  private canonical = new Map<string, DuplicateMatch>()
+  private content = new Map<string, DuplicateMatch>()
+
+  /**
+   * Record `item` under whichever keys the work has (canonical id from its URL, and/or
+   * its content key). First writer wins per key, so the earliest-scanned owner is the
+   * one a match reports.
+   */
+  add(
+    sourceUrl: string | null | undefined,
+    title: string | null | undefined,
+    author: string | null | undefined,
+    item: DuplicateMatch,
+  ): void {
+    if (sourceUrl) {
+      const c = canonicalWorkId(sourceUrl)
+      if (c) {
+        const key = canonicalKey(c)
+        if (!this.canonical.has(key)) this.canonical.set(key, item)
+      }
+    }
+    const ck = contentKey(title, author)
+    if (ck && !this.content.has(ck)) this.content.set(ck, item)
+  }
+
+  /** The owning item if this work matches an indexed one on either axis, else null. */
+  match(
+    sourceUrl: string | null | undefined,
+    title: string | null | undefined,
+    author: string | null | undefined,
+  ): DuplicateMatch | null {
+    if (sourceUrl) {
+      const c = canonicalWorkId(sourceUrl)
+      if (c) {
+        const hit = this.canonical.get(canonicalKey(c))
+        if (hit) return hit
+      }
+    }
+    const ck = contentKey(title, author)
+    if (ck) {
+      const hit = this.content.get(ck)
+      if (hit) return hit
+    }
+    return null
+  }
+}
+
+/**
+ * Build an OwnedIndex over every LIVE library item — one pass (a personal library is
+ * small). No source_url filter: a work imported without a fanfic source_url (e.g. an
+ * EPUB of a fic) still content-matches an incoming AO3/FFN copy by title+author.
+ *
+ * deleted_at IS NULL: this app NEVER physically removes an item row — soft delete sets
+ * deleted_at (Trash), and even "permanent delete" / "empty trash" keeps the row as a
+ * purged tombstone (deleted_at + purged_at set, bytes reclaimed) so the deletion syncs
+ * and can't resurrect-on-pull. Both keep source_url + title/author, so without this
+ * filter a re-import of a work the user deleted (soft OR hard) is wrongly flagged
+ * "already in library". A deleted work is not owned.
+ */
+export function buildOwnedIndex(): OwnedIndex {
+  const rows = all<{
+    id: string
+    title: string
+    source_url: string | null
+    author: string | null
+  }>('SELECT id, title, source_url, author FROM items WHERE deleted_at IS NULL')
+  const idx = new OwnedIndex()
+  for (const row of rows) {
+    idx.add(row.source_url, row.title, row.author, { id: row.id, title: row.title })
+  }
+  return idx
+}
+
+/**
+ * One-shot dedup for the single-URL capture path: is an about-to-be-saved capture a
+ * duplicate of a LIVE item, by canonical id OR normalized title|author? Guards against
+ * scanning the library when there's nothing to match on (a generic web capture with no
+ * work id and no author), then defers to a freshly-built OwnedIndex.
  */
 export function findLiveDuplicate(
   sourceUrl: string,
   title: string | null | undefined,
   author: string | null | undefined,
 ): DuplicateMatch | null {
-  const c = canonicalWorkId(sourceUrl)
-  const ck = contentKey(title, author)
-  if (!c && !ck) return null // nothing to match on
-
-  const rows = all<{ id: string; title: string; source_url: string | null; author: string | null }>(
-    'SELECT id, title, source_url, author FROM items WHERE deleted_at IS NULL',
-  )
-  for (const row of rows) {
-    if (c && row.source_url) {
-      const rc = canonicalWorkId(row.source_url)
-      if (rc && canonicalKey(rc) === canonicalKey(c)) return { id: row.id, title: row.title }
-    }
-    if (ck && contentKey(row.title, row.author) === ck) return { id: row.id, title: row.title }
-  }
-  return null
+  if (!canonicalWorkId(sourceUrl) && !contentKey(title, author)) return null
+  return buildOwnedIndex().match(sourceUrl, title, author)
 }
