@@ -55,6 +55,13 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('capture:start', url, start, end, cloudBackup),
     fromFile: (cloudBackup?: boolean) => ipcRenderer.invoke('capture:fromFile', cloudBackup),
     append: (itemId: string, end: number) => ipcRenderer.invoke('capture:append', itemId, end),
+    // Bulk favorites — discover an account's works for the preview step.
+    discoverFavorites: (source: 'ao3' | 'ffn', ref: string) =>
+      ipcRenderer.invoke('capture:discoverFavorites', source, ref),
+    // Bulk favorites — start the serialized import; returns { batchId, total }.
+    startBulk: (urls: string[], cloudBackup?: boolean) =>
+      ipcRenderer.invoke('capture:startBulk', urls, cloudBackup),
+    cancelBulk: (batchId: string) => ipcRenderer.invoke('capture:cancelBulk', batchId),
   },
 
   // Reader
@@ -186,6 +193,48 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_event: Electron.IpcRendererEvent, url: string) => callback(url)
     ipcRenderer.on('request-capture', handler)
     return () => ipcRenderer.removeListener('request-capture', handler)
+  },
+
+  // Bulk-discovery progress — page walk during capture:discoverFavorites (AO3).
+  onDiscoverProgress: (
+    callback: (payload: {
+      source: 'ao3' | 'ffn'
+      ref: string
+      page: number
+      totalPages: number
+      found: number
+    }) => void,
+  ) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: {
+        source: 'ao3' | 'ffn'
+        ref: string
+        page: number
+        totalPages: number
+        found: number
+      },
+    ) => callback(payload)
+    ipcRenderer.on('capture:discoverProgress', handler)
+    return () => ipcRenderer.removeListener('capture:discoverProgress', handler)
+  },
+
+  // Bulk-import event streams — keyed by batchId. Payloads are BulkImportProgress.
+  onBatchProgress: (callback: (payload: import('../../src/types').BulkImportProgress) => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: import('../../src/types').BulkImportProgress,
+    ) => callback(payload)
+    ipcRenderer.on('capture:batchProgress', handler)
+    return () => ipcRenderer.removeListener('capture:batchProgress', handler)
+  },
+  onBatchComplete: (callback: (payload: import('../../src/types').BulkImportProgress) => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: import('../../src/types').BulkImportProgress,
+    ) => callback(payload)
+    ipcRenderer.on('capture:batchComplete', handler)
+    return () => ipcRenderer.removeListener('capture:batchComplete', handler)
   },
 
   // Background capture event streams — all keyed by jobId

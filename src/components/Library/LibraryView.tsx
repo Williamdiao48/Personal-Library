@@ -27,7 +27,8 @@ export default function LibraryView() {
   const { settings, updateSettings } = useSettings()
   const { user, configured } = useAuth()
   const { addToast, updateToast } = useToast()
-  const { captureJobs, startJob, dismissJob } = useCaptureJobs()
+  const { captureJobs, startJob, dismissJob, batchJobs, startBatch, cancelBatch, dismissBatch } =
+    useCaptureJobs()
 
   // "Back up to cloud" is offered only when the user is signed in and the master
   // switch is on (mirrors the capture-time gate in AddItemModal, Decision 8).
@@ -136,6 +137,40 @@ export default function LibraryView() {
       }
     })
     return () => offComplete()
+  }, [])
+
+  // ── Bulk-import live refresh ───────────────────────────────────
+  // A bulk favorites import runs captureUrl internally in main and emits NO
+  // per-item capture:complete, so the loop above never hears about the works it
+  // saves. Without this, imported books sit in the DB unseen until a cold reload.
+  // Refetch the item list each time the batch's done count rises (and once at
+  // completion — which also covers a cancelled/throttled stop), tracking the
+  // last-seen done per batchId so we refetch once per newly-imported work, not
+  // on every progress tick.
+  useEffect(() => {
+    const seenDone = new Map<string, number>()
+    const refreshItems = () => {
+      libraryService
+        .getAll()
+        .then(setItems)
+        .catch(() => {
+          /* a transient refetch failure just delays the new cards to the next reload */
+        })
+    }
+    const offBatchProgress = window.api.onBatchProgress((p) => {
+      if (p.done > (seenDone.get(p.batchId) ?? 0)) {
+        seenDone.set(p.batchId, p.done)
+        refreshItems()
+      }
+    })
+    const offBatchComplete = window.api.onBatchComplete((p) => {
+      seenDone.delete(p.batchId)
+      if (p.done > 0) refreshItems()
+    })
+    return () => {
+      offBatchProgress()
+      offBatchComplete()
+    }
   }, [])
 
   // ── Map builders ──────────────────────────────────────────────
@@ -719,6 +754,9 @@ export default function LibraryView() {
         collectionMgmt={collectionMgmt}
         captureJobs={captureJobs}
         onDismissJob={dismissJob}
+        batchJobs={batchJobs}
+        onCancelBatch={cancelBatch}
+        onDismissBatch={dismissBatch}
         trashedCount={trashedCount}
       />
       <main className="library-main" ref={mainRef}>
@@ -1224,6 +1262,10 @@ export default function LibraryView() {
           }}
           onJobStarted={(jobId, url) => {
             startJob(jobId, url)
+            handleCloseModal()
+          }}
+          onBatchStarted={(batchId, source, label, total, titles) => {
+            startBatch(batchId, source, label, total, titles)
             handleCloseModal()
           }}
         />

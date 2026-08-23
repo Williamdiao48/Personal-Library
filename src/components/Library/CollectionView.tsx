@@ -85,7 +85,7 @@ function SortableItemCard({ item, dragEnabled, ...cardProps }: SortableCardProps
 export default function CollectionView() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { captureJobs, dismissJob } = useCaptureJobs()
+  const { captureJobs, dismissJob, batchJobs, cancelBatch, dismissBatch } = useCaptureJobs()
 
   // ── Data ────────────────────────────────────────────────────────
   const [collection, setCollection] = useState<Collection | null>(null)
@@ -329,6 +329,9 @@ export default function CollectionView() {
         collectionMgmt={collectionMgmt}
         captureJobs={captureJobs}
         onDismissJob={dismissJob}
+        batchJobs={batchJobs}
+        onCancelBatch={cancelBatch}
+        onDismissBatch={dismissBatch}
         trashedCount={trashedCount}
       />
 

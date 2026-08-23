@@ -130,6 +130,84 @@ export interface CaptureResult {
   duplicate?: boolean
 }
 
+// ── Bulk favorites import ─────────────────────────────────────────────────────
+// The account sources a user can bulk-import from (AO3 public bookmarks / FFN
+// favorite stories). Shared across main (discovery/dispatch) and renderer (UI).
+export type BulkSource = 'ao3' | 'ffn'
+
+// One entry discovered from an account's listing page. NOT a captured item — just
+// enough to dedup, preview, and feed the URL into captureUrl during bulk import.
+// `title`/`author` power the preview; `fandom`/`words`/`chapters` are best-effort
+// extras (FFN exposes them on the row, AO3 leaves them null).
+export interface DiscoveredWork {
+  url: string
+  title: string
+  author: string | null
+  fandom?: string | null
+  words?: number | null
+  chapters?: number | null
+  // Annotated by the discovery dispatcher: this work's canonical id already matches
+  // an item in the library, so the bulk import should skip it (not re-download).
+  alreadyInLibrary?: boolean
+}
+
+// The preview object returned by capture:discoverFavorites — the discovered works
+// plus the counts the modal reconciles ("Found N · M already in library · …").
+// (Named FavoritesDiscovery to avoid colliding with the recommender's unrelated
+// DiscoverResult below.)
+export interface FavoritesDiscovery {
+  source: BulkSource
+  ref: string // the validated username (AO3) / numeric id (FFN)
+  works: DiscoveredWork[] // de-duplicated within the batch; each flagged alreadyInLibrary
+  total: number // works.length after within-batch dedup
+  alreadyInLibrary: number // count of works already owned
+  skippedSeries: number // AO3 series bookmarks filtered out (0 for FFN)
+  skippedExternal: number // AO3 off-site bookmarks filtered out (0 for FFN)
+}
+
+// Terminal + live states of a bulk import run.
+//   running   — the serialized queue is still working
+//   done      — every work processed (some may have failed/skipped)
+//   cancelled — the user cancelled; stopped after the in-flight work
+//   throttled — too many consecutive failures; stopped to avoid hammering the site
+//   error     — the run itself threw (not a per-work failure)
+export type BulkImportStatus = 'running' | 'done' | 'cancelled' | 'throttled' | 'error'
+
+// Progress snapshot streamed on capture:batchProgress and the final
+// capture:batchComplete for a bulk import. done+failed+skipped ≤ total.
+export interface BulkImportProgress {
+  batchId: string
+  total: number
+  done: number // captured successfully
+  failed: number // capture failed on every attempt (permanently)
+  skipped: number // already in library / duplicate within the batch
+  retrying: number // failed at least once, re-queued for a later retry
+  current?: string // URL currently being captured (absent when idle/terminal)
+  status: BulkImportStatus
+  error?: string // set only when status === 'error'
+}
+
+// A bulk favorites import tracked in the renderer as ONE aggregate sidebar row
+// (not N per-work rows — the batch runs captureUrl internally in main). Mirrors a
+// BulkImportProgress plus the display fields the row needs. `id` is the batchId.
+export interface BatchJob {
+  id: string
+  source: BulkSource
+  label: string // e.g. "AO3 · someuser" — shown in the row
+  total: number
+  done: number
+  failed: number
+  skipped: number
+  retrying: number // failed at least once, waiting for a later retry
+  current?: string // URL of the work being downloaded right now
+  // url → title for the works in this batch (from the discovery preview), so the
+  // row can show the CURRENT book's title instead of a bare URL. Renderer-only.
+  titles?: Record<string, string>
+  status: BulkImportStatus
+  error?: string
+  startedAt: number
+}
+
 // A background URL capture job tracked in the renderer while the main process
 // fetches and parses the content asynchronously.
 export interface CaptureJob {
@@ -415,6 +493,16 @@ export interface Api {
     start: (url: string, start?: number, end?: number, cloudBackup?: boolean) => Promise<string> // returns jobId immediately
     fromFile: (cloudBackup?: boolean) => Promise<CaptureResult | null>
     append: (itemId: string, end: number) => Promise<string>
+    // Bulk favorites — discover an account's works for the preview step. Rejects
+    // with a user-facing message on an invalid source / account reference.
+    discoverFavorites: (source: BulkSource, ref: string) => Promise<FavoritesDiscovery>
+    // Bulk favorites — start the serialized import. Returns { batchId, total } (total
+    // = URLs accepted after host re-validation); progress streams via onBatch*.
+    startBulk: (
+      urls: string[],
+      cloudBackup?: boolean,
+    ) => Promise<{ batchId: string; total: number }>
+    cancelBulk: (batchId: string) => Promise<void>
   }
   reader: {
     loadContent: (relativePath: string) => Promise<string>
@@ -506,6 +594,17 @@ export interface Api {
     delete: (id: string) => Promise<void>
   }
   onRequestCapture: (callback: (url: string) => void) => () => void
+  onDiscoverProgress: (
+    callback: (payload: {
+      source: BulkSource
+      ref: string
+      page: number
+      totalPages: number
+      found: number
+    }) => void,
+  ) => () => void
+  onBatchProgress: (callback: (payload: BulkImportProgress) => void) => () => void
+  onBatchComplete: (callback: (payload: BulkImportProgress) => void) => () => void
   onCaptureProgress: (callback: (payload: { jobId: string; msg: string }) => void) => () => void
   onCaptureComplete: (
     callback: (payload: { jobId: string; result: CaptureResult }) => void,

@@ -214,6 +214,8 @@ const mkItem = (over: Partial<Item> = {}): Item =>
 // fire them all (the CaptureJobsContext handler tolerates the partial event).
 let requestCaptureCbs: ((url: string) => void)[] = []
 let captureCompleteCbs: ((e: any) => void)[] = []
+let batchProgressCbs: ((e: any) => void)[] = []
+let batchCompleteCbs: ((e: any) => void)[] = []
 
 function fireCaptureComplete(id: string) {
   for (const cb of captureCompleteCbs) {
@@ -223,6 +225,13 @@ function fireCaptureComplete(id: string) {
       /* the job-tracking handler may not accept the partial event; ignore */
     }
   }
+}
+
+function fireBatchProgress(e: any) {
+  for (const cb of batchProgressCbs) cb(e)
+}
+function fireBatchComplete(e: any) {
+  for (const cb of batchCompleteCbs) cb(e)
 }
 
 function renderLibrary(initialEntries: string[] = ['/'], settings?: Record<string, unknown>) {
@@ -255,6 +264,8 @@ beforeEach(() => {
   localStorage.clear()
   requestCaptureCbs = []
   captureCompleteCbs = []
+  batchProgressCbs = []
+  batchCompleteCbs = []
   ;(window as unknown as { api: unknown }).api = {
     onRequestCapture: vi.fn((cb: any) => {
       requestCaptureCbs.push(cb)
@@ -266,6 +277,15 @@ beforeEach(() => {
       return () => {}
     }),
     onCaptureError: vi.fn(() => () => {}),
+    // CaptureJobsContext + LibraryView subscribe to the bulk-import channels.
+    onBatchProgress: vi.fn((cb: any) => {
+      batchProgressCbs.push(cb)
+      return () => {}
+    }),
+    onBatchComplete: vi.fn((cb: any) => {
+      batchCompleteCbs.push(cb)
+      return () => {}
+    }),
     // LibraryView subscribes to live backup-status broadcasts on mount.
     cloud: {
       onBlobState: vi.fn(() => () => {}),
@@ -828,6 +848,65 @@ describe('LibraryView — capture listeners & modals', () => {
     await screen.findByText('Alpha')
     act(() => requestCaptureCbs.forEach((cb) => cb('https://x/story')))
     expect(await screen.findByText('ADD MODAL')).toBeInTheDocument()
+  })
+
+  it('a bulk import refetches the item list as works land (they have no capture:complete)', async () => {
+    lib.getAll.mockResolvedValueOnce([mkItem({ id: 'i1', title: 'Alpha' })])
+    renderLibrary()
+    await screen.findByText('Alpha')
+
+    // The batch imported a work — next getAll returns it; a done-count bump refetches.
+    lib.getAll.mockResolvedValueOnce([
+      mkItem({ id: 'i2', title: 'Bulk Import One' }),
+      mkItem({ id: 'i1', title: 'Alpha' }),
+    ])
+    await act(async () => {
+      fireBatchProgress({
+        batchId: 'b1',
+        total: 5,
+        done: 1,
+        failed: 0,
+        skipped: 0,
+        status: 'running',
+      })
+    })
+    expect(await screen.findByText('Bulk Import One')).toBeInTheDocument()
+  })
+
+  it('does not refetch on a batch progress tick that imported nothing (done unchanged)', async () => {
+    lib.getAll.mockResolvedValue([mkItem({ id: 'i1', title: 'Alpha' })])
+    renderLibrary()
+    await screen.findByText('Alpha')
+    expect(lib.getAll).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      fireBatchProgress({
+        batchId: 'b1',
+        total: 5,
+        done: 0,
+        failed: 0,
+        skipped: 1,
+        status: 'running',
+      })
+    })
+    expect(lib.getAll).toHaveBeenCalledTimes(1) // skip-only tick → no refetch
+  })
+
+  it('refetches once at batch completion when anything was imported', async () => {
+    lib.getAll.mockResolvedValue([mkItem({ id: 'i1', title: 'Alpha' })])
+    renderLibrary()
+    await screen.findByText('Alpha')
+    expect(lib.getAll).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      fireBatchComplete({
+        batchId: 'b1',
+        total: 3,
+        done: 2,
+        failed: 0,
+        skipped: 1,
+        status: 'cancelled',
+      })
+    })
+    expect(lib.getAll).toHaveBeenCalledTimes(2) // cancelled but 2 imported → refetch
   })
 
   it('closing the tags modal refreshes tag data', async () => {

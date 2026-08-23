@@ -1,10 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import AddItemModal from './AddItemModal'
-import type { Item } from '../../types'
+import type { FavoritesDiscovery, Item } from '../../types'
 
 vi.mock('../../services/capture', () => ({
-  captureService: { start: vi.fn(), fromFile: vi.fn() },
+  captureService: {
+    start: vi.fn(),
+    fromFile: vi.fn(),
+    discoverFavorites: vi.fn(),
+    startBulk: vi.fn(),
+    cancelBulk: vi.fn(),
+  },
 }))
 vi.mock('../../services/library', () => ({
   libraryService: { findBySourceUrl: vi.fn(), getById: vi.fn() },
@@ -35,6 +41,7 @@ function renderModal(over: Partial<React.ComponentProps<typeof AddItemModal>> = 
     onClose: vi.fn(),
     onSaved: vi.fn(),
     onJobStarted: vi.fn(),
+    onBatchStarted: vi.fn(),
     ...over,
   }
   render(<AddItemModal {...props} />)
@@ -47,6 +54,8 @@ beforeEach(() => {
   // Reset the cloud opt-in to "signed out / off" before each test.
   mocks.auth = { user: null, configured: false }
   mocks.settings = { cloudBackupEnabled: false, cloudBackupDefault: false }
+  // The modal subscribes to discovery progress on mount — stub the channel.
+  ;(window as unknown as { api: unknown }).api = { onDiscoverProgress: () => () => {} }
 })
 
 describe('AddItemModal — URL capture', () => {
@@ -261,5 +270,114 @@ describe('AddItemModal — dismissal', () => {
     expect(screen.getByDisplayValue('https://seed.com')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(props.onClose).toHaveBeenCalled()
+  })
+})
+
+describe('AddItemModal — favorites import', () => {
+  const preview = (over: Partial<FavoritesDiscovery> = {}): FavoritesDiscovery => ({
+    source: 'ao3',
+    ref: 'reader',
+    works: [
+      { url: 'https://archiveofourown.org/works/1', title: 'One', author: 'A' },
+      {
+        url: 'https://archiveofourown.org/works/2',
+        title: 'Two',
+        author: null,
+        alreadyInLibrary: true,
+      },
+      { url: 'https://archiveofourown.org/works/3', title: 'Three', author: 'C' },
+    ],
+    total: 3,
+    alreadyInLibrary: 1,
+    skippedSeries: 0,
+    skippedExternal: 0,
+    ...over,
+  })
+
+  const switchToFavorites = () =>
+    fireEvent.click(screen.getByRole('tab', { name: 'Import favorites' }))
+
+  it('switches the ref-input placeholder between AO3 and FFN', () => {
+    renderModal()
+    switchToFavorites()
+    expect(screen.getByPlaceholderText('AO3 username')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Import source'), { target: { value: 'ffn' } })
+    expect(screen.getByPlaceholderText('FanFiction.net user id')).toBeInTheDocument()
+  })
+
+  it('discovers favorites and renders the preview counts', async () => {
+    cap.discoverFavorites.mockResolvedValue(preview())
+    renderModal()
+    switchToFavorites()
+    fireEvent.change(screen.getByPlaceholderText('AO3 username'), { target: { value: 'reader' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Find favorites' }))
+    })
+    expect(cap.discoverFavorites).toHaveBeenCalledWith('ao3', 'reader')
+    expect(screen.getByText(/already in library/)).toBeInTheDocument()
+    // Import button reflects the non-owned count (3 total − 1 owned = 2).
+    expect(screen.getByRole('button', { name: 'Import 2 works' })).toBeInTheDocument()
+  })
+
+  it('starts the bulk import with only the non-owned URLs and reports the batch', async () => {
+    cap.discoverFavorites.mockResolvedValue(preview())
+    cap.startBulk.mockResolvedValue({ batchId: 'batch-1', total: 2 })
+    const props = renderModal()
+    switchToFavorites()
+    fireEvent.change(screen.getByPlaceholderText('AO3 username'), { target: { value: 'reader' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Find favorites' }))
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Import 2 works' }))
+    })
+    // Only works 1 and 3 (work 2 is alreadyInLibrary) are sent.
+    expect(cap.startBulk).toHaveBeenCalledWith(
+      ['https://archiveofourown.org/works/1', 'https://archiveofourown.org/works/3'],
+      false,
+    )
+    // titles map (url → title) for only the non-owned works is carried along.
+    expect(props.onBatchStarted).toHaveBeenCalledWith('batch-1', 'ao3', 'AO3 · reader', 2, {
+      'https://archiveofourown.org/works/1': 'One',
+      'https://archiveofourown.org/works/3': 'Three',
+    })
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  it('surfaces a discovery (validation) error', async () => {
+    cap.discoverFavorites.mockRejectedValue(new Error('Enter a valid AO3 username'))
+    renderModal()
+    switchToFavorites()
+    fireEvent.change(screen.getByPlaceholderText('AO3 username'), { target: { value: '!!' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Find favorites' }))
+    })
+    expect(screen.getByText('Enter a valid AO3 username')).toBeInTheDocument()
+    expect(cap.startBulk).not.toHaveBeenCalled()
+  })
+
+  it('disables import when every discovered work is already owned', async () => {
+    cap.discoverFavorites.mockResolvedValue(
+      preview({
+        works: [
+          {
+            url: 'https://archiveofourown.org/works/1',
+            title: 'Owned',
+            author: null,
+            alreadyInLibrary: true,
+          },
+        ],
+        total: 1,
+        alreadyInLibrary: 1,
+      }),
+    )
+    renderModal()
+    switchToFavorites()
+    fireEvent.change(screen.getByPlaceholderText('AO3 username'), { target: { value: 'reader' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Find favorites' }))
+    })
+    expect(screen.getByText(/already in your library/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Nothing to import' })).toBeDisabled()
   })
 })

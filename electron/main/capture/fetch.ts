@@ -22,6 +22,11 @@ export interface SourceMeta {
   rating?: string // e.g. AO3 "Explicit", FFN "Fiction T"
 }
 
+// DiscoveredWork (one entry from an account's AO3-bookmarks / FFN-favorites
+// listing) is defined once in src/types so main + renderer share it; re-exported
+// here so the discovery parsers can keep importing it from the capture layer.
+export type { DiscoveredWork } from '../../../src/types'
+
 // Shared content shape returned by all site strategies
 export interface SiteContent {
   title: string

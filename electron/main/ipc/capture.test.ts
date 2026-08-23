@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { invoke, resetIpc, dialog } from '../../../test/stubs/electron'
+import { invoke, resetIpc, dialog, fakeEvent } from '../../../test/stubs/electron'
 
 // Mock the capture pipeline so this suite never loads the real module (and thus
 // never pulls in better-sqlite3 / the DB): we only care that capture:start's
@@ -18,9 +18,17 @@ vi.mock('../recommender/lifecycle', () => ({ triggerBackfill: vi.fn() }))
 vi.mock('../cloud/uploader', () => ({ enqueueItemBackup: vi.fn(() => Promise.resolve()) }))
 // Tier 1 #3: a new/updated item schedules a debounced sync push — mock the trigger.
 vi.mock('../cloud/sync/syncService', () => ({ notifyLocalMutation: vi.fn() }))
+// Bulk-favorites discovery/import pulls in ../db via bulkImport — stub it so this
+// suite stays DB-free and we just assert the IPC wiring (dispatch + streaming).
+vi.mock('../capture/bulkImport', () => ({
+  discoverFavorites: vi.fn(),
+  runBulkImport: vi.fn(),
+  cancelBulkImport: vi.fn(),
+}))
 
-import { registerCaptureHandlers, isHttpUrl } from './capture'
+import { registerCaptureHandlers, isHttpUrl, isAllowedBulkHost } from './capture'
 import { captureUrl, captureFile, appendChapters } from '../capture'
+import { discoverFavorites, runBulkImport, cancelBulkImport } from '../capture/bulkImport'
 import { triggerBackfill } from '../recommender/lifecycle'
 import { enqueueItemBackup } from '../cloud/uploader'
 import { notifyLocalMutation } from '../cloud/sync/syncService'
@@ -125,6 +133,165 @@ describe('capture:start — SEC-3 scheme guard', () => {
 
     expect(typeof jobId).toBe('string')
     expect(triggerBackfill).not.toHaveBeenCalled()
+  })
+})
+
+describe('capture:discoverFavorites', () => {
+  const RESULT = {
+    source: 'ao3' as const,
+    ref: 'someuser',
+    works: [{ url: 'https://archiveofourown.org/works/1', title: 'A', author: null }],
+    total: 1,
+    alreadyInLibrary: 0,
+    skippedSeries: 0,
+    skippedExternal: 0,
+  }
+
+  it('dispatches to discoverFavorites and returns the preview result', async () => {
+    ;(discoverFavorites as Mock).mockResolvedValue(RESULT)
+
+    const result = await invoke('capture:discoverFavorites', 'ao3', 'someuser')
+
+    expect(discoverFavorites).toHaveBeenCalledWith('ao3', 'someuser', expect.any(Function))
+    expect(result).toEqual(RESULT)
+  })
+
+  it('forwards page progress to the capture:discoverProgress channel', async () => {
+    ;(discoverFavorites as Mock).mockImplementation((_s, _r, onProgress) => {
+      onProgress(2, 24, 30) // simulate the AO3 multi-page walk reporting page 2/24
+      return Promise.resolve(RESULT)
+    })
+    const sendSpy = vi.spyOn(fakeEvent.sender, 'send')
+
+    await invoke('capture:discoverFavorites', 'ao3', 'someuser')
+
+    expect(sendSpy).toHaveBeenCalledWith('capture:discoverProgress', {
+      source: 'ao3',
+      ref: 'someuser',
+      page: 2,
+      totalPages: 24,
+      found: 30,
+    })
+  })
+
+  it('rejects an unknown source without touching the discoverer', () => {
+    expect(() => invoke('capture:discoverFavorites', 'bogus', 'x')).toThrow(/Unknown import source/)
+    expect(discoverFavorites).not.toHaveBeenCalled()
+  })
+
+  it('propagates a validation rejection (e.g. a bad account ref)', async () => {
+    ;(discoverFavorites as Mock).mockRejectedValue(new Error('Enter a valid AO3 username'))
+    await expect(invoke('capture:discoverFavorites', 'ao3', '!!bad!!')).rejects.toThrow(
+      /valid AO3 username/,
+    )
+  })
+})
+
+describe('isAllowedBulkHost', () => {
+  it('accepts AO3 + FFN (incl. www) and rejects everything else', () => {
+    expect(isAllowedBulkHost('https://archiveofourown.org/works/1')).toBe(true)
+    expect(isAllowedBulkHost('https://www.fanfiction.net/s/1/1/x')).toBe(true)
+    expect(isAllowedBulkHost('https://fanfiction.net/s/1')).toBe(true)
+
+    expect(isAllowedBulkHost('https://evil.com/works/1')).toBe(false)
+    expect(isAllowedBulkHost('https://archiveofourown.org.evil.com/works/1')).toBe(false)
+    expect(isAllowedBulkHost('not a url')).toBe(false)
+    expect(isAllowedBulkHost(42 as unknown)).toBe(false)
+  })
+})
+
+describe('capture:startBulk', () => {
+  const mockRun = vi.mocked(runBulkImport)
+
+  it('drops non-allowed / non-http URLs, then runs the queue with only valid ones', async () => {
+    mockRun.mockResolvedValue({
+      batchId: 'x',
+      total: 2,
+      done: 2,
+      failed: 0,
+      skipped: 0,
+      retrying: 0,
+      status: 'done',
+    })
+
+    const res = (await invoke('capture:startBulk', [
+      'https://archiveofourown.org/works/1',
+      'https://www.fanfiction.net/s/2/1/x',
+      'https://evil.com/works/3', // wrong host — dropped
+      'javascript:alert(1)', // non-http — dropped
+    ])) as { batchId: string; total: number }
+
+    expect(res.total).toBe(2) // only the two valid URLs survived
+    expect(typeof res.batchId).toBe('string')
+    const passedUrls = mockRun.mock.calls[0][0].urls
+    expect(passedUrls).toEqual([
+      'https://archiveofourown.org/works/1',
+      'https://www.fanfiction.net/s/2/1/x',
+    ])
+  })
+
+  it('streams batchProgress then batchComplete to the renderer', async () => {
+    const progress = {
+      batchId: 'b',
+      total: 1,
+      done: 1,
+      failed: 0,
+      skipped: 0,
+      retrying: 0,
+      status: 'done' as const,
+    }
+    mockRun.mockImplementation(async (opts) => {
+      opts.onProgress?.({ ...progress, done: 0, status: 'running' })
+      return progress
+    })
+    const sendSpy = vi.spyOn(fakeEvent.sender, 'send')
+
+    await invoke('capture:startBulk', ['https://archiveofourown.org/works/1'])
+    await flush()
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      'capture:batchProgress',
+      expect.objectContaining({ status: 'running' }),
+    )
+    expect(sendSpy).toHaveBeenCalledWith(
+      'capture:batchComplete',
+      expect.objectContaining({ status: 'done' }),
+    )
+  })
+
+  it('reports a status:error completion when the run itself throws', async () => {
+    mockRun.mockRejectedValue(new Error('owned-id query blew up'))
+    const sendSpy = vi.spyOn(fakeEvent.sender, 'send')
+
+    await invoke('capture:startBulk', ['https://archiveofourown.org/works/1'])
+    await flush()
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      'capture:batchComplete',
+      expect.objectContaining({ status: 'error', error: 'owned-id query blew up' }),
+    )
+  })
+
+  it('accepts an empty / non-array urls arg as a zero-work batch', async () => {
+    mockRun.mockResolvedValue({
+      batchId: 'x',
+      total: 0,
+      done: 0,
+      failed: 0,
+      skipped: 0,
+      retrying: 0,
+      status: 'done',
+    })
+    const res = (await invoke('capture:startBulk', undefined)) as { total: number }
+    expect(res.total).toBe(0)
+    expect(mockRun.mock.calls[0][0].urls).toEqual([])
+  })
+})
+
+describe('capture:cancelBulk', () => {
+  it('forwards the batchId to cancelBulkImport', async () => {
+    await invoke('capture:cancelBulk', 'batch-42')
+    expect(cancelBulkImport).toHaveBeenCalledWith('batch-42')
   })
 })
 

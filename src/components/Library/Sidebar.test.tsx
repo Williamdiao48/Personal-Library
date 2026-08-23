@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import Sidebar from './Sidebar'
-import type { CaptureJob, Collection } from '../../types'
+import type { BatchJob, CaptureJob, Collection } from '../../types'
 
 const updaterState = vi.hoisted(() => ({ pendingVersion: null as string | null }))
 vi.mock('../../contexts/UpdaterContext', () => ({
@@ -33,6 +33,9 @@ function renderSidebar(
     collectionMgmt: mgmt(),
     captureJobs: [] as CaptureJob[],
     onDismissJob: vi.fn(),
+    batchJobs: [] as BatchJob[],
+    onCancelBatch: vi.fn(),
+    onDismissBatch: vi.fn(),
     trashedCount: 0,
     ...over,
   }
@@ -306,6 +309,87 @@ describe('Sidebar — capture jobs', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+const batchJob = (over: Partial<BatchJob> = {}): BatchJob => ({
+  id: 'b1',
+  source: 'ao3',
+  label: 'AO3 · reader',
+  total: 10,
+  done: 3,
+  failed: 0,
+  skipped: 1,
+  retrying: 0,
+  status: 'running',
+  startedAt: Date.now(),
+  ...over,
+})
+
+describe('Sidebar — bulk import rows', () => {
+  it('renders a running batch with a Cancel button and processed/total count', () => {
+    const props = renderSidebar({ batchJobs: [batchJob()] })
+    expect(screen.getByText('AO3 · reader')).toBeInTheDocument()
+    expect(screen.getByText('4/10')).toBeInTheDocument() // done + skipped + failed
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(props.onCancelBatch).toHaveBeenCalledWith('b1')
+  })
+
+  it('names the book currently downloading (by title from the map)', () => {
+    renderSidebar({
+      batchJobs: [
+        batchJob({
+          current: 'https://archiveofourown.org/works/7',
+          titles: { 'https://archiveofourown.org/works/7': 'The Current Book' },
+        }),
+      ],
+    })
+    expect(screen.getByText(/The Current Book/)).toBeInTheDocument()
+  })
+
+  it('falls back to a shortened URL when the current title is unknown', () => {
+    renderSidebar({
+      batchJobs: [batchJob({ current: 'https://archiveofourown.org/works/7', titles: {} })],
+    })
+    expect(screen.getByText(/archiveofourown\.org/)).toBeInTheDocument()
+  })
+
+  it('shows no current-book line once the batch is terminal', () => {
+    renderSidebar({
+      batchJobs: [
+        batchJob({
+          status: 'done',
+          current: 'https://archiveofourown.org/works/7',
+          titles: { 'https://archiveofourown.org/works/7': 'Should Not Show' },
+        }),
+      ],
+    })
+    expect(screen.queryByText(/Should Not Show/)).not.toBeInTheDocument()
+  })
+
+  it('shows a dismiss (not cancel) control and summary once finished', () => {
+    const props = renderSidebar({
+      batchJobs: [batchJob({ status: 'done', done: 8, skipped: 1, failed: 1 })],
+    })
+    expect(screen.getByText(/Done — 8 imported/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(props.onDismissBatch).toHaveBeenCalledWith('b1')
+  })
+
+  it('explains a throttled stop', () => {
+    renderSidebar({ batchJobs: [batchJob({ status: 'throttled', done: 5 })] })
+    expect(screen.getByText(/rate-limiting/)).toBeInTheDocument()
+  })
+
+  it('shows a retrying count while running', () => {
+    renderSidebar({ batchJobs: [batchJob({ status: 'running', done: 3, retrying: 2 })] })
+    expect(screen.getByText(/2 retrying/)).toBeInTheDocument()
+  })
+
+  it('renders nothing when there are no batch jobs', () => {
+    renderSidebar({ batchJobs: [] })
+    expect(screen.queryByText('Importing')).not.toBeInTheDocument()
   })
 })
 

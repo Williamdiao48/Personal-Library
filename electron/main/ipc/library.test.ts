@@ -397,6 +397,13 @@ describe('library IPC — simple reads & scroll position', () => {
     expect(await invoke('library:findBySourceUrl', 'https://none')).toBeUndefined()
   })
 
+  it('findBySourceUrl ignores a deleted item (tombstones keep source_url)', async () => {
+    // A deleted item keeps its source_url row (soft, or a hard-deleted purged
+    // tombstone), but re-capturing that URL must NOT be flagged as a duplicate.
+    seedItem(db, { id: 's2', source_url: 'https://ao3.org/works/2', deleted_at: Date.now() })
+    expect(await invoke('library:findBySourceUrl', 'https://ao3.org/works/2')).toBeUndefined()
+  })
+
   it('saveScrollPos upserts the chapter + scroll anchor without touching derived items', async () => {
     seedItem(db, { id: 'sp' })
     await invoke('library:saveScrollPos', 'sp', 3, 420)
