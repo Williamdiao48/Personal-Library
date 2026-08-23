@@ -159,6 +159,28 @@ describe('captureAo3', () => {
     await expect(captureAo3('https://archiveofourown.org/not-a-work')).rejects.toThrow(/work ID/i)
   })
 
+  // Regression: AO3 rate-limits scraping with a 429 "Retry later" page that the
+  // browser fallback loads as a 200. The parser must THROW (so the bulk queue retries
+  // it) rather than fabricate an "Unknown Work" item from a page with no work content.
+  it('throws (retryable) on an AO3 rate-limit "Retry later" page instead of making a junk item', async () => {
+    mockFetchPage.mockResolvedValue(
+      '<!DOCTYPE html><html><body><h2 class="heading">Retry later</h2>' +
+        '<p>This request has been rate limited.</p></body></html>',
+    )
+    await expect(captureAo3('https://archiveofourown.org/works/123')).rejects.toThrow(
+      /retry later/i,
+    )
+  })
+
+  it('throws on any non-work page (no work title heading), not an Unknown Work item', async () => {
+    mockFetchPage.mockResolvedValue(
+      '<!DOCTYPE html><html><body><p>This work is only available to registered users.</p></body></html>',
+    )
+    await expect(captureAo3('https://archiveofourown.org/works/123')).rejects.toThrow(
+      /did not return a work page/i,
+    )
+  })
+
   it('surfaces native AO3 tags + stats on the captured content (F1)', async () => {
     mockFetchPage.mockResolvedValue(ao3Page(['<p>x</p>'], { meta: true }))
     const result = await captureAo3('https://archiveofourown.org/works/5')

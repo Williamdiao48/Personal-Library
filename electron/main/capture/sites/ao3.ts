@@ -99,7 +99,25 @@ export async function captureAo3(
   const page1Html = await fetchPage(page1Url)
   const page1Doc = new JSDOM(page1Html, { url: page1Url }).window.document
 
-  const title = page1Doc.querySelector('.title.heading')?.textContent?.trim() ?? 'Unknown Work'
+  // Guard against a non-work page. AO3 rate-limits scraping with a 429 "Retry later"
+  // page; fetchPage's browser fallback loads that (and any error/maintenance/registered-
+  // users-only interstitial) as a 200, so it reaches us as HTML with no work content.
+  // Every real work page has an h2.title.heading — its absence means this isn't one.
+  // THROW rather than fabricate an "Unknown Work" item: a throw is retryable (the bulk
+  // queue re-queues it and the throttle clears within a few attempts, and single capture
+  // surfaces a real error), whereas a junk placeholder item is permanent and, once
+  // "owned", is skipped by dedup on the re-run that would have fixed it.
+  const titleEl = page1Doc.querySelector('.title.heading')
+  if (!titleEl) {
+    const looksRateLimited = /retry later|rate limit/i.test(page1Doc.body?.textContent ?? '')
+    throw new Error(
+      looksRateLimited
+        ? 'AO3 rate-limited this request — retry later.'
+        : 'AO3 did not return a work page (rate-limited, unavailable, or registered-users-only).',
+    )
+  }
+
+  const title = titleEl.textContent?.trim() || 'Unknown Work'
   const author =
     page1Doc.querySelector('.byline.heading a[rel="author"]')?.textContent?.trim() ?? null
   const ogImg = page1Doc.querySelector('meta[property="og:image"]')?.getAttribute('content') ?? null
