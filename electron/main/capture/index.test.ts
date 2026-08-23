@@ -186,15 +186,17 @@ describe('captureUrl — single-article persistence', () => {
   })
 
   it('defaults cloud_backup to 0 (local-only) and honors the opt-in flag (Phase 2)', async () => {
-    vi.mocked(captureRoyalRoad).mockResolvedValue(siteContent())
+    vi.mocked(captureRoyalRoad).mockResolvedValue(siteContent({ title: 'Local Work' }))
     const local = await captureUrl('https://www.royalroad.com/fiction/1')
     expect(
       (db.prepare('SELECT cloud_backup FROM items WHERE id = ?').get(local.id) as any).cloud_backup,
     ).toBe(0)
 
-    vi.mocked(captureRoyalRoad).mockResolvedValue(siteContent())
+    // A DISTINCT work (different title) so the dedup gate doesn't collapse it onto the
+    // first — the flag under test only makes sense for a genuinely new item.
+    vi.mocked(captureRoyalRoad).mockResolvedValue(siteContent({ title: 'Cloud Work' }))
     const cloud = await captureUrl(
-      'https://www.royalroad.com/fiction/1',
+      'https://www.royalroad.com/fiction/2',
       undefined,
       undefined,
       true,
@@ -202,6 +204,23 @@ describe('captureUrl — single-article persistence', () => {
     expect(
       (db.prepare('SELECT cloud_backup FROM items WHERE id = ?').get(cloud.id) as any).cloud_backup,
     ).toBe(1)
+  })
+
+  it('dedups a re-capture of an owned work: no 2nd row, returns { duplicate: true }', async () => {
+    vi.mocked(captureRoyalRoad).mockResolvedValue(siteContent({ title: 'Only Once' }))
+    const first = await captureUrl('https://www.royalroad.com/fiction/1')
+
+    // Same title+author (the content key), even from a different URL → collapses onto
+    // the existing item rather than inserting a second.
+    vi.mocked(captureRoyalRoad).mockResolvedValue(siteContent({ title: 'only once' }))
+    const again = await captureUrl('https://www.royalroad.com/fiction/999')
+
+    expect(again.duplicate).toBe(true)
+    expect(again.id).toBe(first.id)
+    const count = (
+      db.prepare("SELECT COUNT(*) AS n FROM items WHERE title = 'Only Once'").get() as any
+    ).n
+    expect(count).toBe(1)
   })
 })
 
