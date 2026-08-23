@@ -434,7 +434,9 @@ const Sidebar = memo(function Sidebar({
                       {job.status === 'error'
                         ? (job.error ?? 'Capture failed.')
                         : job.status === 'done'
-                          ? 'Saved to library'
+                          ? job.duplicate
+                            ? 'Already in your library'
+                            : 'Saved to library'
                           : job.msg}
                     </span>
                     {job.status === 'running' && <LiveEta job={job} />}

@@ -120,7 +120,11 @@ export function CaptureJobsProvider({ children }: { children: React.ReactNode })
 
     const offComplete = window.api.onCaptureComplete(({ jobId, result }) => {
       setCaptureJobs((prev) =>
-        prev.map((j) => (j.id === jobId ? { ...j, status: 'done', title: result.title } : j)),
+        prev.map((j) =>
+          j.id === jobId
+            ? { ...j, status: 'done', title: result.title, duplicate: result.duplicate === true }
+            : j,
+        ),
       )
       setTimeout(() => dismissJob(jobId), 4000)
     })

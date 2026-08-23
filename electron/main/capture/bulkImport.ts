@@ -1,10 +1,11 @@
-import { all } from '../db'
 import { captureUrl } from '../capture'
 import { triggerBackfill } from '../recommender/lifecycle'
 import { enqueueItemBackup } from '../cloud/uploader'
 import { notifyLocalMutation } from '../cloud/sync/syncService'
 import { discoverAo3Bookmarks } from './sites/ao3-bookmarks'
 import { discoverFfnetFavorites } from './sites/ffnet-favorites'
+import { canonicalWorkId, canonicalKey, contentKey, ownedKeys } from './dedup'
+import type { CanonicalId } from './dedup'
 import type {
   BulkSource,
   DiscoveredWork,
@@ -17,60 +18,16 @@ import type {
 // preview (FavoritesDiscovery) the UI shows before committing to N downloads. The
 // serialized import queue (runBulkImport) follows in the Phase 3 section below.
 //
-// Dedup is load-bearing and NOT automatic: captureUrl blindly INSERTs the raw
-// source_url with no dedup, and the only existing URL check is renderer-side in
-// AddItemModal (which the bulk path bypasses). So this module dedups every work
-// itself — by CANONICAL id, not exact source_url, since /works/123,
-// /works/123?view_full_work=true and /works/123/chapters/456 are the same work.
+// Dedup (canonical id + cross-source content key) lives in ./dedup, shared with the
+// single-URL capture path so the two can't drift apart. Dedup is load-bearing and NOT
+// automatic: captureUrl INSERTs the raw source_url, and the only renderer-side URL
+// check (AddItemModal) is bypassed by the bulk path — so this module flags every
+// discovered work against the library itself before the preview.
 
-/** A work identified by its site + canonical numeric id — the dedup key. */
-export interface CanonicalId {
-  kind: BulkSource
-  id: string
-}
-
-/**
- * Reduce any AO3 work URL or FFN story URL to its canonical {kind,id}, ignoring
- * query strings, chapter/slug tails, and www/scheme variants. Returns null for
- * anything that isn't a recognizable work/story URL.
- */
-export function canonicalWorkId(url: string): CanonicalId | null {
-  const ao3 = /\/works\/(\d+)/.exec(url)
-  if (ao3 && /archiveofourown\.org/i.test(url)) return { kind: 'ao3', id: ao3[1] }
-  const ffn = /\/s\/(\d+)/.exec(url)
-  if (ffn && /fanfiction\.net/i.test(url)) return { kind: 'ffn', id: ffn[1] }
-  return null
-}
-
-/** Stable string key for a canonical id (Set/Map membership). */
-function canonicalKey(c: CanonicalId): string {
-  return `${c.kind}:${c.id}`
-}
-
-/**
- * Build the set of canonical ids already in the library, so a discovered work can
- * be flagged `alreadyInLibrary` in O(1). One pass over owned source_urls (a
- * personal library is small) — correct where a `source_url LIKE '%/works/{id}%'`
- * query would false-match (`/works/12` vs `/works/123`) and cheaper than N queries.
- */
-export function ownedCanonicalIds(): Set<string> {
-  // deleted_at IS NULL: exclude deleted items. This app NEVER physically removes an
-  // item row — soft delete sets deleted_at (Trash), and even "permanent delete" /
-  // "empty trash" keeps the row as a purged tombstone (deleted_at set, purged_at
-  // set, bytes reclaimed) so the deletion syncs and can't resurrect-on-pull. Both
-  // keep source_url, so without this filter a re-import of a work the user deleted
-  // (soft OR hard) is wrongly flagged "already in library". A deleted work is not owned.
-  const rows = all<{ source_url: string | null }>(
-    "SELECT source_url FROM items WHERE source_url IS NOT NULL AND source_url <> '' AND deleted_at IS NULL",
-  )
-  const set = new Set<string>()
-  for (const { source_url } of rows) {
-    if (!source_url) continue
-    const c = canonicalWorkId(source_url)
-    if (c) set.add(canonicalKey(c))
-  }
-  return set
-}
+// Re-exported so bulkImport's own tests (and any importer that predates ./dedup) can
+// still reach the canonical primitives from here.
+export { canonicalWorkId }
+export type { CanonicalId }
 
 /**
  * Normalize + validate an account reference for a source. Accepts either a bare
@@ -147,12 +104,15 @@ export async function discoverFavorites(
     deduped.push(w)
   }
 
-  // (3) Flag works already owned (canonical-id match against the library).
-  const owned = ownedCanonicalIds()
+  // (3) Flag works already owned — by canonical id (same site, URL variants) OR by
+  // normalized title|author (the same fic cross-posted to the other site).
+  const owned = ownedKeys()
   let alreadyInLibrary = 0
   const works = deduped.map((w) => {
     const c = canonicalWorkId(w.url)
-    const isOwned = c ? owned.has(canonicalKey(c)) : false
+    const ck = contentKey(w.title, w.author)
+    const isOwned =
+      (c ? owned.canonical.has(canonicalKey(c)) : false) || (ck ? owned.content.has(ck) : false)
     if (isOwned) alreadyInLibrary++
     return { ...w, alreadyInLibrary: isOwned }
   })
@@ -249,8 +209,11 @@ export async function runBulkImport(opts: RunBulkImportOptions): Promise<BulkImp
   activeBatches.set(batchId, state)
 
   // Dedup baseline: everything already in the library. Works captured during this
-  // run are added so a duplicate later in the same list (or a re-run) skips.
-  const owned = ownedCanonicalIds()
+  // run are added so a duplicate later in the same list (or a re-run) skips. Canonical
+  // (site+id) only here — the import queue has URLs, not titles, so the content-key
+  // (cross-source) axis lives at discovery time, where the preview already excludes an
+  // owned cross-post from the URLs it sends us.
+  const owned = ownedKeys().canonical
 
   // A mutable FIFO queue of work URLs + their attempt count. A failed work is
   // pushed to the back (retried after everything else), so `queue` shrinks only as
@@ -298,14 +261,21 @@ export async function runBulkImport(opts: RunBulkImportOptions): Promise<BulkImp
       let failedThisWork = false
       try {
         const result = await captureUrl(url, () => {}, undefined, cloudBackup)
-        progress.done++
         consecutiveFailures = 0
         owned.add(key) // now owned → a later duplicate / re-run skips
-        // Same post-capture hooks the single-capture IPC path fires. Best-effort:
-        // a hook failure must never fail the batch.
-        triggerBackfill()
-        if (cloudBackup) void enqueueItemBackup(result.id).catch(() => {})
-        notifyLocalMutation()
+        // captureUrl's own dedup gate can collapse this work onto an existing item
+        // (a cross-source content match the URL-only preview couldn't see) — count
+        // that as skipped, not imported, and fire no new-item hooks for it.
+        if (result.duplicate) {
+          progress.skipped++
+        } else {
+          progress.done++
+          // Same post-capture hooks the single-capture IPC path fires. Best-effort:
+          // a hook failure must never fail the batch.
+          triggerBackfill()
+          if (cloudBackup) void enqueueItemBackup(result.id).catch(() => {})
+          notifyLocalMutation()
+        }
       } catch {
         failedThisWork = true
         item.attempts++

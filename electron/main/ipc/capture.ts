@@ -68,14 +68,20 @@ export function registerCaptureHandlers(): void {
         cloudBackup === true,
       )
         .then((result) => {
-          // New item persisted — reconcile its embedding in the background (C2.6).
-          triggerBackfill()
-          // Cloud opt-in (Phase 2): back the bytes up to R2 in the background.
-          // Best-effort — never blocks capture completion or fails the job.
-          if (cloudBackup === true) void enqueueItemBackup(result.id).catch(() => {})
-          // New item's metadata → push it (independent of the byte backup above, so
-          // a non-backed-up capture still syncs its row to the user's other devices).
-          notifyLocalMutation()
+          // A dedup hit created NO new item (it collapsed onto an existing one), so
+          // skip the new-item hooks — there's nothing fresh to embed, back up, or sync.
+          // The complete event still fires so the UI clears the job; LibraryView's
+          // handler updates the existing card in place rather than adding a phantom.
+          if (!result.duplicate) {
+            // New item persisted — reconcile its embedding in the background (C2.6).
+            triggerBackfill()
+            // Cloud opt-in (Phase 2): back the bytes up to R2 in the background.
+            // Best-effort — never blocks capture completion or fails the job.
+            if (cloudBackup === true) void enqueueItemBackup(result.id).catch(() => {})
+            // New item's metadata → push it (independent of the byte backup above, so
+            // a non-backed-up capture still syncs its row to the user's other devices).
+            notifyLocalMutation()
+          }
           if (!event.sender.isDestroyed()) {
             event.sender.send('capture:complete', { jobId, result })
           }
