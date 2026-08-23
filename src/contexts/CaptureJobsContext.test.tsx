@@ -129,6 +129,7 @@ describe('CaptureJobsContext — bulk imports', () => {
         done: 2,
         failed: 1,
         skipped: 1,
+        retrying: 0,
         current: 'https://x/works/9',
         status: 'running',
       }),
@@ -148,6 +149,7 @@ describe('CaptureJobsContext — bulk imports', () => {
           done: 5,
           failed: 0,
           skipped: 0,
+          retrying: 0,
           status: 'done',
         }),
       )
@@ -171,6 +173,7 @@ describe('CaptureJobsContext — bulk imports', () => {
           done: 2,
           failed: 3,
           skipped: 0,
+          retrying: 0,
           status: 'throttled',
         }),
       )

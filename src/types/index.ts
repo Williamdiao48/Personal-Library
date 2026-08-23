@@ -179,8 +179,9 @@ export interface BulkImportProgress {
   batchId: string
   total: number
   done: number // captured successfully
-  failed: number // capture threw
+  failed: number // capture failed on every attempt (permanently)
   skipped: number // already in library / duplicate within the batch
+  retrying: number // failed at least once, re-queued for a later retry
   current?: string // URL currently being captured (absent when idle/terminal)
   status: BulkImportStatus
   error?: string // set only when status === 'error'
@@ -197,6 +198,7 @@ export interface BatchJob {
   done: number
   failed: number
   skipped: number
+  retrying: number // failed at least once, waiting for a later retry
   current?: string // URL of the work being downloaded right now
   // url → title for the works in this batch (from the discovery preview), so the
   // row can show the CURRENT book's title instead of a bare URL. Renderer-only.

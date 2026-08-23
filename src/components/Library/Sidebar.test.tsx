@@ -320,6 +320,7 @@ const batchJob = (over: Partial<BatchJob> = {}): BatchJob => ({
   done: 3,
   failed: 0,
   skipped: 1,
+  retrying: 0,
   status: 'running',
   startedAt: Date.now(),
   ...over,
@@ -379,6 +380,11 @@ describe('Sidebar — bulk import rows', () => {
   it('explains a throttled stop', () => {
     renderSidebar({ batchJobs: [batchJob({ status: 'throttled', done: 5 })] })
     expect(screen.getByText(/rate-limiting/)).toBeInTheDocument()
+  })
+
+  it('shows a retrying count while running', () => {
+    renderSidebar({ batchJobs: [batchJob({ status: 'running', done: 3, retrying: 2 })] })
+    expect(screen.getByText(/2 retrying/)).toBeInTheDocument()
   })
 
   it('renders nothing when there are no batch jobs', () => {

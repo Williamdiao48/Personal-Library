@@ -166,7 +166,10 @@ export async function discoverFavorites(
 // Runs the discovered URLs through captureUrl one at a time, politely: a jittered
 // delay between works (longer for FFN, which rides the slow CF BrowserWindow
 // path), a circuit breaker that halts after a run of consecutive failures rather
-// than hammering a throttling site, and cooperative cancellation. Re-running after
+// than hammering a throttling site, and cooperative cancellation. A work that
+// fails is moved to the BACK of the queue and retried later (up to MAX_ATTEMPTS),
+// so a transient hiccup (a 503, a slow CF challenge) doesn't permanently drop a
+// story — it only counts as failed after exhausting its attempts. Re-running after
 // a cancel/crash is idempotent — already-imported works skip via the same
 // canonical-id dedup used at discovery time.
 
@@ -181,6 +184,13 @@ const BULK_JITTER_MS = 1500
 // the site is rate-limiting/blocking us. No auto-resume; the user re-runs (dedup
 // makes that a safe resume).
 const CIRCUIT_BREAKER_THRESHOLD = 5
+
+// How many times a single work is attempted before it's counted as permanently
+// failed. A failed work goes to the back of the queue, so retries are naturally
+// spaced out behind the rest of the batch. Kept below CIRCUIT_BREAKER_THRESHOLD so
+// a lone broken URL (deleted work, unparseable page) gives up cleanly instead of
+// tripping the breaker.
+const MAX_ATTEMPTS = 3
 
 // How finely a between-works delay is sliced so cancellation is responsive mid-wait
 // instead of blocking for the full (up to ~6.5s) gap.
@@ -236,26 +246,36 @@ export async function runBulkImport(opts: RunBulkImportOptions): Promise<BulkImp
   // run are added so a duplicate later in the same list (or a re-run) skips.
   const owned = ownedCanonicalIds()
 
+  // A mutable FIFO queue of work URLs + their attempt count. A failed work is
+  // pushed to the back (retried after everything else), so `queue` shrinks only as
+  // works succeed, permanently fail, or are skipped.
+  const queue: { url: string; attempts: number }[] = urls.map((url) => ({ url, attempts: 0 }))
+
   const progress: BulkImportProgress = {
     batchId,
     total: urls.length,
     done: 0,
     failed: 0,
     skipped: 0,
+    retrying: 0,
     status: 'running',
   }
-  const emit = (): void => onProgress?.({ ...progress })
+  // `retrying` is derived from the queue each emit — the works still waiting that
+  // have already failed at least once.
+  const emit = (): void =>
+    onProgress?.({ ...progress, retrying: queue.filter((q) => q.attempts > 0).length })
 
   let consecutiveFailures = 0
 
   try {
-    for (let i = 0; i < urls.length; i++) {
+    while (queue.length > 0) {
       if (state.cancelled) {
         progress.status = 'cancelled'
         break
       }
 
-      const url = urls[i]
+      const item = queue.shift()!
+      const url = item.url
       const c = canonicalWorkId(url)
       const key = c ? canonicalKey(c) : `url:${url}`
 
@@ -269,6 +289,7 @@ export async function runBulkImport(opts: RunBulkImportOptions): Promise<BulkImp
       progress.current = url
       emit()
 
+      let failedThisWork = false
       try {
         const result = await captureUrl(url, () => {}, undefined, cloudBackup)
         progress.done++
@@ -280,21 +301,30 @@ export async function runBulkImport(opts: RunBulkImportOptions): Promise<BulkImp
         if (cloudBackup) void enqueueItemBackup(result.id).catch(() => {})
         notifyLocalMutation()
       } catch {
-        progress.failed++
+        failedThisWork = true
+        item.attempts++
         consecutiveFailures++
-        if (consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
-          progress.status = 'throttled'
-          progress.current = undefined
-          emit()
-          break
+        if (item.attempts < MAX_ATTEMPTS) {
+          queue.push(item) // transient — retry after the rest of the queue
+        } else {
+          progress.failed++ // exhausted attempts — permanent failure
         }
       }
 
       progress.current = undefined
+
+      // Circuit breaker: a run of consecutive failures means the site is likely
+      // throttling us — stop rather than churn the whole queue against a wall.
+      if (failedThisWork && consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+        progress.status = 'throttled'
+        emit()
+        break
+      }
+
       emit()
 
       // Polite gap before the next work (not after the last, and not if cancelled).
-      if (i < urls.length - 1 && !state.cancelled) {
+      if (queue.length > 0 && !state.cancelled) {
         await politeDelay(workDelayMs(c), state)
       }
     }

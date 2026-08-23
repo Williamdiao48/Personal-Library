@@ -140,6 +140,7 @@ export function registerCaptureHandlers(): void {
             done: 0,
             failed: 0,
             skipped: 0,
+            retrying: 0,
             status: 'error',
             error: err instanceof Error ? err.message : 'Bulk import failed.',
           })

@@ -27,6 +27,8 @@ function batchStatusText(job: BatchJob): string {
   const imported = `${job.done} imported`
   const extras = [
     job.skipped ? `${job.skipped} skipped` : '',
+    // Only meaningful while running — a terminal batch has no pending retries.
+    job.status === 'running' && job.retrying ? `${job.retrying} retrying` : '',
     job.failed ? `${job.failed} failed` : '',
   ]
     .filter(Boolean)

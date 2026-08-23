@@ -253,25 +253,61 @@ describe('runBulkImport', () => {
       urls: [AO3(1), AO3(2), AO3(3), AO3(4), AO3(5), AO3(6)],
       cloudBackup: false,
     })
-    // Stops at the 5th failure; the 6th work is never attempted.
+    // Stops at the 5th consecutive failure; each failed work was only re-queued
+    // (attempt 1 of 3), so none is a *permanent* failure yet.
     expect(mockCapture).toHaveBeenCalledTimes(5)
-    expect(final).toMatchObject({ status: 'throttled', failed: 5, done: 0 })
+    expect(final).toMatchObject({ status: 'throttled', done: 0, failed: 0 })
   })
 
-  it('resets the failure streak on a success (breaker only trips on a consecutive run)', async () => {
-    // fail, fail, succeed, fail, fail → never 5 in a row → completes done.
-    mockCapture
-      .mockRejectedValueOnce(new Error('x'))
-      .mockRejectedValueOnce(new Error('x'))
-      .mockResolvedValueOnce({ id: 'item', title: 't', author: null, wordCount: 1 })
-      .mockRejectedValueOnce(new Error('x'))
-      .mockRejectedValueOnce(new Error('x'))
-    const final = await run({
-      batchId: 'B6',
-      urls: [AO3(1), AO3(2), AO3(3), AO3(4), AO3(5)],
-      cloudBackup: false,
+  it('retries a transiently-failing work and succeeds on the retry', async () => {
+    const [A, B] = [AO3(1), AO3(2)]
+    let bTries = 0
+    mockCapture.mockImplementation((url: string) => {
+      if (url === B && bTries++ === 0) return Promise.reject(new Error('503'))
+      return Promise.resolve({ id: 'item', title: 't', author: null, wordCount: 1 })
     })
-    expect(final).toMatchObject({ status: 'done', done: 1, failed: 4 })
+    const final = await run({ batchId: 'R1', urls: [A, B], cloudBackup: false })
+    // B fails once, is re-queued, and succeeds on the second try.
+    expect(mockCapture.mock.calls.map((c) => c[0])).toEqual([A, B, B])
+    expect(final).toMatchObject({ status: 'done', done: 2, failed: 0, retrying: 0 })
+  })
+
+  it('moves a failed work to the BACK of the queue (retried after the others)', async () => {
+    const [A, B, C] = [AO3(1), AO3(2), AO3(3)]
+    let aTries = 0
+    mockCapture.mockImplementation((url: string) => {
+      if (url === A && aTries++ === 0) return Promise.reject(new Error('x'))
+      return Promise.resolve({ id: 'item', title: 't', author: null, wordCount: 1 })
+    })
+    const final = await run({ batchId: 'R2', urls: [A, B, C], cloudBackup: false })
+    // A fails first, so B and C go before A's retry.
+    expect(mockCapture.mock.calls.map((c) => c[0])).toEqual([A, B, C, A])
+    expect(final).toMatchObject({ status: 'done', done: 3, failed: 0 })
+  })
+
+  it('gives up on a permanently-failing work after MAX_ATTEMPTS (3)', async () => {
+    mockCapture.mockRejectedValue(new Error('gone'))
+    const final = await run({ batchId: 'R3', urls: [AO3(1)], cloudBackup: false })
+    // Tried 3× (not the breaker — a lone broken URL gives up before 5 consecutive).
+    expect(mockCapture).toHaveBeenCalledTimes(3)
+    expect(final).toMatchObject({ status: 'done', done: 0, failed: 1 })
+  })
+
+  it('reports works waiting for retry via the retrying count', async () => {
+    const [A, B] = [AO3(1), AO3(2)]
+    let bTries = 0
+    mockCapture.mockImplementation((url: string) => {
+      if (url === B && bTries++ === 0) return Promise.reject(new Error('503'))
+      return Promise.resolve({ id: 'item', title: 't', author: null, wordCount: 1 })
+    })
+    const seen: number[] = []
+    await run({
+      batchId: 'R4',
+      urls: [A, B],
+      cloudBackup: false,
+      onProgress: (p) => seen.push(p.retrying),
+    })
+    expect(Math.max(...seen)).toBe(1) // B counted as retrying after its first failure
   })
 
   it('stops promptly when cancelled mid-run and reports cancelled', async () => {

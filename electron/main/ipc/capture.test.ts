@@ -210,6 +210,7 @@ describe('capture:startBulk', () => {
       done: 2,
       failed: 0,
       skipped: 0,
+      retrying: 0,
       status: 'done',
     })
 
@@ -236,6 +237,7 @@ describe('capture:startBulk', () => {
       done: 1,
       failed: 0,
       skipped: 0,
+      retrying: 0,
       status: 'done' as const,
     }
     mockRun.mockImplementation(async (opts) => {
@@ -277,6 +279,7 @@ describe('capture:startBulk', () => {
       done: 0,
       failed: 0,
       skipped: 0,
+      retrying: 0,
       status: 'done',
     })
     const res = (await invoke('capture:startBulk', undefined)) as { total: number }
