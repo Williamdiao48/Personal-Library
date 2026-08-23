@@ -136,6 +136,21 @@ describe('discoverFavorites — AO3', () => {
     expect(res.works.find((w) => w.title === 'New')?.alreadyInLibrary).toBe(false)
   })
 
+  it('does not count trashed items as owned (soft delete → re-import allowed)', async () => {
+    // A trashed work still has its source_url row, so the owned-id query must
+    // exclude it — otherwise re-importing a just-deleted work is wrongly skipped.
+    mockAo3.mockResolvedValue({
+      works: [{ url: 'https://archiveofourown.org/works/1', title: 'Was Deleted', author: null }],
+      skippedSeries: 0,
+      skippedExternal: 0,
+      pagesFetched: 1,
+    })
+
+    await discoverFavorites('ao3', 'reader')
+
+    expect(mockAll).toHaveBeenCalledWith(expect.stringContaining('deleted_at IS NULL'))
+  })
+
   it('de-duplicates the same work appearing twice within one batch', async () => {
     mockAo3.mockResolvedValue({
       works: [
