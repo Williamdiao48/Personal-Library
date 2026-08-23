@@ -54,9 +54,12 @@ function canonicalKey(c: CanonicalId): string {
  * query would false-match (`/works/12` vs `/works/123`) and cheaper than N queries.
  */
 export function ownedCanonicalIds(): Set<string> {
-  // deleted_at IS NULL: exclude trashed items. Deletes are soft (the row lingers in
-  // Trash with its source_url), so counting them would flag a re-import of a work
-  // the user just deleted as "already in library". A trashed work is not owned.
+  // deleted_at IS NULL: exclude deleted items. This app NEVER physically removes an
+  // item row — soft delete sets deleted_at (Trash), and even "permanent delete" /
+  // "empty trash" keeps the row as a purged tombstone (deleted_at set, purged_at
+  // set, bytes reclaimed) so the deletion syncs and can't resurrect-on-pull. Both
+  // keep source_url, so without this filter a re-import of a work the user deleted
+  // (soft OR hard) is wrongly flagged "already in library". A deleted work is not owned.
   const rows = all<{ source_url: string | null }>(
     "SELECT source_url FROM items WHERE source_url IS NOT NULL AND source_url <> '' AND deleted_at IS NULL",
   )
