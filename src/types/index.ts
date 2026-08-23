@@ -220,6 +220,7 @@ export interface CaptureJob {
   startedAt: number // Date.now() when the job was started
   title?: string // set on completion
   error?: string // set on failure
+  duplicate?: boolean // completion collapsed onto an existing item (dedup hit), no new copy saved
 }
 
 export interface RefreshResult {

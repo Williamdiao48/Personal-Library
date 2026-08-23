@@ -273,6 +273,22 @@ describe('Sidebar — capture jobs', () => {
     expect(props.onDismissJob).toHaveBeenCalledWith('j1')
   })
 
+  it('labels a dedup-hit completion "Already in your library", not "Saved"', () => {
+    renderSidebar({
+      captureJobs: [
+        runningJob({
+          status: 'done',
+          title: 'Cross-posted Fic',
+          duplicate: true,
+          chapter: null,
+          total: null,
+        }),
+      ],
+    })
+    expect(screen.getByText('Already in your library')).toBeInTheDocument()
+    expect(screen.queryByText('Saved to library')).not.toBeInTheDocument()
+  })
+
   it('renders a failed job with its error message', () => {
     renderSidebar({
       captureJobs: [

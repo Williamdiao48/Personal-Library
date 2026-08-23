@@ -193,6 +193,82 @@ describe('discoverFavorites — FFN', () => {
   })
 })
 
+describe('discoverFavorites — cross-source content dedup (title|author)', () => {
+  /** Seed the owned-item lookup with full rows (source_url + title + author). */
+  function ownedItems(
+    ...rows: { source_url?: string | null; title?: string | null; author?: string | null }[]
+  ): void {
+    mockAll.mockReturnValue(
+      rows.map((r) => ({
+        source_url: r.source_url ?? null,
+        title: r.title ?? null,
+        author: r.author ?? null,
+      })),
+    )
+  }
+
+  it('flags an FFN fic as owned when an AO3 item shares its normalized title+author', async () => {
+    // Owned on AO3; the SAME fic is discovered on FFN (different site id, so the
+    // canonical key can't match) — the normalized title|author must catch it, even
+    // through case + punctuation differences.
+    ownedItems({
+      source_url: 'https://archiveofourown.org/works/1',
+      title: 'The Same Fic',
+      author: 'Jane Doe',
+    })
+    mockFfn.mockResolvedValue([
+      { url: 'https://www.fanfiction.net/s/500/1/x', title: 'the same fic!', author: 'JANE  DOE' },
+      {
+        url: 'https://www.fanfiction.net/s/501/1/y',
+        title: 'The Same Fic',
+        author: 'Someone Else',
+      },
+    ])
+
+    const res = await discoverFavorites('ffn', '42')
+
+    expect(res.alreadyInLibrary).toBe(1)
+    expect(res.works.find((w) => w.url.includes('/500/'))?.alreadyInLibrary).toBe(true)
+    // Same title, different author → a different fic, not flagged.
+    expect(res.works.find((w) => w.url.includes('/501/'))?.alreadyInLibrary).toBe(false)
+  })
+
+  it('does NOT content-match when the incoming work has no author (precision-first)', async () => {
+    ownedItems({ source_url: 'https://archiveofourown.org/works/1', title: 'Solo', author: 'A' })
+    mockFfn.mockResolvedValue([
+      { url: 'https://www.fanfiction.net/s/1/1/x', title: 'Solo', author: null },
+    ])
+
+    const res = await discoverFavorites('ffn', '42')
+
+    expect(res.alreadyInLibrary).toBe(0)
+  })
+
+  it('does NOT content-match when the owned item has no author', async () => {
+    ownedItems({ source_url: 'https://archiveofourown.org/works/1', title: 'Solo', author: null })
+    mockFfn.mockResolvedValue([
+      { url: 'https://www.fanfiction.net/s/1/1/x', title: 'Solo', author: 'A' },
+    ])
+
+    const res = await discoverFavorites('ffn', '42')
+
+    expect(res.alreadyInLibrary).toBe(0)
+  })
+
+  it('content-matches an owned import that has no fanfic source_url (e.g. an EPUB)', async () => {
+    // A work imported as an EPUB has a title+author but no AO3/FFN source_url; it should
+    // still de-dup an incoming cross-posted copy by content key.
+    ownedItems({ source_url: null, title: 'Imported As Epub', author: 'Writer' })
+    mockFfn.mockResolvedValue([
+      { url: 'https://www.fanfiction.net/s/9/1/z', title: 'Imported as Epub', author: 'writer' },
+    ])
+
+    const res = await discoverFavorites('ffn', '42')
+
+    expect(res.alreadyInLibrary).toBe(1)
+  })
+})
+
 describe('runBulkImport', () => {
   const AO3 = (id: number) => `https://archiveofourown.org/works/${id}`
 
@@ -247,6 +323,23 @@ describe('runBulkImport', () => {
     })
     expect(mockCapture).toHaveBeenCalledTimes(2) // work 5 once + work 6
     expect(final).toMatchObject({ done: 2, skipped: 1 })
+  })
+
+  it('counts a captureUrl dedup hit (result.duplicate) as skipped, not imported', async () => {
+    // captureUrl's own post-parse dedup can collapse a work onto an existing item (a
+    // cross-source content match the URL-only preview couldn't see). That must count
+    // as skipped and fire no new-item hooks.
+    mockCapture.mockResolvedValue({
+      id: 'existing',
+      title: 't',
+      author: null,
+      wordCount: null,
+      duplicate: true,
+    })
+    const final = await run({ batchId: 'DUP', urls: [AO3(1)], cloudBackup: false })
+    expect(final).toMatchObject({ status: 'done', done: 0, skipped: 1, failed: 0 })
+    expect(triggerBackfill).not.toHaveBeenCalled()
+    expect(notifyLocalMutation).not.toHaveBeenCalled()
   })
 
   it('fires the post-capture hooks on success; enqueues a backup only when cloudBackup', async () => {

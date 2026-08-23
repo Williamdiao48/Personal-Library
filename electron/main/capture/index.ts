@@ -22,6 +22,7 @@ import { resolveEpubParse, resolvePdfParse } from '../cloud/processing'
 import { indexFtsText, readStoredFtsText } from '../db/ftsText'
 import { computeContentHash } from '../util/contentHash'
 import { computeFileHash } from './fileHash'
+import { findLiveDuplicate } from './dedup'
 import { persistSourceTags, siteKeyFromUrl } from '../recommender/sourceTags'
 
 export interface CaptureResult {
@@ -159,6 +160,24 @@ export async function captureUrl(
   cloudBackup = false,
 ): Promise<CaptureResult> {
   const content = await dispatchCapture(url, onProgress, range)
+
+  // Dedup gate (post-parse: title/author aren't known until the fetch completes). The
+  // renderer's pre-capture check only matches an EXACT source_url, so it misses a fic
+  // cross-posted to the other site (different URL, same title+author) and same-site URL
+  // variants (chapter vs work URL). findLiveDuplicate closes both: if a live item
+  // already matches by canonical id OR normalized title|author, collapse onto it rather
+  // than insert a second copy — same contract as the file-import path's `duplicate`.
+  const dup = findLiveDuplicate(url, content.title, content.author)
+  if (dup) {
+    return {
+      id: dup.id,
+      title: dup.title,
+      author: content.author,
+      wordCount: null,
+      duplicate: true,
+    }
+  }
+
   return saveToLibrary(url, content, content.coverUrl ?? null, onProgress, range, cloudBackup)
 }
 
