@@ -2,7 +2,7 @@ import { loadItemSignals, type ItemWithSignals } from './signals'
 import { affinity } from './affinity'
 import { loadVectors } from './store'
 import { normalize, scale, sub, weightedMeanNormalized } from './vectorMath'
-import { clusterLikedCentroids } from './tasteCluster'
+import { clusterLikedCentroids, CLUSTER } from './tasteCluster'
 
 // C3.5 — the taste vector (§7.3 graded Rocchio) + the cold-start tier classifier
 // (§8) + the orchestrator that reads signals and vectors and assembles both. The
@@ -48,6 +48,7 @@ export const TASTE = {
 export function buildTasteCentroids(
   sigs: ItemWithSignals[],
   vecs: Map<string, Float32Array>,
+  cfg = CLUSTER,
 ): Float32Array[] {
   const liked: { e: Float32Array; w: number; key: string }[] = []
   const disliked: { e: Float32Array; w: number }[] = []
@@ -60,7 +61,7 @@ export function buildTasteCentroids(
   }
   if (liked.length === 0) return [] // cold-start guard (§8)
 
-  const posCentroids = clusterLikedCentroids(liked) // k≥1 per-facet centroids
+  const posCentroids = clusterLikedCentroids(liked, cfg) // k≥1 per-facet centroids
   const cNeg = disliked.length ? weightedMeanNormalized(disliked) : null
   if (!cNeg) return posCentroids
   // Subtract the disliked centroid from EACH facet (β<α: don't over-penalize), so the
