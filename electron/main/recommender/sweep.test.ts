@@ -263,12 +263,9 @@ describe('sweepWithValidation', () => {
 
   it('a genuinely-better config validates (validDelta.lo > 0, significant)', () => {
     const honest = detail({ t0: 2, t1: 2, t2: 2, t3: 2, v0: 2, v1: 2 })
-    const res = sweepWithValidation(
-      [{ config: 'honest', detail: honest }],
-      baseline,
-      split,
-      { seed: 1 },
-    )
+    const res = sweepWithValidation([{ config: 'honest', detail: honest }], baseline, split, {
+      seed: 1,
+    })
     expect(res.best.config).toBe('honest')
     expect(res.validDelta.lo).toBeGreaterThan(0) // .5-.25 on both valid folds → band > 0
     expect(res.significant).toBe(true)
@@ -286,12 +283,9 @@ describe('sweepWithValidation', () => {
   it('empty validation split → not significant (cannot validate)', () => {
     const allTrain = { train: new Set(['t0', 't1', 't2', 't3']), valid: new Set<string>() }
     const honest = detail({ t0: 2, t1: 2, t2: 2, t3: 2 })
-    const res = sweepWithValidation(
-      [{ config: 'honest', detail: honest }],
-      baseline,
-      allTrain,
-      { seed: 1 },
-    )
+    const res = sweepWithValidation([{ config: 'honest', detail: honest }], baseline, allTrain, {
+      seed: 1,
+    })
     expect(res.significant).toBe(false)
     expect(res.validDelta.lo).toBe(res.validDelta.hi) // degenerate interval
   })
