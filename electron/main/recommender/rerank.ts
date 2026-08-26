@@ -13,6 +13,8 @@ import {
 } from './candidates'
 import { unionCandidates, type CandidateSource } from './candidateSource'
 import { loadCandidateVectors, saveCandidateVectors } from './candidateEmbeddings'
+import { loadOpens } from './interactions'
+import { engagementCentroid, blendEngagement, recentlyOpenedIds } from './engagement'
 import { openLibrarySource } from './sources/openLibrary'
 import { ao3Source } from './sources/ao3'
 import { ffnSource } from './sources/ffn'
@@ -539,6 +541,14 @@ export async function recommend(
   // page digs deeper into the ranked pool instead of repeating (added to the sourceId
   // set filterCandidates drops against).
   if (opts.excludeIds) for (const id of opts.excludeIds) snapshot.exclude.ids.add(id)
+  // Recommender #3 (ADR-0011): the implicit-feedback engagement signal. Load the logged
+  // Discover-card opens once; they drive (a) a time-boxed hard-suppress of just-opened
+  // cards (folded into the exclude set here, auto-expiring after FULL_SUPPRESS_MS, so a
+  // card you just clicked through to doesn't reappear at the top of the very next
+  // refresh) and (b) a recency-weighted engagement centroid blended into scoring below.
+  const nowMs = Date.now()
+  const opens = loadOpens()
+  for (const id of recentlyOpenedIds(opens, nowMs)) snapshot.exclude.ids.add(id)
   const kept = filterCandidates(fetched, snapshot.exclude)
   if (kept.length === 0) return []
 
@@ -572,9 +582,23 @@ export async function recommend(
     )
     misses.forEach((c, i) => vecById.set(c.sourceId, missVecs[i]))
   }
+  // The engagement centroid (ADR-0011) draws on the OPENED cards' cached vectors —
+  // embedded when they were shown as candidates, so they live in the same candidate
+  // cache. Loaded by sourceId; opens without a cached vector are skipped inside
+  // engagementCentroid. `engage` is null when there are no usable opens, and then
+  // blendEngagement is a pass-through — the cannot-hurt invariant that keeps Discover
+  // byte-identical to today for a reader who has never opened a card.
+  const openVecs =
+    opens.length > 0
+      ? loadCandidateVectors(
+          opens.map((o) => o.sourceId),
+          candCacheVersion,
+        )
+      : new Map<string, Float32Array>()
+  const engage = engagementCentroid(opens, openVecs, nowMs)
   const scored: ScoredCandidate[] = kept.map((cand) => {
     const vec = vecById.get(cand.sourceId)!
-    return { cand, vec, score: scoreCandidate(vec, taste.centroids) }
+    return { cand, vec, score: blendEngagement(scoreCandidate(vec, taste.centroids), vec, engage) }
   })
 
   // Optional LLM rerank of the BOOK bucket (books-only; fics untouched). The model

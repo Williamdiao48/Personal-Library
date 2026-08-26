@@ -4,6 +4,7 @@ import { recommend } from '../recommender/rerank'
 import { candidateKey } from '../recommender/candidates'
 import { workerEmbedder } from '../workers/embed-host'
 import { buildTaste } from '../recommender/taste'
+import { recordOpen } from '../recommender/interactions'
 import { now, logTiming } from '../recommender/timing'
 import { isHttpUrl } from './capture'
 import { armBackfill, disarmBackfill } from '../recommender/lifecycle'
@@ -244,5 +245,21 @@ export function registerDiscoverHandlers(): void {
   // this narrow door only forwards validated http(s) card URLs to the browser.
   ipcMain.handle('discover:openExternal', async (_e, url: string): Promise<void> => {
     if (isHttpUrl(url)) await shell.openExternal(url)
+  })
+
+  // Recommender #3 (ADR-0011): log that a Discover card was opened. A separate door
+  // from `openExternal` on purpose — openExternal also forwards non-card links (e.g.
+  // the Ollama download URL in Settings), which must NOT be recorded as engagement.
+  // Local-only, best-effort: a failed write never blocks the open, so the renderer
+  // fires this and openExternal independently. `recordOpen` upserts on sourceId.
+  ipcMain.handle('discover:recordOpen', (_e, card: Recommendation): void => {
+    recordOpen({
+      sourceId: card.sourceId,
+      title: card.title,
+      author: card.author,
+      source: card.source,
+      url: card.url,
+      subjects: card.subjects,
+    })
   })
 }

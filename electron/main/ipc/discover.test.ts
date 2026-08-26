@@ -339,3 +339,33 @@ describe('discover:openExternal — scheme guard (D4)', () => {
     expect(spy).not.toHaveBeenCalled()
   })
 })
+
+describe('discover:recordOpen — implicit feedback (ADR-0011)', () => {
+  it('logs the opened card into discover_interactions (open_count 1) keyed by sourceId', async () => {
+    const card = rec({ sourceId: 'https://archiveofourown.org/works/opened', title: 'Opened' })
+    await invoke('discover:recordOpen', card)
+
+    const row = get<{ source_id: string; title: string; open_count: number; subjects: string }>(
+      `SELECT source_id, title, open_count, subjects FROM discover_interactions WHERE source_id = ?`,
+      ['https://archiveofourown.org/works/opened'],
+    )
+    expect(row).toMatchObject({
+      source_id: 'https://archiveofourown.org/works/opened',
+      title: 'Opened',
+      open_count: 1,
+    })
+    expect(JSON.parse(row!.subjects)).toEqual(['Harry Potter'])
+  })
+
+  it('bumps open_count on a repeat open of the same card (upsert on sourceId)', async () => {
+    const card = rec({ sourceId: 'https://archiveofourown.org/works/again' })
+    await invoke('discover:recordOpen', card)
+    await invoke('discover:recordOpen', card)
+
+    const row = get<{ open_count: number }>(
+      `SELECT open_count FROM discover_interactions WHERE source_id = ?`,
+      ['https://archiveofourown.org/works/again'],
+    )
+    expect(row!.open_count).toBe(2)
+  })
+})

@@ -284,6 +284,8 @@ contextBridge.exposeInMainWorld('api', {
     dismiss: (card: import('../../src/types').Recommendation) =>
       ipcRenderer.invoke('discover:dismiss', card),
     openExternal: (url: string) => ipcRenderer.invoke('discover:openExternal', url),
+    recordOpen: (card: import('../../src/types').Recommendation) =>
+      ipcRenderer.invoke('discover:recordOpen', card),
   },
   dictionary: {
     lookup: (word: string) => ipcRenderer.invoke('dictionary:lookup', word),

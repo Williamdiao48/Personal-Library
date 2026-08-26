@@ -275,4 +275,9 @@ describe('discoverService delegation', () => {
     discoverService.openExternal('https://x')
     expect(api.discover.openExternal).toHaveBeenCalledWith('https://x')
   })
+  it('recordOpen forwards the card', () => {
+    const card = { sourceId: 's1', title: 'T' } as any
+    discoverService.recordOpen(card)
+    expect(api.discover.recordOpen).toHaveBeenCalledWith(card)
+  })
 })

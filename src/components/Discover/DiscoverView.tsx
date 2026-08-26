@@ -238,6 +238,9 @@ export default function DiscoverView() {
   }
 
   const handleOpen = (rec: Recommendation) => {
+    // Log the open as implicit feedback (ADR-0011) before forwarding to the browser.
+    // Best-effort + independent of the open: a failed record must never block reading.
+    void discoverService.recordOpen(rec)
     void discoverService.openExternal(rec.url)
   }
 

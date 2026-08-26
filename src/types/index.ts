@@ -643,6 +643,8 @@ export interface Api {
     dismiss: (card: Recommendation) => Promise<void>
     /** Open a card's http(s) source page in the external browser. */
     openExternal: (url: string) => Promise<void>
+    /** Log that a Discover card was opened (implicit feedback, ADR-0011). Local-only. */
+    recordOpen: (card: Recommendation) => Promise<void>
   }
   dictionary: {
     /** Look up a single word in the bundled WordNet dictionary (offline). */
