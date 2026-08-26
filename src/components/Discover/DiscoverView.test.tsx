@@ -19,6 +19,7 @@ vi.mock('../../services/discover', () => ({
     more: vi.fn(() => Promise.resolve({ cards: [], nextPage: 2 })),
     dismiss: vi.fn(() => Promise.resolve()),
     openExternal: vi.fn(() => Promise.resolve()),
+    recordOpen: vi.fn(() => Promise.resolve()),
   },
 }))
 
@@ -273,6 +274,20 @@ describe('DiscoverView', () => {
 
     await waitFor(() => expect(screen.queryByText('Doomed Fic')).not.toBeInTheDocument())
     expect(svc.dismiss).toHaveBeenCalledWith(expect.objectContaining({ title: 'Doomed Fic' }))
+  })
+
+  it('Open records the open (implicit feedback) and forwards the URL to the browser', async () => {
+    svc.get.mockResolvedValue({
+      cards: [rec({ title: 'Openable Fic', url: 'https://ao3/works/7' })],
+      generatedAt: Date.now(),
+    })
+    renderView()
+    await screen.findByText('Openable Fic')
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Open' }))
+
+    expect(svc.recordOpen).toHaveBeenCalledWith(expect.objectContaining({ title: 'Openable Fic' }))
+    expect(svc.openExternal).toHaveBeenCalledWith('https://ao3/works/7')
   })
 
   it('Add to Library opens the capture modal pre-filled with the card URL', async () => {

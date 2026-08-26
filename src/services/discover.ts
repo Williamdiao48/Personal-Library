@@ -10,4 +10,5 @@ export const discoverService = {
     window.api.discover.more(excludeSourceIds, contentMode, page),
   dismiss: (card: Recommendation) => window.api.discover.dismiss(card),
   openExternal: (url: string) => window.api.discover.openExternal(url),
+  recordOpen: (card: Recommendation) => window.api.discover.recordOpen(card),
 }

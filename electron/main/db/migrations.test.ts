@@ -49,6 +49,7 @@ describe('database bring-up', () => {
       'annotation_themes',
       'annotation_theme_links',
       'blob_sync',
+      'discover_interactions',
     ]) {
       expect(tables).toContain(t)
     }
@@ -650,6 +651,48 @@ describe('database bring-up', () => {
     expect(db.prepare(`SELECT orphaned_at FROM blob_sync WHERE content_hash = 'H'`).get()).toEqual({
       orphaned_at: null,
     })
+    db.close()
+  })
+
+  // Migration 44 — implicit-feedback loop's discover_interactions table (ADR-0011).
+  // A fresh DB must have the table with the expected columns + source_id PK; a DB at
+  // version 43 must gain it on bring-up (new table, so the migrate-up just creates it).
+  it('discover_interactions has the expected columns + source_id PK (migration 44)', () => {
+    const db = openTestDb()
+    expect(colsOf(db, 'discover_interactions')).toEqual(
+      expect.arrayContaining([
+        'source_id',
+        'title',
+        'author',
+        'source',
+        'url',
+        'subjects',
+        'opened_at',
+        'open_count',
+      ]),
+    )
+    const pk = (
+      db.prepare(`PRAGMA table_info(discover_interactions)`).all() as { name: string; pk: number }[]
+    ).filter((c) => c.pk > 0)
+    expect(pk.map((c) => c.name)).toEqual(['source_id'])
+  })
+
+  it('creates discover_interactions when migrating a v43 database (migration 44)', () => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(SCHEMA)
+    for (let v = 2; v <= 43; v++) {
+      if (MIGRATIONS[v]) db.exec(MIGRATIONS[v])
+    }
+    db.pragma('user_version = 43')
+
+    bringUpSchema(db) // runs migration 44
+    expect(db.pragma('user_version', { simple: true })).toBe(CURRENT_VERSION)
+
+    const tables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]
+    ).map((r) => r.name)
+    expect(tables).toContain('discover_interactions')
     db.close()
   })
 

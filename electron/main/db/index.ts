@@ -11,7 +11,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 43
+export const CURRENT_VERSION = 44
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -519,6 +519,31 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   // schema.ts. Nullable; existing rows default NULL = "not yet observed as an orphan".
   43: `
     ALTER TABLE blob_sync ADD COLUMN orphaned_at INTEGER;
+  `,
+  // Recommender #3 — implicit-feedback loop (ADR-0011). Log Discover card *opens*
+  // (clicking through to read a candidate externally) as a soft-positive signal.
+  // Feeds a separate recency-weighted "engagement centroid" blended into candidate
+  // scoring (never mixed into the validated taste vector) + a time-boxed re-show
+  // suppression. Keyed by the candidate's sourceId (fic URL / OL work key), same
+  // identity space as candidate_embeddings + dismissed_recommendations, so an opened
+  // card's cached vector is reusable. `subjects` is a JSON array (the card's own
+  // tags, for a fallback engagement signal when no vector is cached). Re-opening a
+  // card bumps open_count + refreshes opened_at. LOCAL-ONLY — not in SYNC_SPECS
+  // (engagement is device-local behavior, like dismissed_recommendations). New table
+  // — MIGRATIONS only, never in schema.ts SCHEMA (fresh-install duplicate gotcha).
+  44: `
+    CREATE TABLE IF NOT EXISTS discover_interactions (
+      source_id  TEXT PRIMARY KEY,
+      title      TEXT,
+      author     TEXT,
+      source     TEXT,
+      url        TEXT,
+      subjects   TEXT,
+      opened_at  INTEGER NOT NULL,
+      open_count INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE INDEX IF NOT EXISTS idx_discover_interactions_opened_at
+      ON discover_interactions (opened_at);
   `,
 }
 

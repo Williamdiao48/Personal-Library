@@ -30,7 +30,10 @@ import {
   RERANK,
   type ScoredCandidate,
 } from './rerank'
-import type { Candidate } from './candidates'
+import { CANDIDATE_TEXT_VERSION, type Candidate } from './candidates'
+import { saveCandidateVectors } from './candidateEmbeddings'
+import { recordOpen } from './interactions'
+import { ENGAGE } from './engagement'
 import { openLibrarySource } from './sources/openLibrary'
 import type { CandidateSource } from './candidateSource'
 import type { Embedder } from './embedder-core'
@@ -565,6 +568,86 @@ describe('recommend', () => {
     }
     const out = await recommend(stubEmbedder, [src], undefined, { excludeIds: ['/works/C1'] })
     expect(out.map((c) => c.sourceId)).toEqual(['/works/C2'])
+  })
+
+  // ── implicit-feedback engagement signal (ADR-0011) ─────────────────────────
+  // The candidate cache stores each opened card's vector under the SAME version key
+  // recommend() uses, so the engagement centroid can be rebuilt from opens.
+  const candVer = `${stubEmbedder.modelVersion}|${CANDIDATE_TEXT_VERSION}`
+
+  it('blends the engagement centroid into scoring (a north-pointing open pulls an east candidate score down)', async () => {
+    seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' }) // east taste centroid
+    // An opened card whose cached vector points NORTH (orthogonal to taste/candidate).
+    recordOpen({
+      sourceId: '/works/OPENED',
+      title: 'Opened',
+      author: 'O',
+      source: 'book',
+      url: 'https://openlibrary.org/works/OPENED',
+      subjects: [],
+    })
+    saveCandidateVectors([{ sourceId: '/works/OPENED', vec: v(0, 1) }], candVer)
+    fetchMock.mockResolvedValue(
+      okJson({ docs: [doc({ key: '/works/F1', title: 'Fresh', author_name: ['X'] })] }),
+    )
+
+    const out = await recommend(stubEmbedder, [openLibrarySource])
+    // Candidate east vs. east taste = cos 1; east vs. north engagement = cos 0.
+    // Blended = (1−W)·1 + W·0 = 1−W_ENGAGE (vs. an unblended 1.0).
+    expect(out[0].score).toBeCloseTo(1 - ENGAGE.W_ENGAGE, 5)
+  })
+
+  it('leaves scoring untouched when there are no opens (the cannot-hurt invariant)', async () => {
+    seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
+    fetchMock.mockResolvedValue(
+      okJson({ docs: [doc({ key: '/works/F1', title: 'Fresh', author_name: ['X'] })] }),
+    )
+    const out = await recommend(stubEmbedder, [openLibrarySource])
+    expect(out[0].score).toBeCloseTo(1, 5) // east vs. east, no engagement blend
+  })
+
+  it('hard-suppresses a just-opened card from the very next refresh (auto-expiring exclude)', async () => {
+    seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
+    const src: CandidateSource = {
+      name: 'book',
+      fetch: async () => [
+        cand({ title: 'One', author: 'A', sourceId: '/works/C1', source: 'book' }),
+        cand({ title: 'Two', author: 'B', sourceId: '/works/C2', source: 'book' }),
+      ],
+    }
+    // Open C1 just now → within FULL_SUPPRESS_MS → excluded from the next refresh.
+    recordOpen({
+      sourceId: '/works/C1',
+      title: 'One',
+      author: 'A',
+      source: 'book',
+      url: 'https://openlibrary.org/works/C1',
+      subjects: [],
+    })
+    const out = await recommend(stubEmbedder, [src])
+    expect(out.map((c) => c.sourceId)).toEqual(['/works/C2'])
+  })
+
+  it('does NOT suppress an open older than FULL_SUPPRESS_MS (the card may resurface, now shaded)', async () => {
+    seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
+    const src: CandidateSource = {
+      name: 'book',
+      fetch: async () => [cand({ title: 'One', author: 'A', sourceId: '/works/C1', source: 'book' })],
+    }
+    // Opened well outside the suppression window → back in the candidate pool.
+    recordOpen(
+      {
+        sourceId: '/works/C1',
+        title: 'One',
+        author: 'A',
+        source: 'book',
+        url: 'https://openlibrary.org/works/C1',
+        subjects: [],
+      },
+      Date.now() - (ENGAGE.FULL_SUPPRESS_MS + 60_000),
+    )
+    const out = await recommend(stubEmbedder, [src])
+    expect(out.map((c) => c.sourceId)).toEqual(['/works/C1'])
   })
 
   it('forwards opts.fresh to every source (the Refresh soft-floor signal)', async () => {
