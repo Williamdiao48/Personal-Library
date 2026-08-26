@@ -59,7 +59,11 @@ export function recencyWeight(ageMs: number, halfLifeMs: number): number {
 }
 
 /** A single interaction's centroid weight: recency decay × a gentle repeat-open bonus. */
-export function interactionWeight(o: OpenInteraction, now: number, cfg: EngageCfg = ENGAGE): number {
+export function interactionWeight(
+  o: OpenInteraction,
+  now: number,
+  cfg: EngageCfg = ENGAGE,
+): number {
   const recency = recencyWeight(now - o.openedAt, cfg.HALF_LIFE_MS)
   const count = Math.max(1, o.openCount)
   return recency * (1 + cfg.OPEN_COUNT_LOG_BONUS * Math.log2(count))

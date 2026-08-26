@@ -632,7 +632,9 @@ describe('recommend', () => {
     seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
     const src: CandidateSource = {
       name: 'book',
-      fetch: async () => [cand({ title: 'One', author: 'A', sourceId: '/works/C1', source: 'book' })],
+      fetch: async () => [
+        cand({ title: 'One', author: 'A', sourceId: '/works/C1', source: 'book' }),
+      ],
     }
     // Opened well outside the suppression window → back in the candidate pool.
     recordOpen(
