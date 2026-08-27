@@ -74,10 +74,9 @@ export default function RecommendationCard({ rec, onAdd, onDismiss, onOpen }: Pr
   }, [rec.description, descExpanded])
 
   const showDescToggle = descOverflowing || descExpanded
-  const isExplore = rec.origin === 'explore'
 
   return (
-    <div className={`rec-card${isExplore ? ' rec-card--explore' : ''}`}>
+    <div className="rec-card">
       <div
         className="rec-card-cover"
         style={!showImg ? { background: coverColor(rec.sourceId) } : undefined}
@@ -91,7 +90,6 @@ export default function RecommendationCard({ rec, onAdd, onDismiss, onOpen }: Pr
 
       <div className="rec-card-body">
         <span className="rec-card-badge">{sourceLabel(rec.source)}</span>
-        {isExplore && <span className="rec-card-explore-badge">Explore</span>}
         <div className="rec-card-title" title={rec.title}>
           {rec.title}
         </div>
