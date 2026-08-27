@@ -27,6 +27,15 @@ export interface TasteResult {
   centroids: Float32Array[]
   /** Positive-affinity items, weight-descending — for Chunk 4 query seeding. */
   liked: LikedItem[]
+  /**
+   * Every embedded owned item's vector — the reader's whole *evidence* set (rated
+   * positively OR negatively; even a hated item is evidence). Exploration's UCB-lite
+   * picker counts owned neighbours in this set to find under-observed regions
+   * (`recommender/explore.ts`). Empty ⇒ no evidence base ⇒ exploration is off, which
+   * keeps a bare `TasteResult` (tests, cold start) byte-identical to today. Not used
+   * by the exploit ranking, so pre-exploration callers can omit it.
+   */
+  ownedVecs?: Float32Array[]
 }
 
 export const TASTE = {
@@ -99,5 +108,10 @@ export function buildTaste(): TasteResult {
     .filter((x) => x.weight > 0)
     .sort((a, b) => b.weight - a.weight)
 
-  return { tier, centroids, liked }
+  // The full embedded owned set = exploration's evidence base (positive AND negative
+  // — a rated-and-disliked neighbour still counts as "you've seen this region", which
+  // is what lets UCB-lite skip the far-but-already-rejected).
+  const ownedVecs = embeddable.map((s) => vecs.get(s.id)!).filter(Boolean)
+
+  return { tier, centroids, liked, ownedVecs }
 }

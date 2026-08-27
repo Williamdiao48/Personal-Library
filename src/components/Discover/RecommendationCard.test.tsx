@@ -54,6 +54,20 @@ describe('RecommendationCard', () => {
     expect(screen.getByText('Harry Potter')).toBeInTheDocument()
   })
 
+  it('marks an explore-origin card with the red Explore badge + modifier class', () => {
+    const { container } = render(
+      <RecommendationCard rec={rec({ origin: 'explore' })} {...handlers()} />,
+    )
+    expect(screen.getByText('Explore')).toBeInTheDocument()
+    expect(container.querySelector('.rec-card')).toHaveClass('rec-card--explore')
+  })
+
+  it('shows no explore marker on a normal (exploit / untagged) card', () => {
+    const { container } = render(<RecommendationCard rec={rec()} {...handlers()} />)
+    expect(screen.queryByText('Explore')).not.toBeInTheDocument()
+    expect(container.querySelector('.rec-card')).not.toHaveClass('rec-card--explore')
+  })
+
   it('fires the right callback for each action', async () => {
     const h = handlers()
     const r = rec()
