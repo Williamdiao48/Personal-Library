@@ -14,6 +14,11 @@ export const authService = {
   signIn: (email: string, password: string) => window.api.auth.signIn(email, password),
   /** Sign out and clear the persisted session. */
   signOut: () => window.api.auth.signOut(),
+  /** Password reset step 1: mail a 6-digit recovery code. */
+  requestPasswordReset: (email: string) => window.api.auth.requestPasswordReset(email),
+  /** Password reset step 2: verify the code + set a new password (signs in on success). */
+  confirmPasswordReset: (email: string, token: string, password: string) =>
+    window.api.auth.confirmPasswordReset(email, token, password),
   /** Subscribe to auth state changes; returns an unsubscribe fn. */
   onStateChange: (callback: (state: AuthState) => void) => window.api.auth.onStateChange(callback),
 }

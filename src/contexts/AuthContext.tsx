@@ -17,6 +17,10 @@ interface AuthCtx {
   signIn: (email: string, password: string) => Promise<AuthResult>
   signUp: (email: string, password: string) => Promise<AuthResult>
   signOut: () => Promise<void>
+  /** Password reset step 1: mail a 6-digit recovery code. */
+  requestPasswordReset: (email: string) => Promise<AuthResult>
+  /** Password reset step 2: verify the code + set a new password (signs in). */
+  confirmPasswordReset: (email: string, token: string, password: string) => Promise<AuthResult>
 }
 
 const AuthContext = createContext<AuthCtx | null>(null)
@@ -76,8 +80,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null)
   }
 
+  const requestPasswordReset = (email: string) => authService.requestPasswordReset(email)
+
+  const confirmPasswordReset = async (email: string, token: string, password: string) => {
+    const res = await authService.confirmPasswordReset(email, token, password)
+    // verifyOtp('recovery') establishes a session → the pushed auth:stateChange
+    // will also set the user, but set it here too to avoid a sign-in flash.
+    if (res.ok) setUser(res.user ?? null)
+    return res
+  }
+
   return (
-    <AuthContext.Provider value={{ user, configured, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        configured,
+        loading,
+        signIn,
+        signUp,
+        signOut,
+        requestPasswordReset,
+        confirmPasswordReset,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )

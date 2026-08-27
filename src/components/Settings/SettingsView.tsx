@@ -510,16 +510,28 @@ function SyncSettings() {
 }
 
 function AccountSettings() {
-  const { user, configured, loading, signIn, signUp, signOut } = useAuth()
+  const {
+    user,
+    configured,
+    loading,
+    signIn,
+    signUp,
+    signOut,
+    requestPasswordReset,
+    confirmPasswordReset,
+  } = useAuth()
   const { settings, updateSettings } = useSettings()
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin')
+  const [mode, setMode] = useState<'signin' | 'signup' | 'reset'>('signin')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [token, setToken] = useState('')
+  const [resetSent, setResetSent] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const emailId = useId()
   const pwId = useId()
+  const codeId = useId()
 
   if (loading) return null
 
@@ -588,6 +600,159 @@ function AccountSettings() {
     )
   }
 
+  // Leave the sign-in/up form for the reset flow, or return from it — clearing any
+  // transient field/feedback state so the two flows never bleed into each other.
+  function goToMode(next: 'signin' | 'signup' | 'reset') {
+    setMode(next)
+    setError('')
+    setNotice('')
+    setResetSent(false)
+    setToken('')
+    setPassword('')
+  }
+
+  const canRequestReset = email.trim().length > 0 && !busy
+  const canConfirmReset = token.trim().length > 0 && password.length >= MIN_PASSWORD_LENGTH && !busy
+
+  async function handleRequestReset() {
+    if (!canRequestReset) return
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const res = await requestPasswordReset(email.trim())
+      if (!res.ok) {
+        setError(res.error ?? 'Something went wrong. Please try again.')
+      } else {
+        setResetSent(true)
+        setNotice(`We emailed a 6-digit code to ${email.trim()}. Enter it below.`)
+      }
+    } catch (err: any) {
+      setError(err?.message ?? 'Something went wrong. Please try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleConfirmReset() {
+    if (!canConfirmReset) return
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const res = await confirmPasswordReset(email.trim(), token.trim(), password)
+      if (!res.ok) {
+        setError(res.error ?? 'Something went wrong. Please try again.')
+      }
+      // On success the AuthContext flips to the signed-in view automatically.
+    } catch (err: any) {
+      setError(err?.message ?? 'Something went wrong. Please try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (mode === 'reset') {
+    return (
+      <>
+        <div className="settings-row settings-row--top">
+          <div className="settings-row-stack">
+            <span className="settings-row-label">Reset password</span>
+            <span className="settings-row-hint">
+              {resetSent
+                ? 'Enter the code we emailed you and choose a new password.'
+                : 'We’ll email you a 6-digit code to reset your password.'}
+            </span>
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <label className="settings-row-label" htmlFor={emailId}>
+            Email
+          </label>
+          <input
+            id={emailId}
+            type="email"
+            autoComplete="email"
+            className="settings-color-label-input"
+            value={email}
+            placeholder="you@example.com"
+            disabled={resetSent}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !resetSent) void handleRequestReset()
+            }}
+          />
+        </div>
+
+        {resetSent && (
+          <>
+            <div className="settings-row">
+              <label className="settings-row-label" htmlFor={codeId}>
+                Code
+              </label>
+              <input
+                id={codeId}
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                className="settings-color-label-input"
+                value={token}
+                placeholder="123456"
+                onChange={(e) => setToken(e.target.value)}
+              />
+            </div>
+
+            <div className="settings-row">
+              <label className="settings-row-label" htmlFor={pwId}>
+                New password
+              </label>
+              <input
+                id={pwId}
+                type="password"
+                autoComplete="new-password"
+                className="settings-color-label-input"
+                value={password}
+                placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleConfirmReset()
+                }}
+              />
+            </div>
+          </>
+        )}
+
+        <div className="settings-row settings-row--top">
+          <div className="settings-row-stack">
+            <button className="settings-link-btn" onClick={() => goToMode('signin')}>
+              Back to sign in
+            </button>
+            {error && <span className="settings-feedback settings-feedback--err">{error}</span>}
+            {notice && <span className="settings-feedback settings-feedback--ok">{notice}</span>}
+          </div>
+          {resetSent ? (
+            <button
+              className="settings-action-btn"
+              onClick={handleConfirmReset}
+              disabled={!canConfirmReset}
+            >
+              {busy ? 'Resetting…' : 'Reset password'}
+            </button>
+          ) : (
+            <button
+              className="settings-action-btn"
+              onClick={handleRequestReset}
+              disabled={!canRequestReset}
+            >
+              {busy ? 'Sending…' : 'Send reset code'}
+            </button>
+          )}
+        </div>
+      </>
+    )
+  }
+
   const canSubmit =
     email.trim().length > 0 &&
     password.length >= (mode === 'signup' ? MIN_PASSWORD_LENGTH : 1) &&
@@ -624,20 +789,14 @@ function AccountSettings() {
         <div className="settings-segment" role="group" aria-label="Account action">
           <button
             className={`settings-segment-btn${mode === 'signin' ? ' selected' : ''}`}
-            onClick={() => {
-              setMode('signin')
-              setError('')
-            }}
+            onClick={() => goToMode('signin')}
             aria-pressed={mode === 'signin'}
           >
             Sign in
           </button>
           <button
             className={`settings-segment-btn${mode === 'signup' ? ' selected' : ''}`}
-            onClick={() => {
-              setMode('signup')
-              setError('')
-            }}
+            onClick={() => goToMode('signup')}
             aria-pressed={mode === 'signup'}
           >
             Create account
@@ -686,6 +845,11 @@ function AccountSettings() {
             <span className="settings-row-hint">
               Passwords must be at least {MIN_PASSWORD_LENGTH} characters.
             </span>
+          )}
+          {mode === 'signin' && (
+            <button className="settings-link-btn" onClick={() => goToMode('reset')}>
+              Forgot password?
+            </button>
           )}
           {error && <span className="settings-feedback settings-feedback--err">{error}</span>}
           {notice && <span className="settings-feedback settings-feedback--ok">{notice}</span>}

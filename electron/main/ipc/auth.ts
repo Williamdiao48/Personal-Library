@@ -106,4 +106,35 @@ export function registerAuthHandlers(): void {
     // Belt-and-suspenders: also wipe the encrypted session file directly.
     clearSessionStore()
   })
+
+  // Password reset, phase 1 — mail the user a recovery OTP. We deliberately do
+  // NOT reveal whether the email maps to an account: Supabase resolves
+  // successfully regardless (enumeration-safe), so we surface only real transport
+  // / rate-limit errors. No redirectTo — this is the in-app OTP flow (the recovery
+  // email carries `{{ .Token }}`, a 6-digit code), not a web redirect.
+  ipcMain.handle('auth:requestPasswordReset', async (_e, email: string): Promise<AuthResult> => {
+    const supabase = getSupabase()
+    if (!supabase) return NOT_CONFIGURED
+    const { error } = await supabase.auth.resetPasswordForEmail(email)
+    if (error) return { ok: false, error: error.message }
+    return { ok: true }
+  })
+
+  // Password reset, phase 2 — verify the OTP, then set the new password. A
+  // successful verifyOtp('recovery') establishes a session, so the user is signed
+  // in from here on: the onAuthStateChange hook above fires → broadcast + drain
+  // outbox + kick sync, exactly as a normal sign-in would. updateUser then applies
+  // the new password against that fresh session.
+  ipcMain.handle(
+    'auth:confirmPasswordReset',
+    async (_e, email: string, token: string, newPassword: string): Promise<AuthResult> => {
+      const supabase = getSupabase()
+      if (!supabase) return NOT_CONFIGURED
+      const { data, error } = await supabase.auth.verifyOtp({ email, token, type: 'recovery' })
+      if (error) return { ok: false, error: error.message }
+      const { error: updateError } = await supabase.auth.updateUser({ password: newPassword })
+      if (updateError) return { ok: false, error: updateError.message }
+      return { ok: true, user: toAuthUser(data.user) }
+    },
+  )
 }

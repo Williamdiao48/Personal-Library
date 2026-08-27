@@ -661,6 +661,10 @@ export interface Api {
     signIn: (email: string, password: string) => Promise<AuthResult>
     /** Sign out and clear the persisted session. */
     signOut: () => Promise<void>
+    /** Password reset step 1: mail a recovery OTP (enumeration-safe — always ok). */
+    requestPasswordReset: (email: string) => Promise<AuthResult>
+    /** Password reset step 2: verify the OTP and set the new password (signs in). */
+    confirmPasswordReset: (email: string, token: string, password: string) => Promise<AuthResult>
     /** Subscribe to auth state changes (sign-in/out/refresh); returns unsubscribe. */
     onStateChange: (callback: (state: AuthState) => void) => () => void
   }
