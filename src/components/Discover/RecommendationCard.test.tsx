@@ -54,16 +54,12 @@ describe('RecommendationCard', () => {
     expect(screen.getByText('Harry Potter')).toBeInTheDocument()
   })
 
-  it('marks an explore-origin card with the red Explore badge + modifier class', () => {
+  it('renders an explore-origin card with no visual marker (identical to a normal card)', () => {
+    // `origin` still flows through for the open-log measurement, but it must NOT
+    // change the card's appearance — the red border/badge was a testing affordance.
     const { container } = render(
       <RecommendationCard rec={rec({ origin: 'explore' })} {...handlers()} />,
     )
-    expect(screen.getByText('Explore')).toBeInTheDocument()
-    expect(container.querySelector('.rec-card')).toHaveClass('rec-card--explore')
-  })
-
-  it('shows no explore marker on a normal (exploit / untagged) card', () => {
-    const { container } = render(<RecommendationCard rec={rec()} {...handlers()} />)
     expect(screen.queryByText('Explore')).not.toBeInTheDocument()
     expect(container.querySelector('.rec-card')).not.toHaveClass('rec-card--explore')
   })
