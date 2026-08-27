@@ -1,6 +1,7 @@
 import { get, run } from '../db'
 import type { SeedQuery } from './seedQueries'
 import { readCandidateCache, writeCandidateCache } from './candidateCache'
+import { dedupeSubjects } from './subjectNormalize'
 import { now as timingNow, logTiming } from './timing'
 
 // C4.3 — OpenLibrary candidate generation (§9 step 1). Turn seed queries into a
@@ -15,7 +16,23 @@ const OPENLIBRARY_ORIGIN = 'https://openlibrary.org'
 const OPENLIBRARY_SEARCH = `${OPENLIBRARY_ORIGIN}/search.json`
 // Fields we ask OpenLibrary for — subjects included so a single call yields the
 // candidate's embed text (title/author/subjects); no N+1 works fetch (D-C4-2).
-const FIELDS = 'key,title,author_name,subject,cover_i,isbn'
+// `language` gates non-English editions; `readinglog_count`/`ratings_count`/
+// `edition_count` are the popularity signal (Goodreads-grade, but native + free) that
+// leads the feed toward grounded, well-read books instead of deep-catalogue obscurities.
+const FIELDS =
+  'key,title,author_name,subject,cover_i,isbn,number_of_pages_median,language,readinglog_count,ratings_count,edition_count'
+// Sort the seed results by readership so each subject returns its WELL-READ books first
+// (subject:"Dystopias" → 1984 / Hunger Games / Brave New World, not obscure exact matches).
+// The taste rerank + a jittered popularity prior refine within this grounded pool. Folded
+// into the cache key so stale relevance-sorted rows don't serve.
+const SORT = 'readinglog'
+// Server-side language filter: restrict to works that HAVE an English edition, so the
+// foreign-ONLY long tail (Polish dictionaries, untranslated works) never enters the pool.
+// This is the coarse gate; it does NOT catch a translated work whose CANONICAL title stays
+// in the original language (the Witcher's "Wieża jaskółki" has an English edition, so it
+// passes) — that's the foreign-TITLE reject in normalizeOpenLibraryDoc. Folded into the
+// cache key. (2026-08-26.)
+const LANGUAGE = 'eng'
 // OpenLibrary asks clients to send a descriptive User-Agent identifying the app.
 const OL_HEADERS = {
   'User-Agent': 'PersonalLibrary/0.5 (personal reading app; recommender)',
@@ -83,6 +100,13 @@ export interface Candidate {
   description: string | null
   /** The generator that produced this candidate (dedup namespacing, display, diversity). */
   source: SourceName
+  /** Readership signal (OpenLibrary `readinglog_count`) that feeds the popularity prior;
+   *  absent for fics and for any book OpenLibrary didn't return the count for (prior off). */
+  popularity?: number
+  /** Median page count (OpenLibrary `number_of_pages_median`); absent for fics and for any
+   *  book OpenLibrary returned no count for. Exploration requires a KNOWN substantive length
+   *  (the exploit path doesn't), so a no-page-count picture book can't win an explore slot. */
+  pages?: number
 }
 
 /** The subset of an OpenLibrary `search.json` doc we read (all fields optional). */
@@ -93,6 +117,18 @@ export interface OpenLibraryDoc {
   subject?: string[]
   cover_i?: number
   isbn?: string[]
+  /** Median page count across editions — the substantive-length signal (see
+   * MIN_SUBSTANTIVE_PAGES). Absent for many docs, so only ever used to *reject*. */
+  number_of_pages_median?: number
+  /** ISO 639-2 language codes across editions (e.g. `['eng','spa']`); gates non-English. */
+  language?: string[]
+  /** Readers who logged the work on OpenLibrary — the primary popularity signal. */
+  readinglog_count?: number
+  /** Number of ratings — a secondary footprint signal (part of the obscurity floor). */
+  ratings_count?: number
+  /** Distinct editions — a book widely published across many editions is established;
+   *  1 (or absent) with no readers/ratings is the vanity/obscure long tail. */
+  edition_count?: number
 }
 
 /** Build a cover image URL from OpenLibrary's numeric cover id, or null. */
@@ -162,12 +198,232 @@ export function contentTokens(s: string): string[] {
     .filter((t) => t.length > 0 && !TITLE_NOISE.has(t))
 }
 
-// Subjects marking a graphic novel / comic / manga — content this text-first reader
-// can't render (image-heavy panels). Targeted patterns (not a bare "comics") so a text
-// novel that merely *mentions* comics isn't dropped. Matches OpenLibrary's usual tags:
-// "Comics & graphic novels", "Graphic novels", "Comic books, strips, etc.", "Manga".
-const GRAPHIC_NOVEL_SUBJECT_RE =
+// Graphic novel / comic / manga — content this text-first reader can't render
+// (image-heavy panels). Targeted patterns (not a bare "comics") so a text novel that
+// merely *mentions* comics isn't dropped. Matches OpenLibrary's usual tags: "Comics &
+// graphic novels", "Graphic novels", "Comic books, strips, etc.", "Manga". Checked
+// against BOTH title and subjects — the Wings-of-Fire adaptation "The hidden kingdom
+// [graphic novel]" carries NO comic subject tag (just "Dragons, fiction"/"Fantasy
+// fiction") but announces itself in the title (leaked into normal recs 2026-08-26).
+const GRAPHIC_NOVEL_RE =
   /graphic novel|comic book|comics\s*&\s*graphic|comics,\s*strips|\bmanga\b|cartoons and comics/i
+
+// A book shorter than this (OpenLibrary median page count) is a picture book, board
+// book, or early/beginning reader — not substantive reading for this adult prose +
+// MG/YA-novel reader. This is the ONLY reliable separator for the hardest leak class:
+// children's books about the SAME topics the reader likes. "Big Brown Bear" (24–48 pp,
+// subjects "Bears"/"Juvenile fiction") is subject-for-subject indistinguishable from the
+// owned Seekers novels (320 pp, "Bears"/"Juvenile fiction") — only LENGTH tells them
+// apart. A substantive-length gate, not a topic/franchise ban; picture/board/early
+// readers run 24–64 pp, chapter books start ~80, MG novels 150+ (Seekers 320, Warriors
+// 295–336 clear it by a mile), so 65 cuts the young tier without touching real novels or
+// even slim novellas (~100+). Applied ONLY when the count is present — it's absent for
+// many docs, so it can only ever reject, never gate-keep the whole pool. (2026-08-26.)
+const MIN_SUBSTANTIVE_PAGES = 65
+
+// Non-readable franchise merchandise that OpenLibrary lists as "books": poster /
+// coloring / sticker / activity books, postcard sets, sketchbooks, plus collectible
+// reference (collector's handbooks/guides, price guides). A text-first reader can't
+// read these — and because the reader owns the *novels* but never the merch, this junk
+// sits in an under-observed embedding region the exploration picker (UCB-lite = prefer
+// under-observed) then loves (uncertainty ≠ quality: surfaced 4 Harry Potter poster
+// books, then an HP collector's handbook, into the explore slots on 2026-08-26).
+// Reject at the source so it never reaches the pool — cleans BOTH the exploit feed and
+// the explore tail. Matched on title (these self-advertise their format) AND subjects;
+// targeted phrases (the format word + "book"/"collection"/"guide", not a bare
+// "poster"/"activity") so a real novel with an adjacent word isn't dropped.
+const MERCHANDISE_RE =
+  /\bposter book|colou?ring book|sticker book|activity book|postcard book|\bsketchbook\b|poster collection|sticker collection|postcard collection|collector'?s? handbook|collector'?s? guide|price guide|cinematic guide|movie guide|film companion|visual companion|unofficial guide|official guide|\bscrapbook\b/i
+
+// Non-fiction ABOUT a franchise/topic, which subject-seeded queries drag in wholesale:
+// a `subject:"Harry Potter"` seed returns literary criticism ("Looking for God in Harry
+// Potter" → "History and criticism", "Religion in literature"), fandom miscellanea ("We
+// love Harry Potter!" → "Handbooks, manuals"), and companion references — all of which
+// the embedder scores HIGH (the title says "Harry Potter") so they win normal exploit
+// slots, not just explore. And OpenLibrary's subject search STEMS: a `subject:"Bears"`
+// seed (from the reader's Seekers series) matches "Bearings (Machinery)", dragging in
+// engineering manuals. This is a content-TYPE gate — books ABOUT literature/a-topic vs.
+// prose fiction — NOT a franchise-keyword ban: the reader's real HP novels carry
+// "Fantasy fiction"/"Wizards" but NONE of these markers, so novels pass and commentary
+// doesn't. Markers chosen from real fetched metadata (2026-08-26); deliberately NOT
+// "Literary theory"/"English literature"/"Literature", which OpenLibrary's messy
+// edition-merge also pins on the genuine novels. Checked against title AND subjects.
+const NONFICTION_SUBJECT_RE =
+  /criticism and interpretation|history and criticism|\bcriticism\b|\bin literature\b|religious aspects|\bmiscellanea\b|\bconcordance|encyclopedi|handbooks?,?\s*manuals?|\bengineering\b|\bmachinery\b|ball[- ]?bearings?|roller bearings?|study guide|teacher'?s? guide/i
+
+// Young-children reading formats — picture books, board books, nursery rhymes, and
+// early/beginning ("easy") readers — that aren't substantive reading for this adult
+// prose reader. Exploration reaches for these because the reader owns NOTHING like them
+// (a genuinely under-observed region → high uncertainty), so the abundance fix can't
+// help; this is an audience gate at the source, a sibling of the graphic-novel reject.
+// Leaked "Teddy Bear, Teddy Bear" (nursery rhyme) then "Lost in Little Bear's Room"
+// (Minarik early reader, tagged "Picture books" + "Juvenile Easy Readers") on 2026-08-26.
+// Targeted to the young-tier FORMAT tags only — deliberately NOT "Juvenile fiction" /
+// "Children's fiction" / "Children's stories", which also tag the real MG/YA novels the
+// reader owns (Harry Potter et al.). Matched on title and the full subject list. OL's
+// numeric audience tags ("age:max:8", "grade:max:2") would be a more principled gate but
+// are inconsistently present — a documented follow-up.
+// "Stories in rhyme" is included: it's an almost-exclusive picture-book marker (adult/MG
+// prose isn't in rhyme) and catches the young-tier books that carry NO page count for the
+// length gate to act on ("Big brown bear =" — null pages, subjects incl. "Stories in rhyme").
+const JUVENILE_FORMAT_RE =
+  /\bnursery rhyme|\bboard book|\bpicture book|\beasy reader|\bearly reader|\bbeginning reader|\breaders?\s*[-/]\s*beginner|stories in rhyme/i
+
+// A displayed TITLE is foreign when it uses a non-Latin script (Cyrillic / Greek / CJK /
+// Arabic / Hebrew / Thai / Devanagari / Hangul) or Latin diacritics essentially absent
+// from English titles (Polish ł/ż/ą/ę/ś/ć/ń/ź, Czech ř/ů/ě, Slavic/Baltic š/č/ž/đ, Turkish
+// ı/ğ/ş, Hungarian ő/ű, German ß). OpenLibrary shows a work's CANONICAL title, which for a
+// translated work stays in the original language even when English editions exist (so the
+// language field / the server language=eng filter both pass it — the Witcher's "Wieża
+// jaskółki") — the title itself is the only signal. English loan-diacritics (café / naïve /
+// Brontë / Les Misérables: é/è/ë/ï/ñ/ü/ö/ä/ç/à/â/ô/î/û/å) are deliberately EXCLUDED so real
+// English titles and accented names pass — high precision over recall (an ASCII foreign
+// title like "Pani Jeziora" is an accepted residual). (2026-08-26.)
+// Ranges are written as \u escapes (not literal boundary glyphs) for legibility.
+// Greek, Cyrillic, Hebrew, Arabic, Devanagari, Thai, Kana, CJK, Hangul. The
+// Hebrew/Arabic blocks include combining marks, so `no-misleading-character-class`
+// flags the class \u2014 intended: we match ANY char in these scripts, marks included.
+// prettier-ignore
+// eslint-disable-next-line no-misleading-character-class
+const NON_LATIN_SCRIPT_RE = /[\u0370-\u03FF\u0400-\u04FF\u0590-\u05FF\u0600-\u06FF\u0900-\u097F\u0E00-\u0E7F\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF]/u
+const FOREIGN_LATIN_RE = /[łŁżŻśŚćĆńŃąĄęĘźŹřŘůŮěĚšŠčČžŽđĐığĞşŞőŐűŰß]/
+
+// Function words from Spanish / French / German / Italian / Portuguese that essentially
+// never appear in English titles (articles, prepositions, conjunctions). A pure-ASCII
+// foreign title carries no diacritic signal ("Una corte de niebla y furia" — the Spanish
+// edition of A Court of Mist and Fury, which OpenLibrary shows because that translation is
+// its most-read edition), so the script/diacritic gates miss it — the function words are
+// the only tell. Requiring ≥2 DISTINCT hits keeps precision high: a lone article in an
+// English title ("La La Land", "El Deafo", "Le Morte d'Arthur") never trips it. (2026-08-26.)
+const FOREIGN_FUNCTION_WORDS = new Set([
+  // articles
+  'el',
+  'la',
+  'los',
+  'las',
+  'le',
+  'les',
+  'il',
+  'lo',
+  'gli',
+  'un',
+  'una',
+  'uno',
+  'unos',
+  'unas',
+  'une',
+  'uma',
+  // prepositions / conjunctions
+  'de',
+  'del',
+  'des',
+  'du',
+  'dos',
+  'das',
+  'der',
+  'die',
+  'den',
+  'dem',
+  'y',
+  'et',
+  'und',
+  'con',
+  'por',
+  'para',
+  'avec',
+  'pour',
+  'dans',
+  'mit',
+  'von',
+  'für',
+  'fur',
+  'que',
+  'qui',
+  'che',
+  'nel',
+  'nella',
+  'zur',
+  'zum',
+  'aux',
+  'ao',
+  'em',
+])
+
+/** True when a displayed title reads as non-English by function-word signal: ≥2 distinct
+ *  Romance/German function words. Catches ASCII foreign titles the script/diacritic gates
+ *  can't; high precision (a single stray article is ignored). Pure. */
+export function looksNonEnglishTitle(title: string): boolean {
+  const hits = new Set(
+    title
+      .toLowerCase()
+      .split(/[^a-zà-öø-ÿ]+/)
+      .filter((t) => FOREIGN_FUNCTION_WORDS.has(t)),
+  )
+  return hits.size >= 2
+}
+
+/**
+ * True when a book's fetched DESCRIPTION reads as non-English — the German-blurb leak the
+ * title gate can't see (a sparse or English-looking title, but a blurb that is entirely
+ * German: "Die junge Elfe ... in einer Welt voller ..."). A non-Latin script anywhere, or
+ * ≥3 DISTINCT foreign function words. The threshold is one higher than the title gate's
+ * because the blurb is long enough that an English one could carry one or two foreign words
+ * by chance (a quoted foreign title, a loanword) — three distinct articles/prepositions is a
+ * decisive non-English signal. Empty/absent description ⇒ false (no signal). Pure.
+ */
+export function looksNonEnglishDescription(description: string | null | undefined): boolean {
+  if (!description) return false
+  if (NON_LATIN_SCRIPT_RE.test(description)) return true
+  const hits = new Set(
+    description
+      .toLowerCase()
+      .split(/[^a-zà-öø-ÿ]+/)
+      .filter((t) => FOREIGN_FUNCTION_WORDS.has(t)),
+  )
+  return hits.size >= 3
+}
+
+// Juvenile-AUDIENCE subjects (as opposed to the young-tier FORMAT tags in JUVENILE_FORMAT_RE).
+// These alone can't reject — real MG/YA novels the reader owns (Harry Potter, Seekers,
+// Warriors) all carry "Juvenile fiction" / "Children's fiction" too. They gate a book ONLY
+// in combination with the absence of BOTH a substantive length AND a fiction-genre subject
+// (see the reject in normalizeOpenLibraryDoc): that tight profile is the picture/activity
+// book with no page count and no genre ("Acorns everywhere!", "The Berenstain Bears grow-it"
+// — Bears/Juvenile-fiction, no pages, no Fantasy/Adventure) that leaked into the explore
+// slots, while every owned-class MG novel is saved by its page count (295–320) or its genre
+// tag. (2026-08-26.)
+const JUVENILE_AUDIENCE_RE =
+  /juvenile fiction|juvenile literature|juvenile nonfiction|juvenile works|juvenile audience|children.?s fiction|children.?s stories|children.?s literature/i
+// Fiction-genre markers typical of the MG/YA & adult novels the reader actually reads. A
+// juvenile-audience book carrying one of these is a real novel (kept); one carrying none —
+// and no page count — is the picture/activity-book profile. Deliberately does NOT match a
+// bare "Fiction" (both leaked junk books carry "Fiction").
+const FICTION_GENRE_RE =
+  /fantasy|science fiction|\bsci-?fi\b|dystopi|adventure|mystery|thriller|romance|\bhorror\b|historical fiction|mytholog|fairy tale|fairies|supernatural|paranormal|\bmagic|dragons?|wizard|vampire|superhero/i
+
+// Positive fiction signal — a POSITIVE gate for EXPLORE eligibility only. The nonfiction
+// gates above are targeted blocklists (criticism, engineering, film companions); by
+// construction they can't catch nonfiction on an ARBITRARY novel topic (a seed-science
+// textbook → "Seeds"/"Agriculture"; an art-of/making-of → film subjects), which is exactly
+// what exploration's novelty reward drags up. So explore additionally REQUIRES a positive
+// fiction marker: a subject tagged "… fiction" (\bfiction\b — note this does NOT match
+// "nonfiction", no word boundary) or a narrative genre. Film/TV companion books are excluded
+// even though they carry a genre word ("Science fiction films"), because a book ABOUT a film
+// is nonfiction. Title + subjects. Used by pickExplorePicks ONLY, so the (satisfactory)
+// exploit feed stays byte-identical. (2026-08-27.)
+const FICTION_SUBJECT_RE = /\bfiction\b/i
+const FILM_FORM_RE =
+  /motion pictures?|\bfilms?\b|\bcinema|filmmaking|screenplays?|television (?:series|programs?)/i
+export function looksLikeFiction(title: string, subjects: string[]): boolean {
+  if (FILM_FORM_RE.test(title) || subjects.some((s) => FILM_FORM_RE.test(s))) return false
+  return subjects.some((s) => FICTION_SUBJECT_RE.test(s) || FICTION_GENRE_RE.test(s))
+}
+
+// Placeholder / incomplete titles OpenLibrary carries for unpublished or catalog-stub works
+// ("Untitled Sanderson 3 of 3", "Unknown title") — junk from the data source, not a real book
+// the reader could open. A word-boundary match so a genuine title merely CONTAINING these as
+// substrings is safe. (2026-08-27.)
+const PLACEHOLDER_TITLE_RE = /\buntitled\b|\bunknown title\b|\bno title\b|\buntitled work\b/i
 
 /**
  * Normalize one `search.json` doc → Candidate, or null when it has no usable
@@ -181,14 +437,82 @@ export function normalizeOpenLibraryDoc(
 ): Candidate | null {
   const title = doc.title?.trim()
   if (!title) return null
-  // Reject graphic novels / comics / manga at the source. Check the FULL subject list
-  // (before the MAX_SUBJECTS cap) so a late-listed tag isn't missed.
-  if ((doc.subject ?? []).some((s) => GRAPHIC_NOVEL_SUBJECT_RE.test(s))) return null
+  // Reject OpenLibrary placeholder/stub titles ("Untitled Sanderson 3 of 3") — data-source junk.
+  if (PLACEHOLDER_TITLE_RE.test(title)) return null
+  // Reject foreign-titled works (the "different languages" leak): a non-Latin script or
+  // strongly-non-English Latin diacritics in the DISPLAYED title, OR a pure-ASCII foreign
+  // title caught by function words (≥2 Romance/German articles/prepositions — "Una corte de
+  // niebla y furia"). Catches translated works OpenLibrary lists under their original-language
+  // canonical title even though an English edition exists (so the language gate below can't).
+  if (
+    NON_LATIN_SCRIPT_RE.test(title) ||
+    FOREIGN_LATIN_RE.test(title) ||
+    looksNonEnglishTitle(title)
+  )
+    return null
+  // Reject graphic novels / comics / manga at the source. Check the TITLE and the FULL
+  // subject list (before the MAX_SUBJECTS cap) — a late-listed tag isn't missed, and an
+  // adaptation that tags itself only in the title ("… [graphic novel]") is still caught.
+  const subjects_ = doc.subject ?? []
+  if (GRAPHIC_NOVEL_RE.test(title) || subjects_.some((s) => GRAPHIC_NOVEL_RE.test(s))) return null
+  // Reject sub-substantive lengths (picture / board / early-reader) by median page count —
+  // the one signal that separates a children's book from an MG/YA novel on the SAME topic
+  // (see MIN_SUBSTANTIVE_PAGES). Only when the count is present; absent ⇒ fall through to
+  // the subject/format markers below.
+  if (
+    typeof doc.number_of_pages_median === 'number' &&
+    doc.number_of_pages_median > 0 &&
+    doc.number_of_pages_median < MIN_SUBSTANTIVE_PAGES
+  )
+    return null
+  // Reject non-readable franchise merchandise (poster/coloring/etc. + collectible
+  // reference) and pre-reader children's formats (nursery rhymes / board books). Check
+  // the title AND the full subject list — either self-identifies the format.
+  if (MERCHANDISE_RE.test(title) || subjects_.some((s) => MERCHANDISE_RE.test(s))) return null
+  if (JUVENILE_FORMAT_RE.test(title) || subjects_.some((s) => JUVENILE_FORMAT_RE.test(s)))
+    return null
+  // Reject the picture/activity-book profile that only the young-tier FORMAT tags miss: a
+  // juvenile-AUDIENCE subject with NEITHER a substantive page count NOR a fiction-genre
+  // subject ("Acorns everywhere!" / "The Berenstain Bears grow-it" — Bears + Juvenile
+  // fiction, no pages, no genre; leaked into the explore slots 2026-08-26). Owned-class MG
+  // novels are spared by their page count (295–320) or their genre tag (Fantasy/Adventure).
+  const pages = doc.number_of_pages_median
+  const substantiveLength = typeof pages === 'number' && pages >= MIN_SUBSTANTIVE_PAGES
+  if (
+    !substantiveLength &&
+    subjects_.some((s) => JUVENILE_AUDIENCE_RE.test(s)) &&
+    !subjects_.some((s) => FICTION_GENRE_RE.test(s))
+  )
+    return null
+  // Reject non-fiction commentary/reference/technical works (books ABOUT a topic, dragged
+  // in by broad subject seeds) — content-type gate, not a keyword ban (see the regex).
+  if (NONFICTION_SUBJECT_RE.test(title) || subjects_.some((s) => NONFICTION_SUBJECT_RE.test(s)))
+    return null
+  // Reject non-English editions (the "Polish book" leak). Only when a language list is
+  // present AND lacks `eng` — a missing list is kept (OpenLibrary omits it freely; the
+  // dominant library is English, so absence ⇒ benefit of the doubt).
+  if (Array.isArray(doc.language) && doc.language.length > 0 && !doc.language.includes('eng'))
+    return null
+  // Obscurity floor: drop the zero-footprint long tail — ≤1 edition AND no readers AND no
+  // ratings — where the genuinely strange self-published/vanity items live. Guarded on
+  // HAVING a signal (any of the three present) so absent-metadata docs / test fixtures fall
+  // through untouched; the popularity prior downstream does the softer grounding.
+  const hasFootprint =
+    doc.edition_count !== undefined ||
+    doc.readinglog_count !== undefined ||
+    doc.ratings_count !== undefined
+  if (
+    hasFootprint &&
+    (doc.edition_count ?? 0) <= 1 &&
+    (doc.readinglog_count ?? 0) === 0 &&
+    (doc.ratings_count ?? 0) === 0
+  )
+    return null
   const author = doc.author_name?.[0]?.trim() || null
-  const subjects = (doc.subject ?? [])
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .slice(0, cfg.MAX_SUBJECTS_PER_DOC)
+  // Collapse subject-variant duplicates ("Bears" + "Bears, Fiction" → one "Bears")
+  // BEFORE the MAX_SUBJECTS cap, so the topic isn't double-counted in the embed text
+  // and the cap spends its budget on distinct topics (see subjectNormalize.ts).
+  const subjects = dedupeSubjects(doc.subject ?? []).slice(0, cfg.MAX_SUBJECTS_PER_DOC)
   const sourceId =
     doc.key?.trim() || `synthetic:${title.toLowerCase()}|${(author ?? '').toLowerCase()}`
   return {
@@ -200,6 +524,10 @@ export function normalizeOpenLibraryDoc(
     isbn: doc.isbn?.[0]?.trim() || null,
     description: null, // search.json has no blurb; book descriptions are a deferred N+1 tier
     source: 'book',
+    ...(typeof doc.readinglog_count === 'number' ? { popularity: doc.readinglog_count } : {}),
+    ...(typeof doc.number_of_pages_median === 'number'
+      ? { pages: doc.number_of_pages_median }
+      : {}),
   }
 }
 
@@ -278,7 +606,13 @@ function writeCache(queryKey: string, docs: OpenLibraryDoc[], now: number): void
 // ── fetch ───────────────────────────────────────────────────────────────────
 
 function searchUrl(q: string, limit: number, page: number): string {
-  const params = new URLSearchParams({ q, fields: FIELDS, limit: String(limit) })
+  const params = new URLSearchParams({
+    q,
+    fields: FIELDS,
+    limit: String(limit),
+    sort: SORT,
+    language: LANGUAGE,
+  })
   if (page > 1) params.set('page', String(page)) // OpenLibrary search.json native paging
   return `${OPENLIBRARY_SEARCH}?${params.toString()}`
 }
@@ -295,7 +629,7 @@ async function fetchDocsForQuery(
   now: number,
   page: number,
 ): Promise<OpenLibraryDoc[]> {
-  const queryKey = `${q}::l=${cfg.LIMIT_PER_QUERY}::p=${page}`
+  const queryKey = `${q}::l=${cfg.LIMIT_PER_QUERY}::p=${page}::s=${SORT}::lang=${LANGUAGE}`
   const cached = readCache(queryKey, cfg.CACHE_TTL_MS, now)
   if (cached) return cached
   try {
@@ -414,5 +748,8 @@ export async function fetchCandidates(
     books: byId.size,
     concurrency: cfg.DESCRIPTION_CONCURRENCY,
   })
-  return enriched
+  // Drop books whose fetched blurb reads as non-English (the German-book leak the title gate
+  // can't catch — English-looking title, fully German description). Only possible post-enrich,
+  // so it lives here rather than in normalizeOpenLibraryDoc.
+  return enriched.filter((c) => !looksNonEnglishDescription(c.description))
 }

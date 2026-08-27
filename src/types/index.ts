@@ -375,6 +375,14 @@ export interface Recommendation {
    * source carries none (common for OpenLibrary books).
    */
   description: string | null
+  /**
+   * How this card earned its slot: `'exploit'` (the normal taste-ranked path) or
+   * `'explore'` (an epsilon exploration slot — an under-observed pick the exploit
+   * ranker passed over; see `recommender/explore.ts`). Omitted defaults to exploit,
+   * so nothing pre-dating exploration breaks. Drives the measurement origin tag
+   * (#3 open-log) and a testing-visible marker on the card.
+   */
+  origin?: 'explore' | 'exploit'
 }
 
 /** The Discover refresh result: cards + when they were generated + a cold-start flag. */

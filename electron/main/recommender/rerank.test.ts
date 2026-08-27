@@ -25,6 +25,9 @@ import {
   floorAlloc,
   selectByQuota,
   diversifyBookPicks,
+  leadTopicKey,
+  applyPopularityPrior,
+  POPULARITY,
   verifyCandidates,
   recommend,
   RERANK,
@@ -34,6 +37,8 @@ import { CANDIDATE_TEXT_VERSION, type Candidate } from './candidates'
 import { saveCandidateVectors } from './candidateEmbeddings'
 import { recordOpen } from './interactions'
 import { ENGAGE } from './engagement'
+import { EXPLORE } from './explore'
+import type { TasteResult } from './taste'
 import { openLibrarySource } from './sources/openLibrary'
 import type { CandidateSource } from './candidateSource'
 import type { Embedder } from './embedder-core'
@@ -53,6 +58,7 @@ const cand = (over: Partial<Candidate> = {}): Candidate => ({
   isbn: null,
   description: null,
   source: 'book',
+  pages: 200, // known substantive length so books stay eligible for the explore length gate
   ...over,
 })
 
@@ -366,6 +372,129 @@ describe('diversifyBookPicks', () => {
   it('returns [] for a non-positive quota', () => {
     expect(diversifyBookPicks([bk('a', 'A', 0.9)], new Set(), 0, 0.7)).toEqual([])
   })
+
+  // ── topical diversity cap (de-fixation) ──────────────────────────────────────
+  const bkS = (id: string, author: string, s: number, subjects: string[]) =>
+    scored({
+      cand: cand({ sourceId: id, source: 'book', author, subjects }),
+      vec: v(1, 0),
+      score: s,
+    })
+
+  it('caps books sharing one lead topic to TOPIC_CAP when siblings can fill the rest', () => {
+    // 5 top-scoring "Bears" books (distinct authors) + 4 lower "Foxes" books. Quota 6.
+    // Without the cap the 5 bears + 1 fox would win on score; the cap keeps ≤2 bears so
+    // the animal-adventure siblings get promoted.
+    const pool = [
+      bkS('br0', 'A', 0.99, ['Bears', 'Bears, Fiction']),
+      bkS('br1', 'B', 0.98, ['Bears']),
+      bkS('br2', 'C', 0.97, ['Bears, Juvenile fiction']),
+      bkS('br3', 'D', 0.96, ['Bears']),
+      bkS('br4', 'E', 0.95, ['Bears']),
+      bkS('fx0', 'F', 0.5, ['Foxes']),
+      bkS('fx1', 'G', 0.49, ['Foxes']),
+      bkS('fx2', 'H', 0.48, ['Wolves']),
+      bkS('fx3', 'I', 0.47, ['Cats']),
+    ]
+    const out = diversifyBookPicks(pool, new Set(), 6, 0.7)
+    const bears = out.filter((s) => s.cand.sourceId.startsWith('br'))
+    expect(bears).toHaveLength(2) // capped
+    expect(out).toHaveLength(6) // never shrinks — siblings fill the freed slots
+  })
+
+  it('relaxes the topic cap rather than under-fill when only one topic is available', () => {
+    // All bears, quota 5 → the cap would leave 2, but a soft cap fills the page.
+    const pool = [
+      bkS('br0', 'A', 0.99, ['Bears']),
+      bkS('br1', 'B', 0.98, ['Bears, Fiction']),
+      bkS('br2', 'C', 0.97, ['Bears']),
+      bkS('br3', 'D', 0.96, ['Bears']),
+      bkS('br4', 'E', 0.95, ['Bears']),
+    ]
+    expect(diversifyBookPicks(pool, new Set(), 5, 0.7)).toHaveLength(5)
+  })
+
+  it('does not cap candidates whose subjects are all non-discriminative (empty topic key)', () => {
+    // "Fiction"/"Juvenile Fiction" are format labels, not a topic → no cap key → all kept.
+    const pool = [
+      bkS('g0', 'A', 0.9, ['Fiction']),
+      bkS('g1', 'B', 0.8, ['Juvenile Fiction']),
+      bkS('g2', 'C', 0.7, ['General']),
+    ]
+    expect(diversifyBookPicks(pool, new Set(), 5, 0.7)).toHaveLength(3)
+  })
+})
+
+describe('applyPopularityPrior', () => {
+  const bkPop = (id: string, score: number, popularity?: number, source: 'book' | 'ao3' = 'book') =>
+    scored({ cand: cand({ sourceId: id, source, popularity }), vec: v(1, 0), score })
+  const noJitter = () => 0.5 // rng → (0.5 - 0.5) = 0 jitter, deterministic
+
+  it('lifts a well-read book above a modestly-more-on-taste obscure one (leads by popularity)', () => {
+    const pool = [
+      bkPop('obscure', 0.55, 3), // higher taste, few readers
+      bkPop('popular', 0.45, 20000), // lower taste, mega-read
+    ]
+    applyPopularityPrior(pool, POPULARITY, noJitter)
+    const byId = Object.fromEntries(pool.map((s) => [s.cand.sourceId, s.score]))
+    expect(byId['popular']).toBeGreaterThan(byId['obscure'])
+  })
+
+  it('does NOT let a mega-popular, vaguely-on-taste book overtake a clear taste match', () => {
+    // The "Roald Dahl / Matilda" case: a loosely-on-taste blockbuster must not leapfrog a
+    // book that genuinely fits. Because the lift is taste-SCALED, the vague book earns only
+    // a small proportional boost — a flat additive prior (old behaviour) would have flipped
+    // these (0.30 + 0.4 = 0.70 > 0.60).
+    const pool = [
+      bkPop('match', 0.6, 5), // clearly on-taste, few readers
+      bkPop('vaguePopular', 0.3, 50000), // only vaguely on-taste, mega-read
+    ]
+    applyPopularityPrior(pool, POPULARITY, noJitter)
+    const byId = Object.fromEntries(pool.map((s) => [s.cand.sourceId, s.score]))
+    expect(byId['match']).toBeGreaterThan(byId['vaguePopular'])
+  })
+
+  it('is a no-op when no book carries a popularity signal (cannot-hurt invariant)', () => {
+    const pool = [bkPop('a', 0.5), bkPop('b', 0.4)]
+    applyPopularityPrior(pool, POPULARITY, noJitter)
+    expect(pool.map((s) => s.score)).toEqual([0.5, 0.4])
+  })
+
+  it('leaves fics untouched, lifting only books', () => {
+    // Two books (so the min-max prior has a span) + a fic that even carries a popularity
+    // value: the fic must be skipped, the top-read book lifted.
+    const pool = [
+      bkPop('fic', 0.5, 9999, 'ao3'),
+      bkPop('bookLo', 0.5, 10, 'book'),
+      bkPop('bookHi', 0.5, 9999, 'book'),
+    ]
+    applyPopularityPrior(pool, POPULARITY, noJitter)
+    const byId = Object.fromEntries(pool.map((s) => [s.cand.sourceId, s.score]))
+    expect(byId['fic']).toBe(0.5) // fic has popularity but isn't a book → skipped
+    expect(byId['bookHi']).toBeGreaterThan(byId['bookLo'])
+  })
+
+  it('jitters within ±JITTER/2 so the exact order varies between refreshes', () => {
+    const mk = () => [bkPop('a', 0.5, 100), bkPop('b', 0.5, 100)] // equal → only jitter moves them
+    const lo = mk()
+    applyPopularityPrior(lo, POPULARITY, () => 0) // rng 0 → −JITTER/2
+    const hi = mk()
+    applyPopularityPrior(hi, POPULARITY, () => 1) // rng 1 → +JITTER/2
+    expect(hi[0].score - lo[0].score).toBeCloseTo(POPULARITY.JITTER)
+  })
+})
+
+describe('leadTopicKey', () => {
+  it('is the first discriminative subject, canonicalized', () => {
+    expect(
+      leadTopicKey(cand({ subjects: ['Fiction', 'Bears, Juvenile fiction', 'Adventure'] })),
+    ).toBe('bears')
+  })
+  it('is empty when no subject is discriminative', () => {
+    expect(leadTopicKey(cand({ subjects: ['Fiction', 'General', "Children's literature"] }))).toBe(
+      '',
+    )
+  })
 })
 
 // ── verifyCandidates (pure) ──────────────────────────────────────────────────
@@ -442,6 +571,7 @@ describe('recommend', () => {
     title: 'A Book',
     author_name: ['An Author'],
     subject: ['Fantasy'],
+    number_of_pages_median: 200, // substantive length so candidates stay explore-eligible
     ...over,
   })
 
@@ -539,6 +669,18 @@ describe('recommend', () => {
       doc({ key: `/works/C${i}`, title: `Cand ${i}`, author_name: [`A${i}`] }),
     )
     fetchMock.mockResolvedValue(okJson({ docs }))
+    // Vary the candidate vectors so the reserved explore slots fill from a genuinely
+    // distinct, non-redundant tail: most near taste (win exploit), a few on-taste-but-
+    // distinct (fill explore). An all-identical fixture would trip the redundancy wall and
+    // correctly under-fill — not what this cap test means to exercise.
+    const candVer2 = `${stubEmbedder.modelVersion}|${CANDIDATE_TEXT_VERSION}`
+    saveCandidateVectors(
+      Array.from({ length: RERANK.TOP_K + 3 }, (_, i) => ({
+        sourceId: `/works/C${i}`,
+        vec: i < RERANK.TOP_K ? v(1, 0) : v(0.6, 0.8),
+      })),
+      candVer2,
+    )
 
     const out = await recommend(stubEmbedder, [openLibrarySource])
     expect(out).toHaveLength(RERANK.TOP_K)
@@ -553,6 +695,16 @@ describe('recommend', () => {
           cand({ title: `Cand ${i}`, author: `A${i}`, sourceId: `/works/C${i}`, source: 'book' }),
         ),
     }
+    // Vary vectors (see the cap test) so explore fills its reserved slots from a distinct
+    // tail rather than under-filling on identical clones of the exploit feed.
+    const candVer2 = `${stubEmbedder.modelVersion}|${CANDIDATE_TEXT_VERSION}`
+    saveCandidateVectors(
+      Array.from({ length: 20 }, (_, i) => ({
+        sourceId: `/works/C${i}`,
+        vec: i < 15 ? v(1, 0) : v(0.6, 0.8),
+      })),
+      candVer2,
+    )
     const out = await recommend(stubEmbedder, [src], undefined, { limit: 18 })
     expect(out).toHaveLength(18)
   })
@@ -650,6 +802,153 @@ describe('recommend', () => {
     )
     const out = await recommend(stubEmbedder, [src])
     expect(out.map((c) => c.sourceId)).toEqual(['/works/C1'])
+  })
+
+  // ── exploration: epsilon slots + UCB-lite picker (explore.ts) ──────────────
+  it('reserves explore slots, filled from the under-observed passed-over tail and tagged origin', async () => {
+    seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' }) // owned/taste vec (1,0)
+    // 9 in-taste "near" candidates fill the exploit quota exactly (so none spill into the
+    // tail), + 4 recognisably-on-taste but under-observed "far" ones that become the tail.
+    const near = Array.from({ length: 9 }, (_, i) =>
+      doc({ key: `/works/N${i}`, title: `Near ${i}`, author_name: [`AN${i}`] }),
+    )
+    const far = Array.from({ length: 4 }, (_, i) =>
+      doc({ key: `/works/F${i}`, title: `Far ${i}`, author_name: [`AF${i}`] }),
+    )
+    fetchMock.mockResolvedValue(okJson({ docs: [...near, ...far] }))
+    // Pre-seed candidate vectors so scoring is deterministic (recommend loads the cache
+    // before embedding): near = (1,0) (cos 1 to taste → exploit-preferred); far =
+    // (0.5,0.866) (cos 0.5 to taste — comfortably on-taste, clears the relevance floor —
+    // but 0 owned neighbours → high uncertainty, so the objective prefers them).
+    const candVer2 = `${stubEmbedder.modelVersion}|${CANDIDATE_TEXT_VERSION}`
+    saveCandidateVectors(
+      [
+        ...Array.from({ length: 9 }, (_, i) => ({ sourceId: `/works/N${i}`, vec: v(1, 0) })),
+        ...Array.from({ length: 4 }, (_, i) => ({ sourceId: `/works/F${i}`, vec: v(0.5, 0.866) })),
+      ],
+      candVer2,
+    )
+
+    const out = await recommend(stubEmbedder, [openLibrarySource])
+    const explore = out.filter((c) => c.origin === 'explore')
+    expect(explore).toHaveLength(EXPLORE.SLOTS)
+    // Explore picks are drawn from the under-observed FAR tail, never the in-taste near set.
+    expect(explore.every((c) => c.sourceId.startsWith('/works/F'))).toBe(true)
+    // Exploit cards omit the origin field entirely (byte-identical card shape).
+    const exploit = out.filter((c) => c.origin === undefined)
+    expect(exploit.every((c) => c.sourceId.startsWith('/works/N'))).toBe(true)
+    expect(out).toHaveLength(RERANK.TOP_K)
+  })
+
+  it('excludes books by an already-owned author from explore (favours new authors)', async () => {
+    // The "6th Seekers book" bug: exploration must never spend a slot on an author the reader
+    // already owns. Seed an owned Erin Hunter book; 9 near fill exploit; the far tail carries
+    // 2 more Erin Hunter books + 2 by new authors — only the new-author ones may be explored.
+    seedLikedItem({ title: 'Seekers', author: 'Erin Hunter', tag: 'Fantasy' })
+    const near = Array.from({ length: 9 }, (_, i) =>
+      doc({ key: `/works/N${i}`, title: `Near ${i}`, author_name: [`AN${i}`] }),
+    )
+    const farOwned = Array.from({ length: 2 }, (_, i) =>
+      doc({ key: `/works/FO${i}`, title: `More Seekers ${i}`, author_name: ['Erin Hunter'] }),
+    )
+    const farNew = Array.from({ length: 2 }, (_, i) =>
+      doc({ key: `/works/FN${i}`, title: `Fresh ${i}`, author_name: [`Newcomer${i}`] }),
+    )
+    fetchMock.mockResolvedValue(okJson({ docs: [...near, ...farOwned, ...farNew] }))
+    const candVer2 = `${stubEmbedder.modelVersion}|${CANDIDATE_TEXT_VERSION}`
+    saveCandidateVectors(
+      [
+        // Near vectors are SLIGHTLY varied (all cos≈1 to taste, but mutually distinct) so MMR
+        // keeps the 8 strongest in the fresh exploit slots (the weakest near spills to the tail,
+        // where the redundancy wall harmlessly drops it) rather than pulling a novel far book in.
+        ...Array.from({ length: 9 }, (_, i) => ({ sourceId: `/works/N${i}`, vec: v(1, 0.03 * i) })),
+        // Owned far books sit at cos 0.5 ABOVE the taste axis; new-author far books at cos 0.5
+        // BELOW it — same on-taste score, but a DISTINCT direction so the redundancy wall can't
+        // conflate a new-author pick with the one owned book that the owned-author fraction seats
+        // in exploit. Author is then the only lever deciding which far books explore may spend on.
+        ...Array.from({ length: 2 }, (_, i) => ({ sourceId: `/works/FO${i}`, vec: v(0.5, 0.866) })),
+        ...Array.from({ length: 2 }, (_, i) => ({
+          sourceId: `/works/FN${i}`,
+          vec: v(0.5, -0.866),
+        })),
+      ],
+      candVer2,
+    )
+
+    const out = await recommend(stubEmbedder, [openLibrarySource])
+    const explore = out.filter((c) => c.origin === 'explore')
+    expect(explore.length).toBeGreaterThan(0)
+    expect(explore.every((c) => c.sourceId.startsWith('/works/FN'))).toBe(true)
+  })
+
+  it('exploration is popularity-BLIND: explore cards keep the pure taste score, not the popularity-led one', async () => {
+    // Regression for the "exploration feels the same as the traditional feed" bug: the
+    // popularity prior mutates `score` in place, and if exploration ranked/emitted by that
+    // boosted score the explore slots would collapse onto the grounded exploit feed. The
+    // fix restores each tail candidate's PRE-popularity taste score for exploration.
+    seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' }) // taste vec (1,0)
+    // 9 near candidates (cos 1) fill the exploit quota; they carry the LOWEST readership so
+    // the prior can't lift them. The 4 far candidates (cos 0.27 — above the explore floor,
+    // firmly in the tail) carry the pool-MAX readership: under the bug the prior would boost
+    // their score by ~WEIGHT and exploration would rank/emit that inflated number.
+    const near = Array.from({ length: 9 }, (_, i) =>
+      doc({
+        key: `/works/N${i}`,
+        title: `Near ${i}`,
+        author_name: [`AN${i}`],
+        readinglog_count: 10,
+      }),
+    )
+    const far = Array.from({ length: 4 }, (_, i) =>
+      doc({
+        key: `/works/F${i}`,
+        title: `Far ${i}`,
+        author_name: [`AF${i}`],
+        readinglog_count: 100000,
+      }),
+    )
+    fetchMock.mockResolvedValue(okJson({ docs: [...near, ...far] }))
+    const candVer2 = `${stubEmbedder.modelVersion}|${CANDIDATE_TEXT_VERSION}`
+    saveCandidateVectors(
+      [
+        ...Array.from({ length: 9 }, (_, i) => ({ sourceId: `/works/N${i}`, vec: v(1, 0) })),
+        ...Array.from({ length: 4 }, (_, i) => ({
+          sourceId: `/works/F${i}`,
+          vec: v(0.27, 0.96286),
+        })),
+      ],
+      candVer2,
+    )
+
+    const out = await recommend(stubEmbedder, [openLibrarySource], undefined, { rng: () => 0 })
+    const explore = out.filter((c) => c.origin === 'explore')
+    expect(explore).toHaveLength(EXPLORE.SLOTS)
+    expect(explore.every((c) => c.sourceId.startsWith('/works/F'))).toBe(true)
+    // The far tail's PURE taste cosine is 0.27. Popularity (pool-max readership) would have
+    // lifted the emitted score toward the exploit band; popularity-blind exploration keeps
+    // it at the pure 0.27.
+    expect(explore.every((c) => Math.abs(c.score - 0.27) < 1e-4)).toBe(true)
+  })
+
+  it('cannot-hurt: no owned evidence ⇒ exploration off, no card tagged (byte-identical shape)', async () => {
+    // An overflowing pool that WOULD trigger exploration, but taste carries no ownedVecs
+    // (cold-evidence / a pre-exploration caller) → k=0, every card is a plain exploit card.
+    const docs = Array.from({ length: RERANK.TOP_K + 3 }, (_, i) =>
+      doc({ key: `/works/C${i}`, title: `Cand ${i}`, author_name: [`A${i}`] }),
+    )
+    fetchMock.mockResolvedValue(okJson({ docs }))
+    // A real seeded item so the source's taste-seed queries resolve, but an explicit
+    // taste whose ownedVecs is empty (a pre-exploration caller) → the picker no-ops.
+    const seedId = seedLikedItem({ title: 'Seed', author: 'S', tag: 'Fantasy' })
+    const taste: TasteResult = {
+      tier: 'normal',
+      centroids: [v(1, 0)],
+      liked: [{ id: seedId, weight: 5 }],
+      ownedVecs: [], // no evidence base ⇒ picker is a strict no-op
+    }
+    const out = await recommend(stubEmbedder, [openLibrarySource], taste)
+    expect(out).toHaveLength(RERANK.TOP_K)
+    expect(out.some((c) => c.origin !== undefined)).toBe(false)
   })
 
   it('forwards opts.fresh to every source (the Refresh soft-floor signal)', async () => {

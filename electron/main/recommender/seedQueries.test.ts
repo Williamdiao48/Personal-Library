@@ -84,4 +84,67 @@ describe('buildSeedQueries', () => {
     ])
     expect(qs.map((q) => q.term)).toEqual(['Apple', 'Zebra'])
   })
+
+  it('drops non-discriminative format/classification subjects (Fiction, Juvenile Fiction, …)', () => {
+    // These broad labels make TERRIBLE seeds — subject:"Fiction" returns the whole catalog —
+    // so they're stripped before becoming queries (2026-08-26 seed-hygiene rework).
+    const qs = buildSeedQueries([
+      src({
+        tags: [
+          'Fiction',
+          'Juvenile Fiction',
+          "Children's literature",
+          'Young Adult Fiction',
+          'General',
+          'Classics',
+          'Literature',
+          'English literature',
+          'Large type books',
+          'Accessible book',
+          'Wizards', // the one real, topical subject
+        ],
+        weight: 1,
+      }),
+    ])
+    expect(qs.map((q) => q.term)).toEqual(['Wizards'])
+  })
+
+  it('drops OpenLibrary metadata artifacts (nyt:/series:/reading-level tags)', () => {
+    const qs = buildSeedQueries([
+      src({
+        tags: [
+          'nyt:combined-print-and-e-book-fiction=2016-01-01',
+          'series:Mistborn',
+          'Reading Level-Grade 9',
+          'New York Times bestseller',
+          'Spies', // real topical subject
+        ],
+        weight: 1,
+      }),
+    ])
+    expect(qs.map((q) => q.term)).toEqual(['Spies'])
+  })
+
+  it('keeps topical subjects that merely resemble broad labels (Bears, Wizards, …)', () => {
+    // "Bears" is a genuine subject (Seekers series) — the stoplist targets format labels,
+    // not every animal/topic. It stays a seed even though it later stems oddly at OpenLibrary
+    // (handled downstream by the candidate content-type gate, not here).
+    const qs = buildSeedQueries([src({ tags: ['Bears', 'Wizards', 'Kings and rulers'] })])
+    expect(qs.map((q) => q.term).sort()).toEqual(['Bears', 'Kings and rulers', 'Wizards'])
+  })
+
+  it('folds subject-variant duplicates into ONE seed, summing weight (bear-fixation fix)', () => {
+    // Every owned Seekers book tags BOTH "Bears" and "Bears, Fiction" — two seeds for one
+    // topic, doubling the bear budget. They now collapse under the canonical key, sum their
+    // weight, and keep the bare surface form as the query. (2026-08-26 dedup + cap.)
+    const qs = buildSeedQueries([
+      src({ tags: ['Bears, Fiction'], weight: 0.4 }),
+      src({ tags: ['Bears'], weight: 0.3 }),
+      src({ tags: ['Bears -- Juvenile fiction'], weight: 0.2 }),
+    ])
+    const bears = qs.filter((q) => q.kind === 'subject')
+    expect(bears).toHaveLength(1)
+    expect(bears[0].term).toBe('Bears') // shortest surface form wins the query
+    expect(bears[0].weight).toBeCloseTo(0.9)
+  })
 })
