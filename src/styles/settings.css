@@ -301,7 +301,10 @@
   align-self: flex-start;
   background: none;
   border: none;
-  padding: 0;
+  /* Horizontal padding widens the hover underline so it clears the first/last
+     glyph's side-bearings; the matching negative margin keeps the text aligned. */
+  padding: 0 3px;
+  margin: 0 -3px;
   color: var(--accent);
   font: inherit;
   font-size: 12px;
@@ -314,7 +317,7 @@
 /* Slightly larger link — used for the standalone auth links
    ("Forgot password?", "Back to sign in"). */
 .settings-link-btn--lg {
-  font-size: 14px;
+  font-size: 13px;
 }
 /* Reset-flow footer: tighten the gap to the fields above, and give the
    "Back to sign in" link a little more breathing room under the status note. */
