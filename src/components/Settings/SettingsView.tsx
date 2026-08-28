@@ -533,6 +533,18 @@ function AccountSettings() {
   const pwId = useId()
   const codeId = useId()
 
+  // Once signed in (including via the reset flow), snap the form back to 'signin' and
+  // clear transient fields — so a later sign-out lands on the sign-in form, not the
+  // reset page we happened to be on when the session was established.
+  useEffect(() => {
+    if (user) {
+      setMode('signin')
+      setResetSent(false)
+      setToken('')
+      setPassword('')
+    }
+  }, [user])
+
   if (loading) return null
 
   if (!configured) {
@@ -625,7 +637,7 @@ function AccountSettings() {
         setError(res.error ?? 'Something went wrong. Please try again.')
       } else {
         setResetSent(true)
-        setNotice(`We emailed a 6-digit code to ${email.trim()}. Enter it below.`)
+        setNotice(`Code sent to ${email.trim()}.`)
       }
     } catch (err: any) {
       setError(err?.message ?? 'Something went wrong. Please try again.')
@@ -661,7 +673,7 @@ function AccountSettings() {
             <span className="settings-row-hint">
               {resetSent
                 ? 'Enter the code we emailed you and choose a new password.'
-                : 'We’ll email you a 6-digit code to reset your password.'}
+                : 'We’ll email you a verification code to reset your password.'}
             </span>
           </div>
         </div>
@@ -698,7 +710,7 @@ function AccountSettings() {
                 autoComplete="one-time-code"
                 className="settings-color-label-input"
                 value={token}
-                placeholder="123456"
+                placeholder="Enter code"
                 onChange={(e) => setToken(e.target.value)}
               />
             </div>
@@ -723,13 +735,16 @@ function AccountSettings() {
           </>
         )}
 
-        <div className="settings-row settings-row--top">
+        <div className="settings-row settings-row--top settings-reset-footer">
           <div className="settings-row-stack">
-            <button className="settings-link-btn" onClick={() => goToMode('signin')}>
-              Back to sign in
-            </button>
             {error && <span className="settings-feedback settings-feedback--err">{error}</span>}
             {notice && <span className="settings-feedback settings-feedback--ok">{notice}</span>}
+            <button
+              className="settings-link-btn settings-link-btn--lg"
+              onClick={() => goToMode('signin')}
+            >
+              Back to sign in
+            </button>
           </div>
           {resetSent ? (
             <button
@@ -847,7 +862,10 @@ function AccountSettings() {
             </span>
           )}
           {mode === 'signin' && (
-            <button className="settings-link-btn" onClick={() => goToMode('reset')}>
+            <button
+              className="settings-link-btn settings-link-btn--lg"
+              onClick={() => goToMode('reset')}
+            >
               Forgot password?
             </button>
           )}
