@@ -205,6 +205,37 @@ describe('handleReconcile', () => {
     expect(pre.headers.get('Access-Control-Allow-Methods')).toContain('POST')
   })
 
+  it('records the run via recordRun (durable audit sink) with the final report', async () => {
+    const orphan = key('u1', 'content', HASH_C)
+    const recordRun = vi.fn(async (_report: ReconcileReport) => {})
+    const deps: ReconcileDeps = {
+      ...makeDeps({ objects: [{ key: orphan, ...old }], wanted: { u1: [HASH_A] } }),
+      recordRun,
+    }
+    await handleReconcile(post(), deps) // bare POST = dry-run
+    expect(recordRun).toHaveBeenCalledTimes(1)
+    const logged = recordRun.mock.calls[0][0]
+    expect(logged.orphans).toEqual([orphan])
+    expect(logged.dryRun).toBe(true)
+    expect(logged.deleted).toEqual([])
+  })
+
+  it('a recordRun failure is swallowed — the sweep still returns its report (best-effort)', async () => {
+    const orphan = key('u1', 'content', HASH_C)
+    const recordRun = vi.fn(async () => {
+      throw new Error('reconcile_runs table missing')
+    })
+    const deps: ReconcileDeps = {
+      ...makeDeps({ objects: [{ key: orphan, ...old }], wanted: { u1: [] } }),
+      recordRun,
+    }
+    const res = await handleReconcile(post({ apply: true }), deps)
+    expect(res.status).toBe(200)
+    const r = await report(res)
+    expect(r.deleted).toEqual([orphan]) // sweep completed despite the audit-log throw
+    expect(recordRun).toHaveBeenCalledTimes(1)
+  })
+
   it('400s invalid JSON (but tolerates an empty body as a dry-run)', async () => {
     const deps = makeDeps()
     const badReq = new Request('https://fn/reconcile-blobs', {

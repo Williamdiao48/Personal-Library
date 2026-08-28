@@ -129,6 +129,23 @@ const deps: ReconcileDeps = {
   now: () => Date.now(),
   minAgeMs: MIN_AGE_MS,
   dryRun: FORCE_DRY_RUN,
+
+  // Durable audit row per run → reconcile_runs (migration 0007). service_role bypasses
+  // the table's deny-all RLS. Throwing propagates to the handler's best-effort catch, so
+  // a logging failure never fails the sweep.
+  async recordRun(report) {
+    const { error } = await getAdmin().from('reconcile_runs').insert({
+      dry_run: report.dryRun,
+      scanned: report.scanned,
+      kept_wanted: report.keptWanted,
+      skipped_recent: report.skippedRecent,
+      orphan_count: report.orphans.length,
+      deleted_count: report.deleted.length,
+      min_age_ms: report.minAgeMs,
+      orphans: report.orphans,
+    })
+    if (error) throw new Error(`reconcile_runs insert failed: ${error.message}`)
+  },
 }
 
 Deno.serve((req: Request): Promise<Response> => {

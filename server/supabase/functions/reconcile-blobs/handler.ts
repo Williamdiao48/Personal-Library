@@ -42,6 +42,10 @@ export interface ReconcileDeps {
   /** Force dry-run regardless of the request (env kill-switch); default false. A normal
    *  call still defaults to dry-run — deletion needs `{ "apply": true }` in the body. */
   dryRun: boolean
+  /** Optional durable audit sink: persist this run's report (the `reconcile_runs`
+   *  insert in index.ts). Best-effort — a throw here is swallowed so a missing table or
+   *  a transient insert error can never fail the sweep itself. Omit to skip logging. */
+  recordRun?: (report: ReconcileReport) => Promise<void>
 }
 
 export interface ReconcileReport {
@@ -156,6 +160,17 @@ export async function handleReconcile(req: Request, deps: ReconcileDeps): Promis
         // Best-effort — a failed delete stays reported as an orphan (not deleted) and the
         // next sweep retries it. One bad key never aborts the whole reconciliation.
       }
+    }
+  }
+
+  // Durable audit trail (scheduled monthly sweep + any manual run land here). Best-effort:
+  // logging must never turn a completed reconciliation into a 500.
+  if (deps.recordRun) {
+    try {
+      await deps.recordRun(report)
+    } catch {
+      // Swallow — a missing reconcile_runs table or a transient insert error just means
+      // this run isn't logged; the reconciliation result is still returned to the caller.
     }
   }
 
