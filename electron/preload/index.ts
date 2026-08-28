@@ -299,6 +299,9 @@ contextBridge.exposeInMainWorld('api', {
     signUp: (email: string, password: string) => ipcRenderer.invoke('auth:signUp', email, password),
     signIn: (email: string, password: string) => ipcRenderer.invoke('auth:signIn', email, password),
     signOut: () => ipcRenderer.invoke('auth:signOut'),
+    requestPasswordReset: (email: string) => ipcRenderer.invoke('auth:requestPasswordReset', email),
+    confirmPasswordReset: (email: string, token: string, password: string) =>
+      ipcRenderer.invoke('auth:confirmPasswordReset', email, token, password),
     onStateChange: (
       callback: (state: { user: { id: string; email: string | null } | null }) => void,
     ) => {

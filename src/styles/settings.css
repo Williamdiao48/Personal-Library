@@ -298,11 +298,29 @@
   transition: width 0.2s ease;
 }
 .settings-link-btn {
+  align-self: flex-start;
   background: none;
   border: none;
   padding: 0;
   color: var(--accent);
   font: inherit;
+  font-size: 12px;
   cursor: pointer;
+  text-decoration: none;
+}
+.settings-link-btn:hover {
   text-decoration: underline;
+}
+/* Slightly larger link — used for the standalone auth links
+   ("Forgot password?", "Back to sign in"). */
+.settings-link-btn--lg {
+  font-size: 14px;
+}
+/* Reset-flow footer: tighten the gap to the fields above, and give the
+   "Back to sign in" link a little more breathing room under the status note. */
+.settings-reset-footer {
+  margin-top: -4px;
+}
+.settings-reset-footer .settings-feedback + .settings-link-btn {
+  margin-top: 5px;
 }

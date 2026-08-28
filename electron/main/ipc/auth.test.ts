@@ -9,6 +9,9 @@ const h = vi.hoisted(() => {
     signUp: vi.fn(),
     signInWithPassword: vi.fn(),
     signOut: vi.fn(),
+    resetPasswordForEmail: vi.fn(),
+    verifyOtp: vi.fn(),
+    updateUser: vi.fn(),
   }
   return {
     fakeSupabase: { auth },
@@ -115,6 +118,63 @@ describe('auth IPC — configured', () => {
     expect(h.clearSessionStore).toHaveBeenCalledTimes(1)
   })
 
+  it('requestPasswordReset mails the OTP and reports ok (enumeration-safe)', async () => {
+    h.fakeSupabase.auth.resetPasswordForEmail.mockResolvedValue({ error: null })
+    const res = await invoke('auth:requestPasswordReset', 'a@b.com')
+    expect(h.fakeSupabase.auth.resetPasswordForEmail).toHaveBeenCalledWith('a@b.com')
+    expect(res).toEqual({ ok: true })
+  })
+
+  it('requestPasswordReset surfaces transport/rate-limit errors', async () => {
+    h.fakeSupabase.auth.resetPasswordForEmail.mockResolvedValue({
+      error: { message: 'Email rate limit exceeded' },
+    })
+    expect(await invoke('auth:requestPasswordReset', 'a@b.com')).toEqual({
+      ok: false,
+      error: 'Email rate limit exceeded',
+    })
+  })
+
+  it('confirmPasswordReset verifies the OTP then updates the password', async () => {
+    h.fakeSupabase.auth.verifyOtp.mockResolvedValue({
+      data: { user: { id: 'u1', email: 'a@b.com' } },
+      error: null,
+    })
+    h.fakeSupabase.auth.updateUser.mockResolvedValue({ error: null })
+    const res = await invoke('auth:confirmPasswordReset', 'a@b.com', '123456', 'newlongpassword')
+    expect(h.fakeSupabase.auth.verifyOtp).toHaveBeenCalledWith({
+      email: 'a@b.com',
+      token: '123456',
+      type: 'recovery',
+    })
+    expect(h.fakeSupabase.auth.updateUser).toHaveBeenCalledWith({ password: 'newlongpassword' })
+    expect(res).toEqual({ ok: true, user: { id: 'u1', email: 'a@b.com' } })
+  })
+
+  it('confirmPasswordReset fails on a bad/expired code without touching the password', async () => {
+    h.fakeSupabase.auth.verifyOtp.mockResolvedValue({
+      data: {},
+      error: { message: 'Token has expired or is invalid' },
+    })
+    const res = await invoke('auth:confirmPasswordReset', 'a@b.com', 'bad', 'newlongpassword')
+    expect(res).toEqual({ ok: false, error: 'Token has expired or is invalid' })
+    expect(h.fakeSupabase.auth.updateUser).not.toHaveBeenCalled()
+  })
+
+  it('confirmPasswordReset surfaces an updateUser failure (e.g. weak password)', async () => {
+    h.fakeSupabase.auth.verifyOtp.mockResolvedValue({
+      data: { user: { id: 'u1', email: 'a@b.com' } },
+      error: null,
+    })
+    h.fakeSupabase.auth.updateUser.mockResolvedValue({
+      error: { message: 'Password should be at least 8 characters' },
+    })
+    expect(await invoke('auth:confirmPasswordReset', 'a@b.com', '123456', 'short')).toEqual({
+      ok: false,
+      error: 'Password should be at least 8 characters',
+    })
+  })
+
   it('broadcasts auth state changes to open windows', () => {
     const send = vi.fn()
     vi.spyOn(BrowserWindow, 'getAllWindows').mockReturnValue([{ webContents: { send } }] as any)
@@ -149,5 +209,20 @@ describe('auth IPC — not configured', () => {
     h.getSupabase.mockReturnValue(null)
     await invoke('auth:signOut')
     expect(h.clearSessionStore).toHaveBeenCalledTimes(1)
+  })
+
+  it('password-reset handlers return a not-configured error when there is no client', async () => {
+    h.getSupabase.mockReturnValue(null)
+    const req = (await invoke('auth:requestPasswordReset', 'a@b.com')) as any
+    const conf = (await invoke(
+      'auth:confirmPasswordReset',
+      'a@b.com',
+      '123456',
+      'newpassword',
+    )) as any
+    expect(req.ok).toBe(false)
+    expect(req.error).toMatch(/not configured/i)
+    expect(conf.ok).toBe(false)
+    expect(conf.error).toMatch(/not configured/i)
   })
 })

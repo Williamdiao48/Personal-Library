@@ -30,6 +30,8 @@ vi.mock('../../services/auth', () => ({
     signUp: vi.fn(),
     signIn: vi.fn(),
     signOut: vi.fn(),
+    requestPasswordReset: vi.fn(),
+    confirmPasswordReset: vi.fn(),
     onStateChange: vi.fn(() => () => {}),
   },
 }))
@@ -323,6 +325,126 @@ describe('SettingsView — Account section', () => {
     fireEvent.change(screen.getByPlaceholderText('••••••••'), { target: { value: 'pw' } })
     fireEvent.click(submit('Sign in'))
     expect(await screen.findByText('Invalid login credentials')).toBeInTheDocument()
+  })
+
+  it('runs the forgot-password flow: request a code, then reset the password', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: null })
+    auth.requestPasswordReset.mockResolvedValueOnce({ ok: true })
+    auth.confirmPasswordReset.mockResolvedValueOnce({
+      ok: true,
+      user: { id: 'u1', email: 'a@b.com' },
+    })
+    renderView()
+    await screen.findByPlaceholderText('you@example.com')
+
+    // Enter the reset flow.
+    fireEvent.click(screen.getByRole('button', { name: 'Forgot password?' }))
+    fireEvent.change(screen.getByPlaceholderText('you@example.com'), {
+      target: { value: 'a@b.com' },
+    })
+    // Code + password inputs only appear after a code is requested.
+    expect(screen.queryByPlaceholderText('Enter code')).toBeNull()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Send reset code' }))
+    })
+    expect(auth.requestPasswordReset).toHaveBeenCalledWith('a@b.com')
+    expect(await screen.findByText(/Code sent to/)).toBeInTheDocument()
+
+    // Phase 2: enter the code + a new password.
+    fireEvent.change(screen.getByPlaceholderText('Enter code'), { target: { value: '123456' } })
+    fireEvent.change(screen.getByPlaceholderText(/At least 8 characters/), {
+      target: { value: 'newlongpassword' },
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reset password' }))
+    })
+    expect(auth.confirmPasswordReset).toHaveBeenCalledWith('a@b.com', '123456', 'newlongpassword')
+  })
+
+  it('after a reset + sign-out, returns to the sign-in form (not the reset page)', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: null })
+    auth.requestPasswordReset.mockResolvedValueOnce({ ok: true })
+    auth.confirmPasswordReset.mockResolvedValueOnce({
+      ok: true,
+      user: { id: 'u1', email: 'a@b.com' },
+    })
+    auth.signOut.mockResolvedValueOnce(undefined)
+    renderView()
+    await screen.findByPlaceholderText('you@example.com')
+
+    // Drive the whole reset flow through to signed-in.
+    fireEvent.click(screen.getByRole('button', { name: 'Forgot password?' }))
+    fireEvent.change(screen.getByPlaceholderText('you@example.com'), {
+      target: { value: 'a@b.com' },
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Send reset code' }))
+    })
+    fireEvent.change(await screen.findByPlaceholderText('Enter code'), {
+      target: { value: '123456' },
+    })
+    fireEvent.change(screen.getByPlaceholderText(/At least 8 characters/), {
+      target: { value: 'newlongpassword' },
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reset password' }))
+    })
+
+    // Now signed in — sign back out.
+    const signOutBtn = await screen.findByRole('button', { name: 'Sign out' })
+    await act(async () => {
+      fireEvent.click(signOutBtn)
+    })
+
+    // We land on the sign-in form, NOT the reset page we came in through.
+    expect(await screen.findByRole('button', { name: 'Create account' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Send reset code' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Reset password' })).toBeNull()
+  })
+
+  it('gates the reset-password submit on the 8-char minimum', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: null })
+    auth.requestPasswordReset.mockResolvedValueOnce({ ok: true })
+    renderView()
+    await screen.findByPlaceholderText('you@example.com')
+    fireEvent.click(screen.getByRole('button', { name: 'Forgot password?' }))
+    fireEvent.change(screen.getByPlaceholderText('you@example.com'), {
+      target: { value: 'a@b.com' },
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Send reset code' }))
+    })
+    fireEvent.change(await screen.findByPlaceholderText('Enter code'), {
+      target: { value: '123456' },
+    })
+    const pw = screen.getByPlaceholderText(/At least 8 characters/)
+    fireEvent.change(pw, { target: { value: 'short' } })
+    expect(screen.getByRole('button', { name: 'Reset password' })).toBeDisabled()
+    fireEvent.change(pw, { target: { value: 'longenough' } })
+    expect(screen.getByRole('button', { name: 'Reset password' })).toBeEnabled()
+  })
+
+  it('surfaces a reset request error and stays on the request step', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: null })
+    auth.requestPasswordReset.mockResolvedValueOnce({
+      ok: false,
+      error: 'Email rate limit exceeded',
+    })
+    renderView()
+    await screen.findByPlaceholderText('you@example.com')
+    fireEvent.click(screen.getByRole('button', { name: 'Forgot password?' }))
+    fireEvent.change(screen.getByPlaceholderText('you@example.com'), {
+      target: { value: 'a@b.com' },
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Send reset code' }))
+    })
+    expect(await screen.findByText('Email rate limit exceeded')).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Enter code')).toBeNull()
   })
 
   it('signed-in shows the email + Sign out', async () => {
