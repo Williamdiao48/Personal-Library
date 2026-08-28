@@ -353,8 +353,43 @@ curl -sS -X POST "$SUPABASE_URL/functions/v1/reconcile-blobs" \
   -H "Authorization: Bearer $RECONCILE_SECRET" \
   -H 'content-type: application/json' -d '{"apply":true}'
 ```
-Scheduling (e.g. weekly via `pg_cron` + `pg_net`) is a later add — run it manually until
-you trust it.
+### Scheduling — monthly dry-run (migration `20260828120000_reconcile_schedule.sql`)
+
+The sweep now runs **automatically once a month** as a **dry-run only** (detection), while
+**deletion stays a manual** `{"apply":true}` curl. The migration:
+
+- Creates **`reconcile_runs`** — a service-role-only audit log. The function appends one row
+  per invocation (scheduled *or* manual), so `reconcile_runs` answers both "did the monthly
+  sweep run?" (a row each month) and "did it find anything?" (`orphan_count > 0` → go arm
+  deletion by hand). Check it with:
+  ```sql
+  select ran_at, dry_run, scanned, orphan_count, deleted_count, orphans
+    from reconcile_runs order by ran_at desc limit 12;
+  ```
+- Schedules a `pg_cron` job (`reconcile-blobs-monthly`, `0 3 1 * *` = 03:00 UTC on the 1st)
+  that `pg_net`-POSTs the function with a **bare body** (⇒ dry-run). Monthly, not weekly:
+  orphans are vanishingly rare and the 30-day age-gate means nothing is even a delete
+  candidate for a month.
+
+**One-time manual setup** (the migration reads these at fire time from **Vault** — they are
+never inlined, so the migration carries no secret). In the SQL Editor **once**:
+```sql
+select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');
+select vault.create_secret('<the RECONCILE_SECRET value>',       'reconcile_secret');
+```
+Then apply the migration and (re)deploy the function so audit-logging is live:
+```bash
+supabase db push
+supabase functions deploy reconcile-blobs --no-verify-jwt
+```
+Verify the schedule, and (after the 1st, or a manual test-fire) the results:
+```sql
+select jobname, schedule, active from cron.job where jobname = 'reconcile-blobs-monthly';
+select * from cron.job_run_details order by start_time desc limit 5;  -- did the cron fire OK?
+select * from reconcile_runs order by ran_at desc limit 5;            -- what did it find?
+```
+If a run ever reports orphans, eyeball them, then arm deletion once by hand with the
+`{"apply":true}` curl above.
 
 ## What's here vs. coming
 
