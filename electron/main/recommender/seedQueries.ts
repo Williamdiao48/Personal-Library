@@ -10,6 +10,8 @@
 // library these seeds are weak and the vector rerank (C4.4) does most of the work.
 // v1 passes tags through unmodified; a tag→subject map is a Chunk-6 tuning concern.
 
+import { canonicalSubjectKey } from './subjectNormalize'
+
 /** One liked item's seed contribution: its author, its tags, and its affinity weight. */
 export interface SeedSource {
   author: string | null
@@ -43,22 +45,79 @@ function clean(term: string): string {
   return term.replace(/"/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
+// Non-discriminative subject terms that make TERRIBLE `subject:` seeds. Owned-book
+// subjects (ownedBookSubjects.ts) fold OpenLibrary's raw tags into the seed pool, and
+// those include broad format/classification labels — a `subject:"Fiction"` query returns
+// the entire catalog as noise, `subject:"Juvenile Fiction"` floods with unrelated kids'
+// books — plus OpenLibrary metadata artifacts (`nyt:…`, `series:…`, reading-level tags)
+// that aren't real subjects at all. Dropping them concentrates the seed budget
+// (MAX_SUBJECTS) on TOPICAL subjects ("Wizards", "Spies", "Kings and rulers") that
+// actually discriminate taste. This is upstream of the candidate content-type gate: it
+// stops the junk being fetched, rather than filtering it after. (2026-08-26 rework.)
+const SUBJECT_STOPWORDS = new Set([
+  'fiction',
+  'nonfiction',
+  'non-fiction',
+  'juvenile fiction',
+  'juvenile literature',
+  'juvenile works',
+  'juvenile audience',
+  'juvenile',
+  "children's fiction",
+  "children's literature",
+  "children's stories",
+  "children's books",
+  'childrens',
+  'children',
+  'young adult fiction',
+  'young adult',
+  'teen fiction',
+  'middle grade',
+  'general',
+  'classics',
+  'literature',
+  'english literature',
+  'english fiction',
+  'fiction, fantasy, general',
+  'large type books',
+  'accessible book',
+])
+
+// OpenLibrary metadata artifacts and locale/format noise that leak into the subject list
+// but are not real subjects (`nyt:combined-print…`, `series:Mistborn`, `Reading Level-Grade 9`).
+const SUBJECT_STOP_RE =
+  /^(nyt:|series:|form:|genre:|award:|subject:|lc:|ddc:|reading level|open library staff|new york times|translat|romans, nouvelles)/i
+
+/** A subject term worth turning into a `subject:` query — topical, not a broad
+ * format/classification label or an OpenLibrary metadata artifact. */
+export function isDiscriminativeSubject(term: string): boolean {
+  const t = term.toLowerCase()
+  return t.length > 1 && !SUBJECT_STOPWORDS.has(t) && !SUBJECT_STOP_RE.test(t)
+}
+
 type Aggregated = { display: string; weight: number }
 
 /**
- * Sum weights per term, case-insensitively (keeping the first-seen casing), and
- * return them heaviest-first. Ties break alphabetically so the output is
- * deterministic (stable cache keys, stable eyeball-gate runs). Empty terms drop.
+ * Sum weights per term and return them heaviest-first. Ties break alphabetically so
+ * the output is deterministic (stable cache keys, stable eyeball-gate runs). Empty
+ * terms drop. `keyOf` sets the identity two terms collapse under (default =
+ * case-insensitive); on collision the SHORTER display wins (so a subject's bare topic
+ * "Bears" beats the "Bears, Fiction" variant), ties keeping the first seen.
  */
-function aggregate(entries: { term: string; weight: number }[]): Aggregated[] {
+function aggregate(
+  entries: { term: string; weight: number }[],
+  keyOf: (display: string) => string = (d) => d.toLowerCase(),
+): Aggregated[] {
   const map = new Map<string, Aggregated>()
   for (const { term, weight } of entries) {
     const display = clean(term)
     if (!display) continue
-    const key = display.toLowerCase()
+    const key = keyOf(display)
     const cur = map.get(key)
-    if (cur) cur.weight += weight
-    else map.set(key, { display, weight })
+    if (cur) {
+      cur.weight += weight
+      if (display.length < cur.display.length) cur.display = display
+    } else map.set(key, { display, weight })
   }
   return [...map.values()].sort((a, b) => b.weight - a.weight || a.display.localeCompare(b.display))
 }
@@ -78,11 +137,18 @@ export function buildSeedQueries(sources: SeedSource[], cfg = SEED): SeedQuery[]
   const authorEntries: { term: string; weight: number }[] = []
   for (const s of sources) {
     if (s.weight <= 0) continue
-    for (const t of s.tags) tagEntries.push({ term: t, weight: s.weight })
+    // Drop non-discriminative format labels / OL metadata artifacts before they become
+    // `subject:` queries (see SUBJECT_STOPWORDS) — keeps the seed budget on topical tags.
+    for (const t of s.tags) {
+      if (isDiscriminativeSubject(clean(t))) tagEntries.push({ term: t, weight: s.weight })
+    }
     if (s.author) authorEntries.push({ term: s.author, weight: s.weight })
   }
 
-  const subjects = aggregate(tagEntries).slice(0, cfg.MAX_SUBJECTS)
+  // Subjects aggregate under their canonical key so "Bears" and "Bears, Fiction"
+  // sum into ONE seed (weights combined) instead of spending two of MAX_SUBJECTS on
+  // the same topic; authors keep the plain case-insensitive identity.
+  const subjects = aggregate(tagEntries, canonicalSubjectKey).slice(0, cfg.MAX_SUBJECTS)
   const authors = aggregate(authorEntries).slice(0, cfg.MAX_AUTHORS)
 
   const queries: SeedQuery[] = []

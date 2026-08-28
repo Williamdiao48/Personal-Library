@@ -12,9 +12,12 @@ import {
   type SourceName,
 } from './candidates'
 import { unionCandidates, type CandidateSource } from './candidateSource'
+import { canonicalSubjectKey } from './subjectNormalize'
+import { isDiscriminativeSubject } from './seedQueries'
 import { loadCandidateVectors, saveCandidateVectors } from './candidateEmbeddings'
 import { loadOpens } from './interactions'
 import { engagementCentroid, blendEngagement, recentlyOpenedIds } from './engagement'
+import { pickExplorePicks, EXPLORE } from './explore'
 import { openLibrarySource } from './sources/openLibrary'
 import { ao3Source } from './sources/ao3'
 import { ffnSource } from './sources/ffn'
@@ -158,12 +161,42 @@ export function scoreCandidate(vec: Float32Array, centroids: Float32Array[]): nu
 }
 
 /**
+ * A soft per-topic diversity cap for `mmrSelect`: at most `cap` picks may share a
+ * `keyOf` topic key (empty key ⇒ uncapped). `counts` is the running per-key tally,
+ * passed IN so several `mmrSelect` calls (fresh/owned/rest in `diversifyBookPicks`)
+ * share one budget. "Soft" = when every remaining candidate is capped but slots are
+ * still unfilled, the cap relaxes rather than shrink the feed (see `mmrSelect`).
+ */
+export interface TopicCap {
+  keyOf: (c: ScoredCandidate) => string
+  cap: number
+  counts: Map<string, number>
+}
+
+/** The subject a topical diversity cap keys on: the first *discriminative* subject
+ *  (format/classification labels skipped), canonicalized so variants collapse. Empty
+ *  when the candidate has no discriminative subject (⇒ never capped). Pure. */
+export function leadTopicKey(cand: Candidate): string {
+  for (const s of cand.subjects) {
+    if (isDiscriminativeSubject(s)) return canonicalSubjectKey(s)
+  }
+  return ''
+}
+
+/**
  * Maximal Marginal Relevance selection (§9, D6): greedily pick the candidate
  * maximizing `λ·score − (1−λ)·maxSim(to already-picked)`, so a cluster of
  * near-duplicate high scorers yields ONE pick and diversity is rewarded. Pure;
  * returns the selected `ScoredCandidate`s in pick order (score kept for the card).
+ * An optional `topicCap` additionally caps how many picks may share a topic key,
+ * relaxing only when nothing uncapped remains (so the feed never shrinks).
  */
-export function mmrSelect(scored: ScoredCandidate[], k: number, lambda: number): ScoredCandidate[] {
+export function mmrSelect(
+  scored: ScoredCandidate[],
+  k: number,
+  lambda: number,
+  topicCap?: TopicCap,
+): ScoredCandidate[] {
   const selected: ScoredCandidate[] = []
   const remaining = scored.slice()
   // maxSim[i] = similarity of remaining[i] to its NEAREST already-selected pick (0
@@ -173,18 +206,36 @@ export function mmrSelect(scored: ScoredCandidate[], k: number, lambda: number):
   // every remaining×selected pair each round (O(k²·N)). Selection is identical —
   // the running max over selected equals the from-scratch max.
   const maxSim = new Array<number>(remaining.length).fill(0)
+  const capped = (i: number): boolean => {
+    if (!topicCap) return false
+    const key = topicCap.keyOf(remaining[i])
+    return key !== '' && (topicCap.counts.get(key) ?? 0) >= topicCap.cap
+  }
   while (selected.length < k && remaining.length > 0) {
-    let bestIdx = 0
+    // Best MMR among topic-uncapped candidates; if none remain uncapped, relax the cap
+    // (best MMR overall) rather than under-fill — the cap is soft.
+    let bestIdx = -1
     let bestMmr = -Infinity
+    let relaxIdx = 0
+    let relaxMmr = -Infinity
     for (let i = 0; i < remaining.length; i++) {
       const mmr = lambda * remaining[i].score - (1 - lambda) * maxSim[i]
-      if (mmr > bestMmr) {
+      if (mmr > relaxMmr) {
+        relaxMmr = mmr
+        relaxIdx = i
+      }
+      if (!capped(i) && mmr > bestMmr) {
         bestMmr = mmr
         bestIdx = i
       }
     }
-    const pick = remaining.splice(bestIdx, 1)[0]
-    maxSim.splice(bestIdx, 1)
+    const pickIdx = bestIdx >= 0 ? bestIdx : relaxIdx
+    const pick = remaining.splice(pickIdx, 1)[0]
+    maxSim.splice(pickIdx, 1)
+    if (topicCap) {
+      const key = topicCap.keyOf(pick)
+      if (key !== '') topicCap.counts.set(key, (topicCap.counts.get(key) ?? 0) + 1)
+    }
     selected.push(pick)
     for (let i = 0; i < remaining.length; i++) {
       const sim = cosine(remaining[i].vec, pick.vec)
@@ -225,7 +276,60 @@ export const BOOK_DIVERSITY = {
   // skews to discovery (the "favor new authors" choice). The rest are authors new to
   // the reader. A per-author cap of 1 keeps any single author to one card.
   OWNED_AUTHOR_FRACTION: 0.2,
+  // At most this many book picks may share one lead topic (canonical discriminative
+  // subject, `leadTopicKey`) — de-fixates a feed that a dense owned cluster (e.g. five
+  // Seekers "Bears" books) would otherwise flood, freeing slots for genre-siblings
+  // (Warriors / Foxcraft-style animal adventure). Judgment-set; soft (relaxes before it
+  // shrinks the feed). Books only, mirroring the author cap.
+  TOPIC_CAP: 2,
 } as const
+
+export const POPULARITY = {
+  // How hard the readership prior leads, as a FRACTION of a book's own taste score: the
+  // lift is `WEIGHT · popNorm · score`, so it's proportional to fit (see applyPopularity-
+  // Prior). At 0.4 a maximally-read book gains up to 40% of its taste score — enough to
+  // lead among genuinely-on-taste books ("lead by popularity"), but a book that only
+  // vaguely fits earns a proportionally small lift and can't leapfrog a real match. This
+  // is the fix for "popular books that are only vaguely within my genres".
+  WEIGHT: 0.4,
+  // Small symmetric jitter (± JITTER/2) so the exact blockbuster order isn't frozen:
+  // books within ~this of each other reshuffle between refreshes ("some variance"),
+  // while the popularity gradient still dominates. Judgment-set; tune post real-usage.
+  JITTER: 0.08,
+} as const
+
+/**
+ * Fold a readership popularity prior + small jitter into BOOK candidate scores IN PLACE,
+ * so the grounded, well-read books lead the feed while retaining a little variance
+ * between refreshes. Popularity is log1p'd (readership is heavy-tailed) then min-max
+ * normalized WITHIN the scored book pool, so it's a relative lift (the pool is already
+ * grounded by the `readinglog` source sort). The lift is TASTE-SCALED — `WEIGHT · popNorm
+ * · score`, not a flat add — so popularity REFINES the order among books that already fit
+ * and cannot rescue a merely-popular, vaguely-on-taste book above a genuine match (a flat
+ * additive prior did exactly that). No-op — byte-identical to pure taste — when no book
+ * carries a popularity signal (fics, or a pool OpenLibrary returned no counts for),
+ * preserving the cannot-hurt invariant. Mutates `scored`. Pure but for `rng`.
+ */
+export function applyPopularityPrior(
+  scored: ScoredCandidate[],
+  cfg = POPULARITY,
+  rng: () => number = Math.random,
+): void {
+  const books = scored.filter(
+    (s) => bucketOf(s.cand.source) === 'book' && s.cand.popularity != null,
+  )
+  if (books.length === 0) return
+  const logs = books.map((s) => Math.log1p(Math.max(0, s.cand.popularity!)))
+  const min = Math.min(...logs)
+  const span = Math.max(...logs) - min
+  books.forEach((s, i) => {
+    const norm = span > 0 ? (logs[i] - min) / span : 0
+    // Taste-scaled: the lift is a fraction of the book's own taste score, so a loosely-
+    // on-taste blockbuster earns only a small boost and can't overtake a real match; the
+    // jitter stays a flat ± term so genuine near-ties still reshuffle between refreshes.
+    s.score += cfg.WEIGHT * norm * Math.max(0, s.score) + cfg.JITTER * (rng() - 0.5)
+  })
+}
 
 /**
  * Author-diverse book selection (§ "favor new authors"): at most ONE book per author,
@@ -252,16 +356,29 @@ export function diversifyBookPicks(
   }
   const deduped = [...byAuthor.values()]
 
+  // Shared topical-diversity budget across all three selection passes below, so no
+  // single lead topic (e.g. "bears") can flood the book feed. Soft: mmrSelect relaxes
+  // it before under-filling, and the never-shrink top-up (step 3) also relaxes.
+  const topicCap: TopicCap = {
+    keyOf: (s) => leadTopicKey(s.cand),
+    cap: cfg.TOPIC_CAP,
+    counts: new Map<string, number>(),
+  }
+
   // 2. Prefer authors new to the reader; cap owned-author books to the fraction.
   const owned = deduped.filter((s) => ownedAuthors.has(authorKey(s.cand.author)))
   const fresh = deduped.filter((s) => !ownedAuthors.has(authorKey(s.cand.author)))
   const ownedTarget = Math.min(owned.length, Math.round(quota * cfg.OWNED_AUTHOR_FRACTION))
   const freshTarget = quota - ownedTarget
 
-  const picks = [...mmrSelect(fresh, freshTarget, lambda), ...mmrSelect(owned, ownedTarget, lambda)]
+  const picks = [
+    ...mmrSelect(fresh, freshTarget, lambda, topicCap),
+    ...mmrSelect(owned, ownedTarget, lambda, topicCap),
+  ]
 
   // 3. Never shrink: top up from the leftovers (new-author side short, or owned past
-  //    its cap) until we hit the quota or run out.
+  //    its cap) until we hit the quota or run out. Cap relaxed here — filling the page
+  //    wins over topic diversity once the diverse candidates are exhausted.
   if (picks.length < quota) {
     const taken = new Set(picks.map((s) => s.cand.sourceId))
     const rest = deduped.filter((s) => !taken.has(s.cand.sourceId))
@@ -488,6 +605,9 @@ export async function recommend(
      * by the Discover IPC when the local-LLM setting is on; omitted ⇒ today's behavior.
      */
     llmRerank?: { client: LlmClient }
+    /** Random source for the popularity prior's jitter (see applyPopularityPrior).
+     *  Defaults to Math.random; injected deterministically in tests. */
+    rng?: () => number
   } = {},
 ): Promise<Recommendation[]> {
   const limit = opts.limit ?? RERANK.TOP_K
@@ -600,6 +720,18 @@ export async function recommend(
     const vec = vecById.get(cand.sourceId)!
     return { cand, vec, score: blendEngagement(scoreCandidate(vec, taste.centroids), vec, engage) }
   })
+  // Snapshot the PURE taste+engagement score BEFORE the popularity prior mutates it.
+  // Exploration must stay popularity-BLIND: its whole job is novelty, so leading it by
+  // popularity too would collapse the explore slots onto the now-grounded exploit feed
+  // (they'd both surface the same well-read books). Exploit leads by popularity; explore
+  // ranks by pure taste × novelty. Keyed by sourceId (candidates are unique by it).
+  const pureScoreById = new Map(scored.map((s) => [s.cand.sourceId, s.score]))
+
+  // Lead the book feed by readership (grounded, well-read books over deep-catalogue
+  // obscurities) with a little jitter so the same blockbusters don't freeze at the top.
+  // A no-op when no book carries a popularity signal (cannot-hurt), so it sits cleanly
+  // upstream of the LLM rerank / selection / exploration below.
+  applyPopularityPrior(scored, POPULARITY, opts.rng)
 
   // Optional LLM rerank of the BOOK bucket (books-only; fics untouched). The model
   // scores fit for the top-cosine book shortlist; applyLlmBookRerank blends that into
@@ -632,14 +764,54 @@ export async function recommend(
     book: scored.filter((s) => bucketOf(s.cand.source) === 'book').length,
     fic: scored.filter((s) => bucketOf(s.cand.source) === 'fic').length,
   }
+  // Exploration (epsilon slots): reserve k of the page's slots for under-observed picks
+  // the exploit ranker would pass over, so the feed doesn't ossify into the same authors
+  // forever (see explore.ts). k is 0 — exploration OFF, byte-identical to pure exploit —
+  // unless there's an owned-evidence base to judge "under-observed" against; and we never
+  // spend the whole page (keep ≥1 exploit slot). Injects HERE, downstream of scoring.
+  const ownedVecs = taste.ownedVecs ?? []
+  const exploreSlots = ownedVecs.length > 0 ? Math.min(EXPLORE.SLOTS, Math.max(0, limit - 1)) : 0
+  const exploitLimit = limit - exploreSlots
+
   // A content-mode run gives every slot to the requested bucket (the other's sources
   // weren't even fetched); otherwise floor both buckets on the proportional split.
   const alloc = wantBucket
-    ? { book: wantBucket === 'book' ? limit : 0, fic: wantBucket === 'fic' ? limit : 0 }
-    : floorAlloc(allocateSlots(limit, snapshot.mix), DISCOVER_BUCKET_FLOOR, avail)
+    ? {
+        book: wantBucket === 'book' ? exploitLimit : 0,
+        fic: wantBucket === 'fic' ? exploitLimit : 0,
+      }
+    : floorAlloc(allocateSlots(exploitLimit, snapshot.mix), DISCOVER_BUCKET_FLOOR, avail)
   // `ranked` = `scored` unless the optional LLM book-rerank ran above (which reorders
   // the book bucket); selection/quota honor that order.
-  const selected = selectByQuota(ranked, limit, alloc, RERANK.LAMBDA, snapshot.ownedAuthors)
+  const exploit = selectByQuota(ranked, exploitLimit, alloc, RERANK.LAMBDA, snapshot.ownedAuthors)
+
+  // The explore pool is the passed-over tail (`ranked \ exploit`) — real candidates
+  // already fetched/embedded/scored, just not relevant enough to win an exploit slot.
+  const exploitIds = new Set(exploit.map((s) => s.cand.sourceId))
+  // Restore each tail candidate's PURE (pre-popularity) taste score for exploration, so
+  // explore ranks by taste × novelty — surfacing genuinely novel on-taste books distinct
+  // from the popularity-led exploit feed, not just popular-but-under-observed ones. Tail
+  // MEMBERSHIP still reflects the popularity-led exploit claim (popular books are taken by
+  // exploit, leaving the novel remainder here), which is what we want.
+  const tail = ranked
+    .filter((s) => !exploitIds.has(s.cand.sourceId))
+    // Exploration favours NEW authors: never spend an explore slot on an author the reader
+    // already owns (a 6th Seekers book when they own 5 defeats the purpose). The exploit path
+    // only CAPS owned authors; explore excludes them outright.
+    .filter((s) => !snapshot.ownedAuthors.has(authorKey(s.cand.author)))
+    .map((s) => ({ ...s, score: pureScoreById.get(s.cand.sourceId) ?? s.score }))
+  // Pass the emitted exploit vecs so explore can reject picks that just echo a visible card
+  // (redundancy wall) — explore should open a NEW direction, not restate the normal feed.
+  const explore = pickExplorePicks(
+    tail,
+    ownedVecs,
+    EXPLORE,
+    undefined,
+    exploit.map((s) => s.vec),
+  )
+  const exploreIds = new Set(explore.map((s) => s.cand.sourceId))
+
+  const selected = [...exploit, ...explore]
   const scoreById = new Map(selected.map((s) => [s.cand.sourceId, s.score]))
   const verified = verifyCandidates(
     selected.map((s) => s.cand),
@@ -662,5 +834,9 @@ export async function recommend(
     matchedTags: matchedTags(c.subjects, seedTerms),
     score: scoreById.get(c.sourceId) ?? 0,
     description: c.description,
+    // Origin tag drives #3's explore/exploit open-rate A/B + the testing marker.
+    // Stamped ONLY on explore cards — exploit cards omit the (optional) field, so a
+    // run with exploration off is byte-identical to before exploration existed.
+    ...(exploreIds.has(c.sourceId) ? { origin: 'explore' as const } : {}),
   }))
 }
