@@ -673,6 +673,9 @@ export interface Api {
     requestPasswordReset: (email: string) => Promise<AuthResult>
     /** Password reset step 2: verify the OTP and set the new password (signs in). */
     confirmPasswordReset: (email: string, token: string, password: string) => Promise<AuthResult>
+    /** Permanently delete the account + all cloud data (R2 + Postgres); signs out on
+     *  success. Local library on this device is kept. */
+    deleteAccount: () => Promise<AuthResult>
     /** Subscribe to auth state changes (sign-in/out/refresh); returns unsubscribe. */
     onStateChange: (callback: (state: AuthState) => void) => () => void
   }

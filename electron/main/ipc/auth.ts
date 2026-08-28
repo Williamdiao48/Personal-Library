@@ -4,6 +4,7 @@ import { getSupabase, isConfigured } from '../auth/client'
 import { clearSessionStore } from '../auth/sessionStore'
 import { drainOutbox } from '../cloud/uploader'
 import { notifyAuthChange } from '../cloud/sync/syncService'
+import { deleteCloudAccount } from '../cloud/deleteAccount'
 
 // The renderer-facing auth seam. Mirrors the app's IPC convention (renderer →
 // window.api → ipcMain) and the updater's event-forwarding pattern for pushing
@@ -137,4 +138,22 @@ export function registerAuthHandlers(): void {
       return { ok: true, user: toAuthUser(data.user) }
     },
   )
+
+  // Account deletion (L2) — permanently erase the caller's cloud footprint. The
+  // delete-account Edge Function (authorized by this session's JWT) purges the user's
+  // R2 prefix and hard-deletes their auth user, cascading every Postgres row. ONLY on a
+  // confirmed success do we tear down the local session (signOut + wipe the encrypted
+  // store), so a failed/partial delete never signs the user out of a still-live account.
+  // Local library data on this device is intentionally kept — the user's books remain
+  // readable offline; they simply stop syncing.
+  ipcMain.handle('auth:deleteAccount', async (): Promise<AuthResult> => {
+    const supabase = getSupabase()
+    if (!supabase) return NOT_CONFIGURED
+    const res = await deleteCloudAccount()
+    if (!res.ok) return { ok: false, error: res.error ?? 'Account deletion failed.' }
+    // Cloud footprint is gone and the auth user no longer exists → drop the local session.
+    await supabase.auth.signOut()
+    clearSessionStore()
+    return { ok: true }
+  })
 }

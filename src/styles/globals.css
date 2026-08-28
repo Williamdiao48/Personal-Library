@@ -2503,6 +2503,17 @@ button:disabled {
   background: var(--danger);
 }
 
+/* Account-deletion danger zone — a subtle divider + tinted label set it apart from
+   the ordinary account rows above it, without shouting. */
+.settings-danger {
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.settings-danger .settings-row-label {
+  color: var(--danger);
+}
+
 .settings-action-btn--ghost {
   background: transparent;
   color: var(--text-muted);

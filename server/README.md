@@ -391,6 +391,50 @@ select * from reconcile_runs order by ran_at desc limit 5;            -- what di
 If a run ever reports orphans, eyeball them, then arm deletion once by hand with the
 `{"apply":true}` curl above.
 
+## Edge Function: `delete-account` (account-lifecycle L2 — self-service deletion)
+
+`functions/delete-account/` permanently erases the **caller's own** cloud footprint. Unlike
+`reconcile-blobs` (admin-secret, no user context) it is **user-gated**: it verifies the
+caller's Supabase JWT and takes the uid **from the token, never the body**, so a caller can
+only ever delete their own account. It then wields `service_role` to:
+
+1. **Purge R2** — list `users/<uid>/` and delete every object (unconditional; no age-gate, no
+   wanted-hash diff — the account is going away). Best-effort per object.
+2. **Hard-delete the auth user** — `auth.admin.deleteUser(uid)`, which **cascades** every
+   synced table + `profiles` (all are `references auth.users(id) on delete cascade`), so no
+   per-table delete and **no migration** is needed.
+
+**Ordering:** R2 first, then the auth user — identity removal is what makes a deletion real,
+so it always runs even if some R2 deletes fail. Any R2 leftover self-heals: once the user's
+`items` rows are cascaded away, `reconcile-blobs`' wanted-set for that uid is empty, so the
+monthly sweep reaps the remainder. **Local data on the user's device is untouched** — the
+client signs out on success (`electron/main/ipc/auth.ts`), keeping the offline library.
+
+### Contract
+
+`POST /functions/v1/delete-account` — `Authorization: Bearer <the user's session JWT>` (the
+client sends it via `supabase.functions.invoke('delete-account')`). No body. Returns
+`{ ok, deletedObjects, failedObjects, authDeleted }`.
+
+### Structure & test
+
+Same split as the siblings: `handler.ts` (runtime-agnostic core — JWT scoping, ordering,
+best-effort purge; unit-tested by the vitest `server` project against fakes) + `index.ts`
+(Deno glue: anon-client JWT verify, R2 AwsClient, the `service_role` admin client). Run the
+core tests with `npm test` (they're in the `server` project, node env — no ABI toggle).
+
+### Deploy
+
+Deploy **with** JWT verification (this has a real user context — do **not** pass
+`--no-verify-jwt`). No new secrets (R2_* already set for `blob-url`; `SUPABASE_URL` /
+`SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` auto-injected). No `db push` — no migration.
+```bash
+supabase functions deploy delete-account
+```
+Verify once against a throwaway account: sign in, delete from **Settings → Account → Delete
+account**, then confirm the auth user is gone (Dashboard → Auth → Users) and the R2 prefix is
+empty (`aws s3 ls s3://<bucket>/users/<uid>/ --endpoint-url <r2>` → nothing).
+
 ## What's here vs. coming
 
 - **Now (Phase 1):** these migrations + auth. Empty tables; nothing syncs yet.

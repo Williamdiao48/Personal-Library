@@ -519,6 +519,7 @@ function AccountSettings() {
     signOut,
     requestPasswordReset,
     confirmPasswordReset,
+    deleteAccount,
   } = useAuth()
   const { settings, updateSettings } = useSettings()
   const [mode, setMode] = useState<'signin' | 'signup' | 'reset'>('signin')
@@ -533,6 +534,14 @@ function AccountSettings() {
   const pwId = useId()
   const codeId = useId()
 
+  // Account-deletion "danger zone" state (signed-in view). Revealed on demand, then
+  // gated behind typing the account email so it can never fire on a stray click.
+  const [showDelete, setShowDelete] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+  const deleteConfirmId = useId()
+
   // Once signed in (including via the reset flow), snap the form back to 'signin' and
   // clear transient fields — so a later sign-out lands on the sign-in form, not the
   // reset page we happened to be on when the session was established.
@@ -544,6 +553,28 @@ function AccountSettings() {
       setPassword('')
     }
   }, [user])
+
+  // Guard: the destructive button only enables once the typed value matches the
+  // account email exactly (trimmed), so deletion is a deliberate, typed confirmation.
+  const canDelete = !!user?.email && deleteConfirm.trim() === user.email && !deleting
+
+  async function handleDeleteAccount() {
+    if (!canDelete) return
+    setDeleting(true)
+    setDeleteError('')
+    try {
+      const res = await deleteAccount()
+      if (!res.ok) {
+        setDeleteError(res.error ?? 'Could not delete your account. Please try again.')
+      }
+      // On success main signs out → AuthContext sets user=null → this panel flips back
+      // to the sign-in view; no further UI work needed here.
+    } catch (err: any) {
+      setDeleteError(err?.message ?? 'Could not delete your account. Please try again.')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   if (loading) return null
 
@@ -607,6 +638,54 @@ function AccountSettings() {
             checked={settings.enableCloudProcessing}
             onChange={(v) => updateSettings({ enableCloudProcessing: v })}
           />
+        </div>
+
+        <div className="settings-row settings-row--top settings-danger">
+          <div className="settings-row-stack">
+            <span className="settings-row-label">Delete account</span>
+            <span className="settings-row-hint">
+              Permanently deletes your account and all data stored in the cloud. Your library on
+              this device stays, but it will no longer sync. This can’t be undone.
+            </span>
+            {showDelete && (
+              <>
+                <label className="settings-row-hint" htmlFor={deleteConfirmId}>
+                  Type <strong>{user.email ?? user.id}</strong> to confirm.
+                </label>
+                <input
+                  id={deleteConfirmId}
+                  type="email"
+                  autoComplete="off"
+                  className="settings-color-label-input"
+                  value={deleteConfirm}
+                  placeholder={user.email ?? 'your email'}
+                  onChange={(e) => setDeleteConfirm(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void handleDeleteAccount()
+                  }}
+                />
+                {deleteError && (
+                  <span className="settings-feedback settings-feedback--err">{deleteError}</span>
+                )}
+              </>
+            )}
+          </div>
+          {showDelete ? (
+            <button
+              className="settings-action-btn settings-action-btn--danger"
+              onClick={handleDeleteAccount}
+              disabled={!canDelete}
+            >
+              {deleting ? 'Deleting…' : 'Delete account'}
+            </button>
+          ) : (
+            <button
+              className="settings-action-btn settings-action-btn--ghost"
+              onClick={() => setShowDelete(true)}
+            >
+              Delete account…
+            </button>
+          )}
         </div>
       </>
     )
