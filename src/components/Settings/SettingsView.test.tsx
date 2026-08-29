@@ -32,6 +32,7 @@ vi.mock('../../services/auth', () => ({
     signOut: vi.fn(),
     requestPasswordReset: vi.fn(),
     confirmPasswordReset: vi.fn(),
+    deleteAccount: vi.fn(),
     onStateChange: vi.fn(() => () => {}),
   },
 }))
@@ -539,5 +540,58 @@ describe('SettingsView — Account section', () => {
     renderView()
 
     expect(await screen.findByText(/3 changes waiting to sync/)).toBeInTheDocument()
+  })
+
+  it('gates account deletion behind typing the exact account email', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })
+    renderView()
+
+    // Reveal the danger-zone confirmation.
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete account…' }))
+    const confirm = screen.getByPlaceholderText('me@x.com')
+    const deleteBtn = screen.getByRole('button', { name: 'Delete account' })
+
+    // Wrong text → disabled; exact email → enabled.
+    expect(deleteBtn).toBeDisabled()
+    fireEvent.change(confirm, { target: { value: 'wrong@x.com' } })
+    expect(deleteBtn).toBeDisabled()
+    fireEvent.change(confirm, { target: { value: 'me@x.com' } })
+    expect(deleteBtn).toBeEnabled()
+    expect(auth.deleteAccount).not.toHaveBeenCalled()
+  })
+
+  it('deletes the account and returns to the sign-in view on success', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })
+    auth.deleteAccount.mockResolvedValueOnce({ ok: true })
+    renderView()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete account…' }))
+    fireEvent.change(screen.getByPlaceholderText('me@x.com'), { target: { value: 'me@x.com' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Delete account' }))
+    })
+
+    expect(auth.deleteAccount).toHaveBeenCalledTimes(1)
+    // AuthContext cleared the user → panel flips back to the signed-out account form.
+    expect(await screen.findByRole('button', { name: 'Create account' })).toBeInTheDocument()
+  })
+
+  it('surfaces a deletion error and keeps the user signed in', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })
+    auth.deleteAccount.mockResolvedValueOnce({ ok: false, error: 'Account deletion failed.' })
+    renderView()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete account…' }))
+    fireEvent.change(screen.getByPlaceholderText('me@x.com'), { target: { value: 'me@x.com' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Delete account' }))
+    })
+
+    expect(await screen.findByText('Account deletion failed.')).toBeInTheDocument()
+    // Still signed in — the Sign out control is still present.
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
   })
 })

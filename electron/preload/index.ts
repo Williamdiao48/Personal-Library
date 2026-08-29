@@ -302,6 +302,7 @@ contextBridge.exposeInMainWorld('api', {
     requestPasswordReset: (email: string) => ipcRenderer.invoke('auth:requestPasswordReset', email),
     confirmPasswordReset: (email: string, token: string, password: string) =>
       ipcRenderer.invoke('auth:confirmPasswordReset', email, token, password),
+    deleteAccount: () => ipcRenderer.invoke('auth:deleteAccount'),
     onStateChange: (
       callback: (state: { user: { id: string; email: string | null } | null }) => void,
     ) => {

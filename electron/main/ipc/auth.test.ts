@@ -19,6 +19,7 @@ const h = vi.hoisted(() => {
     getSupabase: vi.fn(),
     clearSessionStore: vi.fn(),
     drainOutbox: vi.fn(() => Promise.resolve()),
+    deleteCloudAccount: vi.fn(),
   }
 })
 
@@ -30,6 +31,9 @@ vi.mock('../auth/sessionStore', () => ({ clearSessionStore: h.clearSessionStore 
 // The auth state-change hook kicks the Phase 2 blob uploader when a session
 // appears — stub it so this suite doesn't load the DB, and assert the trigger.
 vi.mock('../cloud/uploader', () => ({ drainOutbox: h.drainOutbox }))
+// Account deletion delegates the cloud work to this wrapper — stub it so the IPC
+// suite controls the outcome and asserts the sign-out-only-on-success contract.
+vi.mock('../cloud/deleteAccount', () => ({ deleteCloudAccount: h.deleteCloudAccount }))
 
 import { registerAuthHandlers } from './auth'
 
@@ -175,6 +179,24 @@ describe('auth IPC — configured', () => {
     })
   })
 
+  it('deleteAccount purges the cloud then signs out + clears the session on success', async () => {
+    h.deleteCloudAccount.mockResolvedValue({ ok: true })
+    h.fakeSupabase.auth.signOut.mockResolvedValue({})
+    const res = await invoke('auth:deleteAccount')
+    expect(h.deleteCloudAccount).toHaveBeenCalledTimes(1)
+    expect(h.fakeSupabase.auth.signOut).toHaveBeenCalledTimes(1)
+    expect(h.clearSessionStore).toHaveBeenCalledTimes(1)
+    expect(res).toEqual({ ok: true })
+  })
+
+  it('deleteAccount does NOT sign out when the cloud delete fails', async () => {
+    h.deleteCloudAccount.mockResolvedValue({ ok: false, error: 'unauthorized' })
+    const res = await invoke('auth:deleteAccount')
+    expect(res).toEqual({ ok: false, error: 'unauthorized' })
+    expect(h.fakeSupabase.auth.signOut).not.toHaveBeenCalled()
+    expect(h.clearSessionStore).not.toHaveBeenCalled()
+  })
+
   it('broadcasts auth state changes to open windows', () => {
     const send = vi.fn()
     vi.spyOn(BrowserWindow, 'getAllWindows').mockReturnValue([{ webContents: { send } }] as any)
@@ -224,5 +246,13 @@ describe('auth IPC — not configured', () => {
     expect(req.error).toMatch(/not configured/i)
     expect(conf.ok).toBe(false)
     expect(conf.error).toMatch(/not configured/i)
+  })
+
+  it('deleteAccount returns a not-configured error and never calls the cloud delete', async () => {
+    h.getSupabase.mockReturnValue(null)
+    const res = (await invoke('auth:deleteAccount')) as any
+    expect(res.ok).toBe(false)
+    expect(res.error).toMatch(/not configured/i)
+    expect(h.deleteCloudAccount).not.toHaveBeenCalled()
   })
 })

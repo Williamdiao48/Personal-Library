@@ -21,6 +21,9 @@ interface AuthCtx {
   requestPasswordReset: (email: string) => Promise<AuthResult>
   /** Password reset step 2: verify the code + set a new password (signs in). */
   confirmPasswordReset: (email: string, token: string, password: string) => Promise<AuthResult>
+  /** Permanently delete the account + all cloud data; signs out on success. Local
+   *  library on this device is kept. */
+  deleteAccount: () => Promise<AuthResult>
 }
 
 const AuthContext = createContext<AuthCtx | null>(null)
@@ -90,6 +93,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return res
   }
 
+  const deleteAccount = async () => {
+    const res = await authService.deleteAccount()
+    // On success the account is gone and main has signed out; drop the user eagerly
+    // (the pushed auth:stateChange also lands) so the panel returns to the sign-in view.
+    if (res.ok) setUser(null)
+    return res
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -101,6 +112,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signOut,
         requestPasswordReset,
         confirmPasswordReset,
+        deleteAccount,
       }}
     >
       {children}
