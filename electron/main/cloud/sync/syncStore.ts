@@ -10,7 +10,7 @@
 import type { Database } from 'better-sqlite3'
 import { randomUUID } from 'crypto'
 import type { SyncSpec, SyncRow } from './specs'
-import { SYNC_SPEC_BY_TABLE } from './specs'
+import { SYNC_SPEC_BY_TABLE, SYNC_SPECS } from './specs'
 import { keyOf } from './reconcile'
 import { indexFtsText, readStoredFtsText } from '../../db/ftsText'
 import { NAME_TOMB_SEP, NAME_TOMB_SEP_SQL } from '../../db/nameTombstone'
@@ -23,6 +23,43 @@ export function getDeviceId(db: Database): string {
   const id = randomUUID()
   db.prepare('INSERT INTO sync_meta (id, device_id) VALUES (1, ?)').run(id)
   return id
+}
+
+/**
+ * The auth uid of the account this device's sync state (cursors + dirty flags)
+ * currently belongs to, or null if no account has synced here yet. Read on every
+ * auth change to detect an identity switch (see resetSyncStateForNewUser). Stored on
+ * the single sync_meta row (migration 45).
+ */
+export function getLastSyncedUserId(db: Database): string | null {
+  const row = db.prepare('SELECT last_user_id FROM sync_meta WHERE id = 1').get() as
+    { last_user_id: string | null } | undefined
+  return row?.last_user_id ?? null
+}
+
+/** Record the account this device's sync state now belongs to. Ensures the sync_meta
+ *  row exists first (device_id is NOT NULL, so we can't INSERT a bare row). */
+export function setLastSyncedUserId(db: Database, userId: string): void {
+  getDeviceId(db) // guarantees the id=1 row exists before we UPDATE it
+  db.prepare('UPDATE sync_meta SET last_user_id = ? WHERE id = 1').run(userId)
+}
+
+/**
+ * A DIFFERENT account signed in on this device → discard the previous account's sync
+ * state so the full local library re-syncs against the new account: clear every pull
+ * cursor (next pull starts from 0 → full re-pull) and mark every synced row dirty
+ * (full re-push). Without this, the delete-account / account-switch path leaves the
+ * library at dirty=0 (silent no-backup to the new account) and the first child-row
+ * edit orphan-FK-fails against a parent that was never re-pushed. Runs in one txn so
+ * a crash can't leave cursors cleared but rows un-dirtied (which would silently DROP
+ * the un-pushed local data on the next round). Idempotent.
+ */
+export function resetSyncStateForNewUser(db: Database): void {
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM sync_cursors').run()
+    for (const spec of SYNC_SPECS) db.prepare(`UPDATE ${spec.table} SET dirty = 1`).run()
+  })
+  tx()
 }
 
 export function getCursor(db: Database, table: string): number {

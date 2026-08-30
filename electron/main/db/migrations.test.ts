@@ -21,6 +21,12 @@ describe('database bring-up', () => {
     expect(db.pragma('user_version', { simple: true })).toBe(CURRENT_VERSION)
   })
 
+  it('sync_meta carries last_user_id (migration 45 — account-switch reconciliation)', () => {
+    const db = openTestDb()
+    const cols = (db.pragma('table_info(sync_meta)') as { name: string }[]).map((c) => c.name)
+    expect(cols).toContain('last_user_id')
+  })
+
   it('creates every expected table', () => {
     const db = openTestDb()
     const tables = (

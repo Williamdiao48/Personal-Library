@@ -11,7 +11,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 44
+export const CURRENT_VERSION = 45
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -544,6 +544,22 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
     );
     CREATE INDEX IF NOT EXISTS idx_discover_interactions_opened_at
       ON discover_interactions (opened_at);
+  `,
+  // Cloud hardening — the identity of the account this device's sync state belongs
+  // to. sync_cursors + the per-row `dirty` flags are DEVICE-GLOBAL, not scoped to a
+  // user; before this, deleting a cloud account and signing into a NEW one (or
+  // switching accounts) on the same device left that stale state in place → the
+  // local library "thinks" it's already synced (dirty=0) so nothing re-pushes to the
+  // new account (silent no-backup), and the first child-row edit orphan-FK-fails
+  // against a parent that was never re-pushed (progress_item_id_fkey). Persisting the
+  // last-synced user_id lets notifyAuthChange detect an identity change and force a
+  // fresh full sync (clear cursors + re-dirty everything) against the new account.
+  // DEVICE-LOCAL (sync_meta is never synced). Nullable — NULL means "no account has
+  // synced on this device yet", so the FIRST sign-in just records the id (no reset;
+  // a normal round handles the already-dirty fresh library). ALTER-ADD, MIGRATIONS
+  // only (never in schema.ts SCHEMA — sync_meta is created in migration 38).
+  45: `
+    ALTER TABLE sync_meta ADD COLUMN last_user_id TEXT;
   `,
 }
 

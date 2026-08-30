@@ -20,6 +20,7 @@ import {
   __setRepoFactoryForTest,
   __resetForTest,
 } from './syncService'
+import { getCursor, setCursor, getLastSyncedUserId } from './syncStore'
 
 // syncService is the long-lived driver around runSyncRound: the enabled gate, the
 // triggers (sign-in event, poll, manual), single-flight, and broadcast status.
@@ -67,6 +68,19 @@ function seedDirtyItem(db: ReturnType<typeof openTestDb>, id: string): void {
     `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, date_saved, date_modified, updated_at, dirty)
      VALUES (?, 'T', NULL, NULL, 'article', ?, 1, 100, 100, 100, 1)`,
   ).run(id, `${id}.html`)
+}
+
+/** An item that "thinks" it's already synced (dirty=0) — the stale state the
+ *  account-switch reset has to re-dirty. */
+function seedCleanItem(db: ReturnType<typeof openTestDb>, id: string): void {
+  db.prepare(
+    `INSERT INTO items (id, title, author, source_url, content_type, file_path, word_count, date_saved, date_modified, updated_at, dirty)
+     VALUES (?, 'T', NULL, NULL, 'article', ?, 1, 100, 100, 100, 0)`,
+  ).run(id, `${id}.html`)
+}
+
+function dirtyCount(db: ReturnType<typeof openTestDb>, table: string): number {
+  return (db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE dirty = 1`).get() as { n: number }).n
 }
 
 let db: ReturnType<typeof openTestDb>
@@ -179,7 +193,7 @@ describe('notifyAuthChange', () => {
     __setRepoFactoryForTest(async () => server.repo)
     setEnabled(true)
 
-    notifyAuthChange(false)
+    notifyAuthChange(null)
 
     expect(getStatus().signedIn).toBe(false)
     expect(server.pushed()).toBe(0)
@@ -197,7 +211,7 @@ describe('notifyAuthChange', () => {
       setEnabled(true) // this itself schedules one round
       seedDirtyItem(db, 'i1')
 
-      notifyAuthChange(true)
+      notifyAuthChange('user-a')
       await vi.advanceTimersByTimeAsync(5_000) // past the debounce window
 
       expect(rounds).toBe(1) // setEnabled + sign-in coalesced into one round
@@ -205,6 +219,54 @@ describe('notifyAuthChange', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('account-identity reconciliation', () => {
+  // sync_cursors + per-row `dirty` are device-global, not per-account, so signing
+  // into a different account on the same device must discard the previous account's
+  // sync state and re-sync the whole local library — else the library stays dirty=0
+  // (silent no-backup to the new account) and the first child edit orphan-FK-fails.
+  it('first sign-in records the account without resetting sync state', () => {
+    seedCleanItem(db, 'i1') // a row that already looks synced (dirty=0)
+    setCursor(db, 'items', 500)
+
+    notifyAuthChange('user-a')
+
+    expect(getLastSyncedUserId(db)).toBe('user-a')
+    // No prior account → no reset: the existing cursor + clean row are left alone.
+    expect(getCursor(db, 'items')).toBe(500)
+    expect(dirtyCount(db, 'items')).toBe(0)
+  })
+
+  it('re-signing into the SAME account leaves sync state untouched', () => {
+    notifyAuthChange('user-a') // records user-a
+    seedCleanItem(db, 'i1')
+    setCursor(db, 'items', 500)
+
+    notifyAuthChange('user-a') // same account again
+
+    expect(getCursor(db, 'items')).toBe(500)
+    expect(dirtyCount(db, 'items')).toBe(0)
+  })
+
+  it('signing into a DIFFERENT account clears cursors and re-dirties the library', () => {
+    notifyAuthChange('user-a') // establish user-a as the last-synced account
+    seedCleanItem(db, 'i1') // rows that "think" they're synced to user-a
+    seedCleanItem(db, 'i2')
+    setCursor(db, 'items', 500)
+
+    notifyAuthChange('user-b') // account switch on the same device
+
+    expect(getLastSyncedUserId(db)).toBe('user-b')
+    expect(getCursor(db, 'items')).toBe(0) // cursor cleared → full re-pull from 0
+    expect(dirtyCount(db, 'items')).toBe(2) // whole library re-dirtied → full re-push
+  })
+
+  it('sign-out does not change the recorded account', () => {
+    notifyAuthChange('user-a')
+    notifyAuthChange(null)
+    expect(getLastSyncedUserId(db)).toBe('user-a')
   })
 })
 
