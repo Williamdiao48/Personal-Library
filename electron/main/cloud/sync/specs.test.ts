@@ -20,4 +20,20 @@ describe('SYNC_SPECS', () => {
     // never be safely reaped (no cross-device signal that the bytes are unwanted).
     expect(SYNC_SPEC_BY_TABLE.items.columns).toContain('purged_at')
   })
+
+  it('flags annotation_themes as userScopedId (its preset ids collide across users)', () => {
+    // annotation_themes seeds fixed preset ids ('preset-love', …) identically on
+    // every device, so `id` is NOT globally unique — the server PK is (user_id,
+    // id). The flag drives cloudRepo's conflict target to name that real
+    // constraint; without it a 2nd user's push RLS-fails on the 1st user's row.
+    expect(SYNC_SPEC_BY_TABLE.annotation_themes.userScopedId).toBe(true)
+  })
+
+  it('leaves UUID-keyed single-entity tables un-userScopedId', () => {
+    // items/tags/annotations/goals key on locally-generated UUIDs that never
+    // collide across users, so they keep a bare global `id` PK.
+    for (const t of ['items', 'tags', 'annotations', 'goals'] as const) {
+      expect(SYNC_SPEC_BY_TABLE[t].userScopedId).toBeUndefined()
+    }
+  })
 })
