@@ -22,7 +22,12 @@ import { runSyncRound, type SyncReport } from './syncEngine'
 import { startRealtime, stopRealtime } from './realtime'
 import { scheduleReap } from '../reaper'
 import { SYNC_SPECS } from './specs'
-import { countDirty } from './syncStore'
+import {
+  countDirty,
+  getLastSyncedUserId,
+  setLastSyncedUserId,
+  resetSyncStateForNewUser,
+} from './syncStore'
 
 /** The renderer-facing snapshot of where sync stands right now. */
 export interface SyncStatus {
@@ -312,10 +317,23 @@ export function setEnabled(next: boolean): void {
   broadcastStatus()
 }
 
-/** Auth events call this so sign-in kicks a sync and sign-out halts the poll. */
-export function notifyAuthChange(nowSignedIn: boolean): void {
+/**
+ * Auth events call this so sign-in kicks a sync and sign-out halts the poll. The
+ * `userId` (the signed-in account's auth uid, or null when signed out) also drives
+ * account-identity reconciliation: sync_cursors + the per-row `dirty` flags are
+ * device-global, not per-account, so signing into a DIFFERENT account on this device
+ * (e.g. delete-then-recreate, or an account switch) must discard the previous
+ * account's sync state and re-sync the whole local library against the new one — see
+ * reconcileSyncIdentity.
+ */
+export function notifyAuthChange(userId: string | null): void {
+  const nowSignedIn = userId != null
   signedIn = nowSignedIn
   if (nowSignedIn) {
+    // Reconcile BEFORE scheduling so the round kicked below observes the reset state
+    // (cleared cursors + re-dirtied rows). Runs regardless of `enabled` so a later
+    // enable still sees the correct state.
+    reconcileSyncIdentity(userId)
     if (enabled) {
       scheduleNextPoll()
       schedule()
@@ -325,6 +343,28 @@ export function notifyAuthChange(nowSignedIn: boolean): void {
   }
   void ensureRealtime()
   broadcastStatus()
+}
+
+/**
+ * Compare the signed-in account against the one this device's sync state belongs to
+ * and heal a mismatch. First sign-in on this device (no stored id) just records the
+ * account — the fresh local library is already dirty and cursors are 0, so a normal
+ * round handles it, no forced reset. A DIFFERENT account → full re-sync
+ * (resetSyncStateForNewUser) so the local library backs up to the new account and no
+ * stale dirty=0 row orphan-FK-fails against the new (empty) server. Same account →
+ * no-op. Best-effort: a not-yet-open db (early boot / tests without a harness) is
+ * skipped and reconciled on the next auth event.
+ */
+function reconcileSyncIdentity(userId: string): void {
+  try {
+    const db = getDb()
+    const prev = getLastSyncedUserId(db)
+    if (prev === userId) return // same account — state is already correct
+    if (prev !== null) resetSyncStateForNewUser(db) // switched accounts → fresh full sync
+    setLastSyncedUserId(db, userId)
+  } catch {
+    // db not open yet — reconcile on the next auth event.
+  }
 }
 
 /** Test-only: swap the Supabase seam for a fake repo (or null to simulate

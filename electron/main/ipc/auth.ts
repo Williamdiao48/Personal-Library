@@ -63,8 +63,11 @@ export function registerAuthHandlers(): void {
       // INITIAL_SESSION restored on launch) → drain any pending Phase 2 blob
       // uploads. No-ops when signed out or nothing is queued.
       if (session) void drainOutbox().catch(() => {})
-      // Phase 3: kick the metadata sync on sign-in / halt its poll on sign-out.
-      notifyAuthChange(!!session)
+      // Phase 3: kick the metadata sync on sign-in / halt its poll on sign-out. Pass
+      // the account uid (not just a boolean) so the sync engine can detect an
+      // account switch on this device and re-sync the local library against the new
+      // account instead of carrying the previous account's stale cursors/dirty state.
+      notifyAuthChange(session?.user.id ?? null)
     })
   }
 
