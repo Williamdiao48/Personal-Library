@@ -39,6 +39,21 @@ function stripUserId(row: Record<string, unknown>): SyncRow {
 }
 
 /**
+ * The columns naming the REAL server unique constraint an upsert conflicts on.
+ * Must match an actual PK/unique on the Postgres mirror:
+ *   • Composite-key join tables (item_tags/collection_items/…) — server PK is
+ *     (user_id, <local key>), so prepend user_id.
+ *   • userScopedId single-entity tables (annotation_themes) — server PK is
+ *     (user_id, id) because the id isn't globally unique (fixed preset ids), so
+ *     prepend user_id here too even though the local key is single-column.
+ *   • Everything else (items/tags/annotations/…) — a globally-unique `id`/`item_id`
+ *     PK, used bare.
+ */
+export function conflictTargetFor(spec: SyncSpec): string[] {
+  return spec.key.length > 1 || spec.userScopedId ? ['user_id', ...spec.key] : spec.key
+}
+
+/**
  * Build a CloudRepo over a live, authenticated Supabase client. `userId` is the
  * verified auth uid (RLS enforces it regardless, but push must stamp user_id to
  * satisfy the INSERT WITH CHECK policy).
@@ -70,11 +85,9 @@ export function createSupabaseCloudRepo(client: SupabaseClient, userId: string):
         if (spec.mode === 'append') out.updated_at = Date.now()
         return out
       })
-      // The upsert conflict target must name a REAL server unique constraint.
-      // Join tables' server PK is (user_id, <local key>) — the local key columns
-      // alone are NOT unique there — so prepend user_id for composite keys. Single-
-      // entity tables (items/tags/progress/…) keep their bare id/item_id PK.
-      const conflictTarget = spec.key.length > 1 ? ['user_id', ...spec.key] : spec.key
+      // The upsert conflict target must name a REAL server unique constraint
+      // (see conflictTargetFor).
+      const conflictTarget = conflictTargetFor(spec)
       const { data, error } = await client
         .from(spec.table)
         .upsert(payload, { onConflict: conflictTarget.join(',') })

@@ -48,6 +48,18 @@ export interface SyncSpec {
    */
   referencedBy?: { table: string; col: string }[]
   /**
+   * True when the server PK is `(user_id, id)` rather than a globally-unique `id`.
+   * Set only on tables whose `id` is NOT globally unique because it ships fixed,
+   * deterministic values seeded identically on every device (annotation_themes'
+   * preset ids: 'preset-love', …). Those collide across users under a global-`id`
+   * PK — a 2nd user's upsert lands on the 1st user's row and RLS denies it. The
+   * server scopes the PK to `(user_id, id)` so each user owns their own copy; this
+   * flag tells cloudRepo to widen the upsert conflict target to match (see
+   * conflictTargetFor). UUID-keyed tables (items/tags/…) never collide, so they
+   * keep a bare `id` PK and omit this.
+   */
+  userScopedId?: boolean
+  /**
    * Per-column merge overrides that OPT OUT of whole-row LWW for a monotonic field
    * so it converges independently of which row wins the row-level LWW:
    *   'max' — a grow-only max register. The field is folded to max(local, incoming)
@@ -195,6 +207,11 @@ export const SYNC_SPECS: SyncSpec[] = [
     mode: LWW,
     naturalKey: 'name',
     referencedBy: [{ table: 'annotation_theme_links', col: 'theme_id' }],
+    // preset ids ('preset-love', …) are seeded identically on every device, so
+    // they are NOT globally unique — the server PK is (user_id, id). Widen the
+    // upsert conflict target accordingly (see conflictTargetFor / the
+    // annotation_themes_user_scoped_pk migration).
+    userScopedId: true,
   },
   {
     table: 'annotation_theme_links',
