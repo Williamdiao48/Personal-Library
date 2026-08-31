@@ -32,6 +32,8 @@ vi.mock('../../services/auth', () => ({
     signOut: vi.fn(),
     requestPasswordReset: vi.fn(),
     confirmPasswordReset: vi.fn(),
+    confirmSignup: vi.fn(),
+    resendConfirmation: vi.fn(),
     deleteAccount: vi.fn(),
     onStateChange: vi.fn(() => () => {}),
   },
@@ -363,6 +365,67 @@ describe('SettingsView — Account section', () => {
     expect(auth.confirmPasswordReset).toHaveBeenCalledWith('a@b.com', '123456', 'newlongpassword')
   })
 
+  // Drive sign-up to the awaiting-confirmation (OTP) panel.
+  async function reachConfirmPanel(email = 'c@d.com') {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: null })
+    auth.signUp.mockResolvedValueOnce({
+      ok: true,
+      user: { id: 'u2', email },
+      needsConfirmation: true,
+    })
+    renderView()
+    await screen.findByPlaceholderText('you@example.com')
+    fireEvent.click(toggle('Create account'))
+    fireEvent.change(screen.getByPlaceholderText('you@example.com'), { target: { value: email } })
+    fireEvent.change(screen.getByPlaceholderText(/At least 8 characters/), {
+      target: { value: 'longenough' },
+    })
+    await act(async () => {
+      fireEvent.click(submit('Create account'))
+    })
+  }
+
+  it('sign-up needing confirmation shows the OTP panel and confirms with the code (signs in)', async () => {
+    auth.confirmSignup.mockResolvedValueOnce({ ok: true, user: { id: 'u2', email: 'c@d.com' } })
+    await reachConfirmPanel()
+
+    // We land on the awaiting-confirmation panel (not a fleeting toast) with a code field.
+    expect(await screen.findByText(/emailed a 6-digit code to c@d.com/)).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText('Enter code'), { target: { value: '123456' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    })
+    expect(auth.confirmSignup).toHaveBeenCalledWith('c@d.com', '123456')
+  })
+
+  it('surfaces a bad/expired code error on confirm', async () => {
+    auth.confirmSignup.mockResolvedValueOnce({
+      ok: false,
+      error: 'Token has expired or is invalid',
+    })
+    await reachConfirmPanel()
+
+    fireEvent.change(await screen.findByPlaceholderText('Enter code'), {
+      target: { value: 'bad' },
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    })
+    expect(await screen.findByText('Token has expired or is invalid')).toBeInTheDocument()
+  })
+
+  it('resends the confirmation code from the OTP panel', async () => {
+    auth.resendConfirmation.mockResolvedValueOnce({ ok: true })
+    await reachConfirmPanel()
+
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Didn’t get a code? Resend' }))
+    })
+    expect(auth.resendConfirmation).toHaveBeenCalledWith('c@d.com')
+    expect(await screen.findByText(/Confirmation code resent to c@d.com/)).toBeInTheDocument()
+  })
+
   it('after a reset + sign-out, returns to the sign-in form (not the reset page)', async () => {
     auth.isConfigured.mockResolvedValueOnce(true)
     auth.getSession.mockResolvedValueOnce({ user: null })
@@ -593,5 +656,39 @@ describe('SettingsView — Account section', () => {
     expect(await screen.findByText('Account deletion failed.')).toBeInTheDocument()
     // Still signed in — the Sign out control is still present.
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+  })
+
+  it('does not carry one account’s typed state into the next after a sign-out', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })
+    auth.signOut.mockResolvedValueOnce(undefined)
+    auth.signIn.mockResolvedValueOnce({ ok: true, user: { id: 'u2', email: 'other@y.com' } })
+    renderView()
+
+    // Account A: reveal the danger zone and type A's email into the confirm box.
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete account…' }))
+    fireEvent.change(screen.getByPlaceholderText('me@x.com'), { target: { value: 'me@x.com' } })
+
+    // Sign out of A.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+    })
+
+    // The sign-in form comes back empty — no leaked email from account A.
+    const emailField = await screen.findByPlaceholderText('you@example.com')
+    expect(emailField).toHaveValue('')
+
+    // Sign in as a different account B.
+    fireEvent.change(emailField, { target: { value: 'other@y.com' } })
+    fireEvent.change(screen.getByPlaceholderText('••••••••'), { target: { value: 'password1' } })
+    await act(async () => {
+      fireEvent.click(submit('Sign in'))
+    })
+
+    // B's danger zone starts fresh: hidden again, and its confirm box is empty
+    // (not pre-filled with A's "me@x.com").
+    expect(screen.queryByPlaceholderText('me@x.com')).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete account…' }))
+    expect(screen.getByPlaceholderText('other@y.com')).toHaveValue('')
   })
 })

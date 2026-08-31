@@ -327,3 +327,8 @@
 .settings-reset-footer .settings-feedback + .settings-link-btn {
   margin-top: 5px;
 }
+/* Confirm-signup panel stacks two links (Resend / Back to sign in) — give the
+   second a touch more separation from the first than the 3px stack gap. */
+.settings-reset-footer .settings-link-btn + .settings-link-btn {
+  margin-top: 5px;
+}

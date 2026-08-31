@@ -19,6 +19,10 @@ export const authService = {
   /** Password reset step 2: verify the code + set a new password (signs in on success). */
   confirmPasswordReset: (email: string, token: string, password: string) =>
     window.api.auth.confirmPasswordReset(email, token, password),
+  /** Confirm a sign-up with the emailed 6-digit code (signs in on success). */
+  confirmSignup: (email: string, token: string) => window.api.auth.confirmSignup(email, token),
+  /** Resend the sign-up confirmation code (when a mailed code never arrived). */
+  resendConfirmation: (email: string) => window.api.auth.resendConfirmation(email),
   /** Permanently delete the account + all cloud data; signs out on success. Local
    *  library on this device is kept. */
   deleteAccount: () => window.api.auth.deleteAccount(),

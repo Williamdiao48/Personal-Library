@@ -519,6 +519,8 @@ function AccountSettings() {
     signOut,
     requestPasswordReset,
     confirmPasswordReset,
+    confirmSignup,
+    resendConfirmation,
     deleteAccount,
   } = useAuth()
   const { settings, updateSettings } = useSettings()
@@ -527,6 +529,9 @@ function AccountSettings() {
   const [password, setPassword] = useState('')
   const [token, setToken] = useState('')
   const [resetSent, setResetSent] = useState(false)
+  // Latched after a sign-up that needs email confirmation → show the "check your
+  // email" panel with a Resend button (the `email` above is the resend target).
+  const [awaitingConfirm, setAwaitingConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -542,16 +547,23 @@ function AccountSettings() {
   const [deleteError, setDeleteError] = useState('')
   const deleteConfirmId = useId()
 
-  // Once signed in (including via the reset flow), snap the form back to 'signin' and
-  // clear transient fields — so a later sign-out lands on the sign-in form, not the
-  // reset page we happened to be on when the session was established.
+  // On any account change — sign in, sign out, or switching accounts — snap back to a
+  // clean slate so one account's typed state never bleeds into the next. A later
+  // sign-out lands on a fresh sign-in form (not the reset page, and not pre-filled with
+  // the previous email), and the delete "danger zone" never carries a prior account's
+  // confirmation text forward into a different account.
   useEffect(() => {
-    if (user) {
-      setMode('signin')
-      setResetSent(false)
-      setToken('')
-      setPassword('')
-    }
+    setMode('signin')
+    setEmail('')
+    setPassword('')
+    setToken('')
+    setResetSent(false)
+    setAwaitingConfirm(false)
+    setError('')
+    setNotice('')
+    setShowDelete(false)
+    setDeleteConfirm('')
+    setDeleteError('')
   }, [user])
 
   // Guard: the destructive button only enables once the typed value matches the
@@ -698,6 +710,7 @@ function AccountSettings() {
     setError('')
     setNotice('')
     setResetSent(false)
+    setAwaitingConfirm(false)
     setToken('')
     setPassword('')
   }
@@ -741,6 +754,107 @@ function AccountSettings() {
     } finally {
       setBusy(false)
     }
+  }
+
+  const canConfirmSignup = token.trim().length > 0 && !busy
+
+  async function handleConfirmSignup() {
+    if (!canConfirmSignup) return
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const res = await confirmSignup(email.trim(), token.trim())
+      if (!res.ok) {
+        setError(res.error ?? 'Something went wrong. Please try again.')
+      }
+      // On success verifyOtp('signup') establishes a session → the AuthContext flips
+      // to the signed-in view automatically (no extra sign-in step).
+    } catch (err: any) {
+      setError(err?.message ?? 'Something went wrong. Please try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleResendConfirmation() {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const res = await resendConfirmation(email.trim())
+      if (!res.ok) {
+        setError(res.error ?? 'Something went wrong. Please try again.')
+      } else {
+        setNotice(`Confirmation code resent to ${email.trim()}.`)
+      }
+    } catch (err: any) {
+      setError(err?.message ?? 'Something went wrong. Please try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (awaitingConfirm) {
+    return (
+      <>
+        <div className="settings-row settings-row--top">
+          <div className="settings-row-stack">
+            <span className="settings-row-label">Confirm your email</span>
+            <span className="settings-row-hint">
+              We emailed a 6-digit code to {email.trim()}. Enter it below to confirm and sign in.
+            </span>
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <label className="settings-row-label" htmlFor={codeId}>
+            Code
+          </label>
+          <input
+            id={codeId}
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            className="settings-color-label-input"
+            value={token}
+            placeholder="Enter code"
+            onChange={(e) => setToken(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void handleConfirmSignup()
+            }}
+          />
+        </div>
+
+        <div className="settings-row settings-row--top settings-reset-footer">
+          <div className="settings-row-stack">
+            {error && <span className="settings-feedback settings-feedback--err">{error}</span>}
+            {notice && <span className="settings-feedback settings-feedback--ok">{notice}</span>}
+            <button
+              className="settings-link-btn settings-link-btn--lg"
+              onClick={handleResendConfirmation}
+              disabled={busy}
+            >
+              Didn’t get a code? Resend
+            </button>
+            <button
+              className="settings-link-btn settings-link-btn--lg"
+              onClick={() => goToMode('signin')}
+            >
+              Back to sign in
+            </button>
+          </div>
+          <button
+            className="settings-action-btn"
+            onClick={handleConfirmSignup}
+            disabled={!canConfirmSignup}
+          >
+            {busy ? 'Confirming…' : 'Confirm'}
+          </button>
+        </div>
+      </>
+    )
   }
 
   if (mode === 'reset') {
@@ -865,8 +979,11 @@ function AccountSettings() {
       if (!res.ok) {
         setError(res.error ?? 'Something went wrong. Please try again.')
       } else if (res.needsConfirmation) {
-        setNotice('Account created. Check your email to confirm, then sign in.')
-        setMode('signin')
+        // No session yet — hold the user on the awaiting-confirm panel to enter the
+        // emailed code (with Resend) rather than a fleeting toast, so a lost code
+        // isn't a dead end.
+        setAwaitingConfirm(true)
+        setToken('')
         setPassword('')
       }
       // On success the AuthContext flips to the signed-in view automatically.
