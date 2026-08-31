@@ -47,6 +47,18 @@ export const COVER_EXT_ALLOWLIST = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']
 // PUT cap (blob-url MAX_PUT_BYTES.cover) so the two agree.
 export const COVER_MAX_BYTES = 10 * MiB
 
+// ── Captured-HTML body-image inlining (M1) ──────────────────────────────────
+//
+// Body images in captured articles/fics are page-controlled remote URLs. The
+// reader CSP blocks remote loads, so they're fetched (SSRF-guarded) at capture
+// time and stored inline as data: URIs — matching EPUB. These bound the work:
+// a single image reuses COVER_MAX_BYTES; the count/total caps keep an
+// image-heavy or malicious page from bloating the stored item unboundedly.
+// Over any cap → that image's remote src is dropped (alt text renders instead),
+// never an aborted capture.
+export const BODY_IMAGE_MAX_COUNT = 50
+export const BODY_IMAGE_TOTAL_MAX_BYTES = 40 * MiB
+
 /**
  * Canonicalize an untrusted cover-image extension to a safe member of
  * {@link COVER_EXT_ALLOWLIST} (folding `jpeg`→`jpg`), falling back to `jpg` for
