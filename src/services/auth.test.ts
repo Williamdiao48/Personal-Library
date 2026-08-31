@@ -31,6 +31,14 @@ describe('authService delegation', () => {
     authService.signOut()
     expect(api.auth.signOut).toHaveBeenCalledTimes(1)
   })
+  it('confirmSignup forwards email + code', () => {
+    authService.confirmSignup('a@b.com', '123456')
+    expect(api.auth.confirmSignup).toHaveBeenCalledWith('a@b.com', '123456')
+  })
+  it('resendConfirmation forwards the email', () => {
+    authService.resendConfirmation('a@b.com')
+    expect(api.auth.resendConfirmation).toHaveBeenCalledWith('a@b.com')
+  })
   it('onStateChange forwards the callback', () => {
     const cb = () => {}
     authService.onStateChange(cb)

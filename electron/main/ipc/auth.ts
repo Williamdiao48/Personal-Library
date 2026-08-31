@@ -142,6 +142,36 @@ export function registerAuthHandlers(): void {
     },
   )
 
+  // Sign-up confirmation via OTP (L4). With email confirmation on, signUp issues no
+  // session; the user receives a 6-digit code (the "Confirm signup" template must use
+  // `{{ .Token }}`, mirroring the recovery template — NOT a redirect link, which this
+  // desktop app has nowhere to land). verifyOtp('signup') confirms the address AND
+  // establishes a session, so the onAuthStateChange hook signs the user in — exactly
+  // like the recovery OTP flow, keeping the whole flow in-app.
+  ipcMain.handle(
+    'auth:confirmSignup',
+    async (_e, email: string, token: string): Promise<AuthResult> => {
+      const supabase = getSupabase()
+      if (!supabase) return NOT_CONFIGURED
+      const { data, error } = await supabase.auth.verifyOtp({ email, token, type: 'signup' })
+      if (error) return { ok: false, error: error.message }
+      return { ok: true, user: toAuthUser(data.user) }
+    },
+  )
+
+  // Resend the sign-up confirmation code (L4). When email confirmation is on, a signUp
+  // issues no session and the user must enter a mailed code — if that mail is lost or
+  // delayed the account is otherwise stranded. Enumeration-safe like the reset flow:
+  // Supabase resolves regardless of whether the address has a pending unconfirmed
+  // sign-up, so we surface only real transport / rate-limit errors.
+  ipcMain.handle('auth:resendConfirmation', async (_e, email: string): Promise<AuthResult> => {
+    const supabase = getSupabase()
+    if (!supabase) return NOT_CONFIGURED
+    const { error } = await supabase.auth.resend({ type: 'signup', email })
+    if (error) return { ok: false, error: error.message }
+    return { ok: true }
+  })
+
   // Account deletion (L2) — permanently erase the caller's cloud footprint. The
   // delete-account Edge Function (authorized by this session's JWT) purges the user's
   // R2 prefix and hard-deletes their auth user, cascading every Postgres row. ONLY on a

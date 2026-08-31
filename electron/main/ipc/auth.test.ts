@@ -12,6 +12,7 @@ const h = vi.hoisted(() => {
     resetPasswordForEmail: vi.fn(),
     verifyOtp: vi.fn(),
     updateUser: vi.fn(),
+    resend: vi.fn(),
   }
   return {
     fakeSupabase: { auth },
@@ -179,6 +180,48 @@ describe('auth IPC — configured', () => {
     })
   })
 
+  it('confirmSignup verifies the OTP and returns the user (signs in)', async () => {
+    h.fakeSupabase.auth.verifyOtp.mockResolvedValue({
+      data: { user: { id: 'u2', email: 'c@d.com' } },
+      error: null,
+    })
+    const res = await invoke('auth:confirmSignup', 'c@d.com', '123456')
+    expect(h.fakeSupabase.auth.verifyOtp).toHaveBeenCalledWith({
+      email: 'c@d.com',
+      token: '123456',
+      type: 'signup',
+    })
+    expect(res).toEqual({ ok: true, user: { id: 'u2', email: 'c@d.com' } })
+  })
+
+  it('confirmSignup surfaces a bad/expired code error', async () => {
+    h.fakeSupabase.auth.verifyOtp.mockResolvedValue({
+      data: {},
+      error: { message: 'Token has expired or is invalid' },
+    })
+    expect(await invoke('auth:confirmSignup', 'c@d.com', 'bad')).toEqual({
+      ok: false,
+      error: 'Token has expired or is invalid',
+    })
+  })
+
+  it('resendConfirmation re-sends the signup email and reports ok', async () => {
+    h.fakeSupabase.auth.resend.mockResolvedValue({ error: null })
+    const res = await invoke('auth:resendConfirmation', 'c@d.com')
+    expect(h.fakeSupabase.auth.resend).toHaveBeenCalledWith({ type: 'signup', email: 'c@d.com' })
+    expect(res).toEqual({ ok: true })
+  })
+
+  it('resendConfirmation surfaces transport/rate-limit errors', async () => {
+    h.fakeSupabase.auth.resend.mockResolvedValue({
+      error: { message: 'Email rate limit exceeded' },
+    })
+    expect(await invoke('auth:resendConfirmation', 'c@d.com')).toEqual({
+      ok: false,
+      error: 'Email rate limit exceeded',
+    })
+  })
+
   it('deleteAccount purges the cloud then signs out + clears the session on success', async () => {
     h.deleteCloudAccount.mockResolvedValue({ ok: true })
     h.fakeSupabase.auth.signOut.mockResolvedValue({})
@@ -246,6 +289,18 @@ describe('auth IPC — not configured', () => {
     expect(req.error).toMatch(/not configured/i)
     expect(conf.ok).toBe(false)
     expect(conf.error).toMatch(/not configured/i)
+  })
+
+  it('signup-confirmation handlers return a not-configured error when there is no client', async () => {
+    h.getSupabase.mockReturnValue(null)
+    const confirm = (await invoke('auth:confirmSignup', 'c@d.com', '123456')) as any
+    const resend = (await invoke('auth:resendConfirmation', 'c@d.com')) as any
+    expect(confirm.ok).toBe(false)
+    expect(confirm.error).toMatch(/not configured/i)
+    expect(resend.ok).toBe(false)
+    expect(resend.error).toMatch(/not configured/i)
+    expect(h.fakeSupabase.auth.verifyOtp).not.toHaveBeenCalled()
+    expect(h.fakeSupabase.auth.resend).not.toHaveBeenCalled()
   })
 
   it('deleteAccount returns a not-configured error and never calls the cloud delete', async () => {

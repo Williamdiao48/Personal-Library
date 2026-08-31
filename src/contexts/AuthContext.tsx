@@ -21,6 +21,10 @@ interface AuthCtx {
   requestPasswordReset: (email: string) => Promise<AuthResult>
   /** Password reset step 2: verify the code + set a new password (signs in). */
   confirmPasswordReset: (email: string, token: string, password: string) => Promise<AuthResult>
+  /** Confirm a sign-up with the emailed OTP code (signs in on success). */
+  confirmSignup: (email: string, token: string) => Promise<AuthResult>
+  /** Resend the sign-up confirmation code (when the mailed code never arrived). */
+  resendConfirmation: (email: string) => Promise<AuthResult>
   /** Permanently delete the account + all cloud data; signs out on success. Local
    *  library on this device is kept. */
   deleteAccount: () => Promise<AuthResult>
@@ -85,6 +89,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const requestPasswordReset = (email: string) => authService.requestPasswordReset(email)
 
+  const confirmSignup = async (email: string, token: string) => {
+    const res = await authService.confirmSignup(email, token)
+    // verifyOtp('signup') establishes a session → the pushed auth:stateChange also
+    // sets the user, but set it here too to avoid a sign-in flash (mirrors reset).
+    if (res.ok) setUser(res.user ?? null)
+    return res
+  }
+
+  const resendConfirmation = (email: string) => authService.resendConfirmation(email)
+
   const confirmPasswordReset = async (email: string, token: string, password: string) => {
     const res = await authService.confirmPasswordReset(email, token, password)
     // verifyOtp('recovery') establishes a session → the pushed auth:stateChange
@@ -112,6 +126,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signOut,
         requestPasswordReset,
         confirmPasswordReset,
+        confirmSignup,
+        resendConfirmation,
         deleteAccount,
       }}
     >
