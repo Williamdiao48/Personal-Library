@@ -15,6 +15,7 @@ import {
   probePageType,
   normalizeUrl,
   resolveUrl,
+  resolveSameOrigin,
   findNextLink,
   findPrevLink,
   findTocLink,
@@ -130,6 +131,32 @@ describe('normalizeUrl / resolveUrl', () => {
   })
 })
 
+// ── SSRF / same-origin gate on serial-navigation links (M2) ─────────────────────
+describe('resolveSameOrigin', () => {
+  it('resolves a relative href against the base origin', () => {
+    expect(resolveSameOrigin('/ch/2', 'https://example.com/ch/1')).toBe('https://example.com/ch/2')
+  })
+
+  it('allows an absolute same-origin href', () => {
+    expect(resolveSameOrigin('https://example.com/ch/2', 'https://example.com/ch/1')).toBe(
+      'https://example.com/ch/2',
+    )
+  })
+
+  it('rejects a cross-origin href (SSRF / off-site next)', () => {
+    expect(resolveSameOrigin('http://169.254.169.254/latest/meta-data/', 'https://example.com/')).toBeNull()
+    expect(resolveSameOrigin('https://evil.example.net/x', 'https://example.com/')).toBeNull()
+  })
+
+  it('treats a different port as cross-origin', () => {
+    expect(resolveSameOrigin('http://localhost:9000/', 'http://localhost:8080/story/1')).toBeNull()
+  })
+
+  it('returns null on an unparseable base', () => {
+    expect(resolveSameOrigin('/a', 'not-a-base')).toBeNull()
+  })
+})
+
 // ── Page-type detection ────────────────────────────────────────────────────────
 describe('probePageType', () => {
   const NEUTRAL = 'https://example.com/read/abc'
@@ -230,6 +257,38 @@ describe('findNextLink / findPrevLink', () => {
     ).toBeNull()
   })
 
+  // M2 — page-controlled nav links are same-origin only; a cross-origin / internal-host
+  // target is an SSRF vector, never a real next chapter.
+  it('does not follow a cross-origin <link rel=next> (SSRF)', () => {
+    const html = '<head><link rel="next" href="http://169.254.169.254/latest/meta-data/"></head>'
+    expect(findNextLink(docOf(html), 'https://example.com/ch/1')).toBeNull()
+  })
+
+  it('does not follow a cross-origin <a rel=next> in the body', () => {
+    expect(
+      findNextLink(
+        docOf('<body><a rel="next" href="https://evil.example.net/x">whatever</a></body>'),
+        'https://example.com/ch/1',
+      ),
+    ).toBeNull()
+  })
+
+  it('does not follow a cross-origin text-matched next link', () => {
+    expect(
+      findNextLink(
+        docOf('<body><a href="https://evil.example.net/x">Next Chapter</a></body>'),
+        'https://example.com/ch/1',
+      ),
+    ).toBeNull()
+  })
+
+  it('falls through a cross-origin head link to a same-origin body candidate', () => {
+    const html =
+      '<head><link rel="next" href="https://evil.example.net/x"></head>' +
+      '<body><a href="/ch/2">Next Chapter</a></body>'
+    expect(findNextLink(docOf(html), 'https://example.com/ch/1')).toBe('https://example.com/ch/2')
+  })
+
   // Headline: NEXT_TEXT_RE matches the whole trimmed string, so "next" embedded in
   // longer prose is not mistaken for a navigation link.
   it('does not match "next" embedded in longer anchor text', () => {
@@ -280,6 +339,28 @@ describe('extractTocLinks / findTocLink', () => {
   it('findTocLink returns null when nothing matches', () => {
     expect(
       findTocLink(docOf('<body><p>x</p></body>', 'https://x.com/read/5'), 'https://x.com/read/5'),
+    ).toBeNull()
+  })
+
+  // M2 — a page-controlled TOC link off-origin is not this work's index (SSRF vector).
+  it('findTocLink does not follow a cross-origin "Table of Contents" text link', () => {
+    expect(
+      findTocLink(
+        docOf(
+          '<body><a href="http://169.254.169.254/">Table of Contents</a></body>',
+          'https://x.com/read/5',
+        ),
+        'https://x.com/read/5',
+      ),
+    ).toBeNull()
+  })
+
+  it('findTocLink ignores a cross-origin breadcrumb even when its path prefixes the current path', () => {
+    // evil.net/fiction/1 is a path-prefix of the current path but a different origin.
+    const html =
+      '<body><nav><a href="https://evil.net/fiction/1">Story</a></nav></body>'
+    expect(
+      findTocLink(docOf(html, 'https://x.com/fiction/1/ch/5'), 'https://x.com/fiction/1/ch/5'),
     ).toBeNull()
   })
 })
