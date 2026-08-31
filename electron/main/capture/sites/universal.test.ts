@@ -144,7 +144,9 @@ describe('resolveSameOrigin', () => {
   })
 
   it('rejects a cross-origin href (SSRF / off-site next)', () => {
-    expect(resolveSameOrigin('http://169.254.169.254/latest/meta-data/', 'https://example.com/')).toBeNull()
+    expect(
+      resolveSameOrigin('http://169.254.169.254/latest/meta-data/', 'https://example.com/'),
+    ).toBeNull()
     expect(resolveSameOrigin('https://evil.example.net/x', 'https://example.com/')).toBeNull()
   })
 
@@ -357,8 +359,7 @@ describe('extractTocLinks / findTocLink', () => {
 
   it('findTocLink ignores a cross-origin breadcrumb even when its path prefixes the current path', () => {
     // evil.net/fiction/1 is a path-prefix of the current path but a different origin.
-    const html =
-      '<body><nav><a href="https://evil.net/fiction/1">Story</a></nav></body>'
+    const html = '<body><nav><a href="https://evil.net/fiction/1">Story</a></nav></body>'
     expect(
       findTocLink(docOf(html, 'https://x.com/fiction/1/ch/5'), 'https://x.com/fiction/1/ch/5'),
     ).toBeNull()
