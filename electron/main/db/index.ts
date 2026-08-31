@@ -575,39 +575,50 @@ export function initDatabase(): void {
   db.pragma('temp_store = MEMORY') // temp B-trees/indexes stay in RAM
   bringUpSchema(db) // create tables (idempotent) + run pending migrations
 
-  // Permanently purge items that have been in trash for 30+ days.
-  // Paths come from the DB (attacker-influenceable via backup import), so route
-  // them through the F1 traversal guards; a throw is caught per-row so one bad
-  // row can't abort startup or escape the sandbox.
-  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
-  const stale = db
-    .prepare(
-      `SELECT rowid, id, title, author, content_type, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL AND deleted_at < ? AND purged_at IS NULL`,
-    )
-    .all(cutoff) as (FtsItem & { rowid: number; cover_path: string | null })[]
-  for (const item of stale) {
-    // Remove FTS postings too (H1) — else the freed rowid is reused with stale
-    // search terms. Sync resolver: exact for stored/HTML rows; a legacy EPUB/PDF
-    // that sat in trash 30 days degrades to a title/author-only delete (rare).
-    removeFtsIndex(db, item.rowid, item.id, ftsDeleteValuesSync(db, item))
-    try {
-      unlinkSync(safeContentPath(item.file_path))
-    } catch {}
-    if (item.cover_path) {
-      try {
-        unlinkSync(safeUserDataPath(item.cover_path))
-      } catch {}
-    }
-    // Keep the tombstone (deleted_at) so the deletion still syncs; purged_at marks
-    // the bytes reclaimed. Physically deleting would risk resurrect-on-pull.
-    db.prepare('UPDATE items SET purged_at = ?, dirty = 1 WHERE id = ?').run(Date.now(), item.id)
-  }
+  // Housekeeping (30-day trash purge + candidate-cache eviction) is deferred off
+  // the launch path with setImmediate so it runs after the window is on screen,
+  // rather than adding per-row FTS deletes + unlinks to launch latency on a large
+  // trashed set (L2 — mirrors the file-hash backfill in electron/main/index.ts).
+  // The synchronous `before-quit` FTS-optimize registration below stays inline.
+  setImmediate(() => {
+    // db could have been swapped/closed by a backup import between launch and this
+    // callback; bail rather than touch a stale handle.
+    if (!db || !db.open) return
 
-  // Bound the recommendation-candidate caches: evict cache/embedding rows untouched
-  // past the retention window so they don't grow unbounded over the app's life (L5).
-  try {
-    evictStaleCandidates(Date.now())
-  } catch {}
+    // Permanently purge items that have been in trash for 30+ days.
+    // Paths come from the DB (attacker-influenceable via backup import), so route
+    // them through the F1 traversal guards; a throw is caught per-row so one bad
+    // row can't abort startup or escape the sandbox.
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+    const stale = db
+      .prepare(
+        `SELECT rowid, id, title, author, content_type, file_path, cover_path FROM items WHERE deleted_at IS NOT NULL AND deleted_at < ? AND purged_at IS NULL`,
+      )
+      .all(cutoff) as (FtsItem & { rowid: number; cover_path: string | null })[]
+    for (const item of stale) {
+      // Remove FTS postings too (H1) — else the freed rowid is reused with stale
+      // search terms. Sync resolver: exact for stored/HTML rows; a legacy EPUB/PDF
+      // that sat in trash 30 days degrades to a title/author-only delete (rare).
+      removeFtsIndex(db, item.rowid, item.id, ftsDeleteValuesSync(db, item))
+      try {
+        unlinkSync(safeContentPath(item.file_path))
+      } catch {}
+      if (item.cover_path) {
+        try {
+          unlinkSync(safeUserDataPath(item.cover_path))
+        } catch {}
+      }
+      // Keep the tombstone (deleted_at) so the deletion still syncs; purged_at marks
+      // the bytes reclaimed. Physically deleting would risk resurrect-on-pull.
+      db.prepare('UPDATE items SET purged_at = ?, dirty = 1 WHERE id = ?').run(Date.now(), item.id)
+    }
+
+    // Bound the recommendation-candidate caches: evict cache/embedding rows untouched
+    // past the retention window so they don't grow unbounded over the app's life (L5).
+    try {
+      evictStaleCandidates(Date.now())
+    } catch {}
+  })
 
   // Compact FTS5 segment trees on clean shutdown rather than startup.
   // On large libraries this can take 100–500 ms; deferring it avoids blocking launch.
@@ -651,11 +662,26 @@ function runMigrations(database: Database.Database): void {
 // already-migrated DB) runs the whole migration in one exec; only when a column
 // already exists do we fall back to statement-by-statement, skipping the ADDs
 // that are already satisfied while still applying the rest.
-function execMigration(database: Database.Database, sql: string): void {
+export function execMigration(database: Database.Database, sql: string): void {
   try {
     database.exec(sql)
   } catch (err) {
     if (!isDuplicateColumn(err)) throw err
+    // Fallback splits naively on ';', which is correct ONLY for the simple
+    // ALTER/CREATE statements every migration uses today. A trigger/compound body
+    // (`CREATE TRIGGER … BEGIN … ; … END;`) — or a ';' inside a string literal —
+    // would mis-split here and silently skip or mis-run statements (L1). Fail loud
+    // instead of corrupting the DB: the day such a body lands in a migration, this
+    // splitter must be replaced with a real statement parser, or the migration must
+    // be split into single-statement MIGRATIONS entries.
+    if (containsStatementBody(sql)) {
+      throw new Error(
+        "execMigration fallback cannot safely ';'-split a migration containing a trigger/" +
+          'compound statement body (BEGIN…END) or a semicolon inside a string literal. Replace ' +
+          'the naive splitter with a real statement parser, or split this migration into ' +
+          'separate single-statement MIGRATIONS entries.',
+      )
+    }
     for (const stmt of sql.split(';')) {
       const trimmed = stmt.trim()
       if (!trimmed) continue
@@ -670,6 +696,15 @@ function execMigration(database: Database.Database, sql: string): void {
 
 function isDuplicateColumn(err: unknown): boolean {
   return err instanceof Error && /duplicate column name/i.test(err.message)
+}
+
+// True when the migration SQL carries a construct the naive ';'-splitter can't
+// handle: a trigger body or a bare BEGIN…END compound (both wrap ';'-terminated
+// statements the split would tear apart). Only consulted on the duplicate-column
+// fallback path, so a false positive there just surfaces a loud, fixable error
+// rather than a silently corrupted DB.
+function containsStatementBody(sql: string): boolean {
+  return /\bcreate\s+trigger\b/i.test(sql) || /\bbegin\b[\s\S]*?\bend\b/i.test(sql)
 }
 
 export function getDb(): Database.Database {

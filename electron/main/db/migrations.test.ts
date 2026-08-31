@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { openTestDb, closeTestDb } from '../../../test/db/harness'
-import { bringUpSchema, CURRENT_VERSION, MIGRATIONS } from './index'
+import { bringUpSchema, CURRENT_VERSION, MIGRATIONS, execMigration } from './index'
 import { SCHEMA } from './schema'
 
 // Verifies a fresh database can be brought up cleanly and reaches the current
@@ -747,6 +747,63 @@ describe('database bring-up', () => {
       expect.arrayContaining(['derived_from', 'content_hash', 'rating', 'review']),
     )
     expect(colsOf(db, 'progress')).toContain('max_scroll_position')
+    db.close()
+  })
+})
+
+// L1 — the duplicate-column fallback splits migration SQL naively on ';', which is
+// safe for every current (ALTER/CREATE-only) migration but would mis-split a trigger
+// or BEGIN…END compound body. The guard must convert that latent silent-corruption
+// into a loud, CI-catchable throw, without regressing the plain self-heal path.
+describe('execMigration fallback guard (L1)', () => {
+  it('throws (not mis-splits) when a duplicate-column migration also carries a trigger body', () => {
+    const db = new Database(':memory:')
+    db.exec('CREATE TABLE t (a INTEGER, existing INTEGER)')
+    // First statement duplicate-column-errors (column `existing` already present),
+    // forcing the fallback; the CREATE TRIGGER body is what the naive splitter can't
+    // handle — the guard must refuse it rather than tear the BEGIN…END apart.
+    const sql = `
+      ALTER TABLE t ADD COLUMN existing INTEGER;
+      CREATE TRIGGER trg AFTER INSERT ON t BEGIN
+        UPDATE t SET a = 1 WHERE rowid = NEW.rowid;
+      END;
+    `
+    expect(() => execMigration(db, sql)).toThrow(
+      /trigger\/compound|statement body|single-statement/i,
+    )
+    db.close()
+  })
+
+  it('also refuses a bare BEGIN…END compound body on the fallback path', () => {
+    const db = new Database(':memory:')
+    db.exec('CREATE TABLE t (a INTEGER, existing INTEGER)')
+    const sql = `
+      ALTER TABLE t ADD COLUMN existing INTEGER;
+      BEGIN; UPDATE t SET a = 1; END;
+    `
+    expect(() => execMigration(db, sql)).toThrow(/BEGIN…END|statement body/i)
+    db.close()
+  })
+
+  it('still self-heals a plain duplicate-column migration (no body) via the split fallback', () => {
+    const db = new Database(':memory:')
+    db.exec('CREATE TABLE t (a INTEGER, existing INTEGER)')
+    // `existing` already present → whole-SQL exec throws duplicate column → fallback
+    // splits: the ADD existing is skipped, the ADD fresh still applies.
+    const sql = `ALTER TABLE t ADD COLUMN existing INTEGER; ALTER TABLE t ADD COLUMN fresh INTEGER;`
+    expect(() => execMigration(db, sql)).not.toThrow()
+    const cols = (db.prepare('PRAGMA table_info(t)').all() as { name: string }[]).map((c) => c.name)
+    expect(cols).toContain('fresh')
+    db.close()
+  })
+
+  it('runs a no-conflict migration in one exec (happy path, guard never consulted)', () => {
+    const db = new Database(':memory:')
+    db.exec('CREATE TABLE t (a INTEGER)')
+    // No duplicate-column error → the fallback (and its guard) are never reached,
+    // so even a trigger body runs fine on the happy path.
+    const sql = `CREATE TRIGGER trg AFTER INSERT ON t BEGIN UPDATE t SET a = 1; END;`
+    expect(() => execMigration(db, sql)).not.toThrow()
     db.close()
   })
 })
