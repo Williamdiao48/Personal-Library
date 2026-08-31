@@ -58,6 +58,24 @@ export function resolveUrl(href: string, base: string): string {
   }
 }
 
+// Resolve `href` against `base` and return it ONLY when it stays on `base`'s origin.
+// Serial-navigation links (next/prev/TOC) are page-controlled, so a cross-origin target is
+// either a bogus "next" or an SSRF attempt (e.g. <link rel="next" href="http://169.254.169.254/">)
+// — a legitimate next chapter is always same-origin. Returns null on a cross-origin target or
+// an unparseable href, which every walk loop already treats as "stop / keep looking". This does
+// NOT cover a same-origin link that the server 302-redirects off-origin (fetchPage follows
+// redirects blind) — an accepted residual (M2 Option A). See
+// docs/internal/planning/2026-08-31-audit-remediation-waves.md.
+export function resolveSameOrigin(href: string, base: string): string | null {
+  try {
+    const resolved = new URL(href, base)
+    if (resolved.origin !== new URL(base).origin) return null
+    return resolved.href
+  } catch {
+    return null
+  }
+}
+
 // Normalises a URL for deduplication: lowercase host, strip trailing slash and
 // fragment so that /chapter/3 and /chapter/3/ and /chapter/3#top all match.
 export function normalizeUrl(url: string): string {
@@ -150,10 +168,11 @@ function findNavLink(
   textPattern: RegExp,
   rel: 'next' | 'prev',
 ): string | null {
-  // Priority 1 — semantic <link rel="next/prev"> in <head>
+  // Priority 1 — semantic <link rel="next/prev"> in <head>. Cross-origin → skip (fall
+  // through to a body candidate) rather than follow a page-controlled off-site URL (M2).
   const linkEl = doc.querySelector(`link[rel="${rel}"]`)
   if (linkEl) {
-    const resolved = resolveUrl(linkEl.getAttribute('href') ?? '', baseUrl)
+    const resolved = resolveSameOrigin(linkEl.getAttribute('href') ?? '', baseUrl)
     if (resolved) return resolved
   }
 
@@ -161,7 +180,10 @@ function findNavLink(
   const aRel = doc.querySelector(`a[rel="${rel}"]`)
   if (aRel) {
     const href = aRel.getAttribute('href') ?? ''
-    if (href && !href.startsWith('#')) return resolveUrl(href, baseUrl)
+    if (href && !href.startsWith('#')) {
+      const resolved = resolveSameOrigin(href, baseUrl)
+      if (resolved) return resolved
+    }
   }
 
   // Priority 3 — text or aria-label pattern match anywhere in document
@@ -170,7 +192,10 @@ function findNavLink(
     const label = el.getAttribute('aria-label') ?? ''
     if (!textPattern.test(text) && !textPattern.test(label)) continue
     const href = el.getAttribute('href') ?? ''
-    if (href && !href.startsWith('#')) return resolveUrl(href, baseUrl)
+    if (href && !href.startsWith('#')) {
+      const resolved = resolveSameOrigin(href, baseUrl)
+      if (resolved) return resolved // else keep scanning for a same-origin match
+    }
   }
 
   return null
@@ -185,11 +210,16 @@ export function findTocLink(doc: Document, currentUrl: string): string | null {
   for (const a of Array.from(doc.querySelectorAll('a[href]'))) {
     if (TOC_LINK_TEXT_RE.test((a.textContent ?? '').trim())) {
       const href = a.getAttribute('href')!
-      if (!href.startsWith('#')) return resolveUrl(href, currentUrl)
+      if (!href.startsWith('#')) {
+        // Same-origin only — a page-controlled TOC link off-origin is a bogus/SSRF
+        // target, not this work's index (M2). Cross-origin → keep scanning.
+        const resolved = resolveSameOrigin(href, currentUrl)
+        if (resolved) return resolved
+      }
     }
   }
 
-  const { pathname } = new URL(currentUrl)
+  const { origin, pathname } = new URL(currentUrl)
   // Reverse so we try the deepest breadcrumb first
   const breadcrumbLinks = Array.from(
     doc.querySelectorAll('[class*="bread"] a, nav a, [role="navigation"] a'),
@@ -197,7 +227,13 @@ export function findTocLink(doc: Document, currentUrl: string): string | null {
   for (const a of breadcrumbLinks) {
     try {
       const href = new URL(a.getAttribute('href') ?? '', currentUrl)
-      if (href.pathname.length > 1 && pathname.startsWith(href.pathname + '/')) {
+      // A breadcrumb ancestor is same-origin by definition; a cross-origin match is a
+      // path-prefix coincidence on another host (M2) — reject it.
+      if (
+        href.origin === origin &&
+        href.pathname.length > 1 &&
+        pathname.startsWith(href.pathname + '/')
+      ) {
         return href.href
       }
     } catch {
