@@ -129,4 +129,12 @@ describe('cloud:getBackupCounts', () => {
   it('returns zeros for an empty ledger', async () => {
     expect(await invoke('cloud:getBackupCounts')).toEqual({ pending: 0, error: 0 })
   })
+
+  // Regression (Wave 3 / L3): the status pill polls this on blobState nudges; a poll
+  // can land in the window where backup:import has closed the DB before relaunch.
+  // It must report zeros, not reject the IPC with "Database not initialized".
+  it('returns zeros (no throw) when the DB is closed mid-import', async () => {
+    closeTestDb() // simulate the import swap having nulled the singleton
+    expect(await invoke('cloud:getBackupCounts')).toEqual({ pending: 0, error: 0 })
+  })
 })
