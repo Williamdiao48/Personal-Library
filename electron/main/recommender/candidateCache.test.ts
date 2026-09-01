@@ -90,4 +90,16 @@ describe('candidateCache', () => {
       expect(db.prepare(`SELECT COUNT(*) n FROM candidate_embeddings`).get()).toEqual({ n: 0 })
     })
   })
+
+  // Regression (Wave 3 / L3): prewarm/backfill write these caches fire-and-forget, so a
+  // pass can still be mid-flight when a backup import closes the DB for its swap. The
+  // helpers must no-op (write) / miss (read), not throw a "Database not initialized"
+  // unhandled rejection off the speculative pass.
+  describe('tolerates a closed DB (background prewarm racing an import swap)', () => {
+    it('read returns null and write no-ops instead of throwing', () => {
+      closeTestDb() // simulate the import swap having nulled the singleton
+      expect(() => writeCandidateCache('ao3:v1:k', [{ title: 'A' }], 1000)).not.toThrow()
+      expect(readCandidateCache('ao3:v1:k', TTL, 1000)).toBeNull()
+    })
+  })
 })
