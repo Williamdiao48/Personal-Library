@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { getDb } from '../db'
+import { getDb, isDbOpen } from '../db'
 import { enqueueItemBackup } from '../cloud/uploader'
 import { flushNow } from '../cloud/sync/syncService'
 
@@ -63,6 +63,10 @@ export function registerCloudHandlers(): void {
   // Authoritative backup tally for the status pill. blobState broadcasts nudge the
   // renderer to refetch this, so a dropped event self-corrects on the next one.
   ipcMain.handle('cloud:getBackupCounts', (): { pending: number; error: number } => {
+    // The renderer polls this on blobState nudges; a poll can land in the window
+    // where backup:import has closed the DB before relaunch. Report zeros rather
+    // than throwing a "Database not initialized" IPC rejection into that poll.
+    if (!isDbOpen()) return { pending: 0, error: 0 }
     const rows = getDb()
       .prepare(`SELECT state, COUNT(*) AS n FROM blob_sync GROUP BY state`)
       .all() as { state: string; n: number }[]

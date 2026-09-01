@@ -1119,7 +1119,13 @@ export default function SettingsView() {
     setImportState('busy')
     setImportError('')
     try {
-      await backupService.import()
+      const result = await backupService.import()
+      // A successful import relaunches the app, so import() only resolves when nothing
+      // was imported. 'busy' = a capture is in flight and the DB swap was refused.
+      if (result?.status === 'busy') {
+        setImportError('Finish or cancel active captures before importing a backup.')
+        setImportState('error')
+      }
     } catch (err: any) {
       setImportError(err?.message ?? 'Import failed')
       setImportState('error')

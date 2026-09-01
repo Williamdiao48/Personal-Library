@@ -338,3 +338,26 @@ describe('reapPurgedLocalFiles', () => {
     }
   })
 })
+
+// Regression (Wave 3 / L3): both reaps are fire-and-forget from a sync round's
+// scheduleReap(). backup:import awaits a flush (which can schedule that reap) and
+// then closeDb()s for the swap — so a scheduled reap can resume against a nulled DB.
+// It must bail via isDbOpen(), not throw a "Database not initialized" unhandled
+// rejection (both fns document "Never throws").
+describe('reaps bail when the DB is closed under them', () => {
+  it('reapOrphanBlobs resolves without throwing after closeDb()', async () => {
+    // Seed a reapable orphan so the guard, not an empty ledger, is what stops it.
+    const id = seedItem(db, { deleted_at: 1000 })
+    setBlob(id, { blob_hash: 'H', purged_at: 2000 })
+    enqueue('H', 'content', 'synced', PAST_GRACE())
+    closeTestDb() // simulate the import swap nulling the singleton mid-flight
+
+    await expect(reapOrphanBlobs()).resolves.toBeUndefined()
+    expect(fetchMock).not.toHaveBeenCalled() // never reached the delete path
+  })
+
+  it('reapPurgedLocalFiles resolves without throwing after closeDb()', async () => {
+    closeTestDb()
+    await expect(reapPurgedLocalFiles()).resolves.toBeUndefined()
+  })
+})

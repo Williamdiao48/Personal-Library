@@ -719,6 +719,14 @@ export function closeDb(): void {
   }
 }
 
+/** Whether a live DB connection is currently open. Lets best-effort background work
+ *  (the reapers, status IPC) bail cleanly instead of throwing when it runs in the
+ *  window after closeDb() — e.g. a fire-and-forget reap scheduled by a sync round
+ *  that resolves just as backup:import closes the DB for the swap. */
+export function isDbOpen(): boolean {
+  return !!db
+}
+
 /**
  * Test-only: point the module singleton at an already-open database so the IPC
  * handlers' run/get/all helpers operate on an in-memory test DB. Never called by

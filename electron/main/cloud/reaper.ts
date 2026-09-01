@@ -1,5 +1,5 @@
 import { unlinkSync } from 'fs'
-import { getDb } from '../db'
+import { getDb, isDbOpen } from '../db'
 import { getSupabase, isConfigured } from '../auth/client'
 import { presignBlobUrl, type BlobKind } from './presign'
 import { safeContentPath, safeUserDataPath } from '../security/paths'
@@ -87,6 +87,10 @@ export async function reapOrphanBlobs(): Promise<void> {
 
   reaping = true
   try {
+    // The session await above yields the event loop, so the DB can close under us
+    // (backup:import's swap) between scheduling this reap and here — bail rather than
+    // throw an unhandled rejection off the fire-and-forget scheduleReap() promise.
+    if (!isDbOpen()) return
     const db = getDb()
     // Only blobs we actually uploaded (state='synced') are candidates; a 'pending'/
     // 'error' row hasn't reached R2 yet, so there's nothing to delete.
@@ -168,6 +172,7 @@ export async function reapPurgedLocalFiles(): Promise<void> {
   if (reapingLocal) return
   reapingLocal = true
   try {
+    if (!isDbOpen()) return // DB closed under us (import swap) — bail, don't throw.
     const db = getDb()
     const rows = db
       .prepare(

@@ -1,4 +1,4 @@
-import { get, run } from '../db'
+import { get, run, isDbOpen } from '../db'
 import type { SeedQuery } from './seedQueries'
 import { readCandidateCache, writeCandidateCache } from './candidateCache'
 import { dedupeSubjects } from './subjectNormalize'
@@ -579,6 +579,7 @@ interface CacheRow {
 
 /** Fresh cached docs for a query key, or null on miss / stale / parse failure. */
 function readCache(queryKey: string, ttlMs: number, now: number): OpenLibraryDoc[] | null {
+  if (!isDbOpen()) return null // background prewarm racing a backup-import DB close → miss.
   const row = get<CacheRow>(
     `SELECT payload_json, fetched_at FROM candidate_cache WHERE query_key = ?`,
     [queryKey],
@@ -593,6 +594,7 @@ function readCache(queryKey: string, ttlMs: number, now: number): OpenLibraryDoc
 }
 
 function writeCache(queryKey: string, docs: OpenLibraryDoc[], now: number): void {
+  if (!isDbOpen()) return // DB closed under a background prewarm (import swap) — skip.
   run(
     `INSERT INTO candidate_cache (query_key, payload_json, fetched_at)
      VALUES (?, ?, ?)
