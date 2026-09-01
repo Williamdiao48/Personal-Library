@@ -60,6 +60,35 @@ export const BROWSER_HEADERS = {
   'Accept-Language': 'en-US,en;q=0.9',
 }
 
+// 5xx statuses that a bot-protection edge / CDN serves to automated clients while
+// still serving real content to a genuine browser — a Bad Gateway / Service
+// Unavailable from a protective front door (Booksie), plus Cloudflare's origin-error
+// family (520–527, incl. 525 SSL-handshake which AO3 intermittently emits). A
+// persistent one of these is browser-fell-back like a 403/429, since a real
+// fingerprint + warmed cf_clearance session typically gets through. A genuinely
+// dead origin still fails cleanly: the loaded error page carries no capturable
+// content, so the capture fails downstream rather than storing junk. NOT included:
+// 500 (origin app error) and 504 (real gateway timeout) — a browser won't help there.
+const BROWSER_FALLBACK_5XX = new Set([502, 503, 520, 521, 522, 523, 524, 525, 526, 527])
+
+// Renders a Retry-After header value (delta-seconds or an HTTP-date) as a short
+// human hint like "~60s" / "~3 min". Falls back to a vague phrase for an
+// unparseable / past value.
+export function formatRetryAfter(raw: string): string {
+  const asSeconds = (secs: number): string =>
+    secs >= 90 ? `~${Math.round(secs / 60)} min` : `~${Math.max(1, Math.round(secs))}s`
+
+  const delta = Number(raw)
+  if (Number.isFinite(delta) && delta > 0) return asSeconds(delta)
+
+  const when = Date.parse(raw)
+  if (!Number.isNaN(when)) {
+    const secsFromNow = (when - Date.now()) / 1000
+    if (secsFromNow > 0) return asSeconds(secsFromNow)
+  }
+  return 'a little while'
+}
+
 // Plain fetch with browser-like headers, resilient to transient failures.
 //
 // AO3's first capture request is `?view_full_work=true`, which makes the server
@@ -95,6 +124,7 @@ export async function fetchPage(
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
   let networkErr: unknown = null // a timeout / network failure — worth a browser retry
   let httpErr: Error | null = null // a persistent 5xx — surface it rather than mask it
+  let httpStatus: number | null = null // last 5xx status, to route the edge family to a browser
   for (let attempt = 0; attempt <= retries; attempt++) {
     let res: Response | undefined
     try {
@@ -112,15 +142,38 @@ export async function fetchPage(
       if (res.status === 403 || res.status === 429) return fetchPageWithBrowser(url)
       // Any other 4xx is a real error (no such work, deleted, etc.) — fail fast.
       if (res.status < 500) throw new Error(`Failed to fetch page: ${res.status} ${res.statusText}`)
+      // A 5xx carrying Retry-After is an EXPLICIT "I'm throttling, come back later"
+      // from the origin/edge (Booksie serves 502 + Retry-After: 60 under load) —
+      // distinct from a silent bot-block. A real browser hits the same wall, and
+      // waiting out a 60 s throttle in-capture is a poor UX, so fail fast with a
+      // clear, actionable message instead of burning the 45 s browser fallback.
+      const retryAfter = res.headers?.get?.('retry-after')
+      if (retryAfter) {
+        const host = (() => {
+          try {
+            return new URL(url).hostname
+          } catch {
+            return 'This site'
+          }
+        })()
+        throw new Error(
+          `${host} is temporarily throttling requests (${res.status}). Try again in ${formatRetryAfter(retryAfter)}.`,
+        )
+      }
       httpErr = new Error(`Failed to fetch page: ${res.status} ${res.statusText}`) // 5xx → retry
+      httpStatus = res.status
     }
     if (attempt < retries) await sleep(500 * (attempt + 1))
   }
   // Retries exhausted. A timeout / network failure is worth one real-browser attempt
   // (longer budget + warm session) — the AO3 cold-render case, where the retries that
-  // warmed the cache let the browser load land. A persistent 5xx is surfaced instead,
-  // since the browser would happily "load" the origin's error page as content.
+  // warmed the cache let the browser load land.
   if (networkErr) return fetchPageWithBrowser(url)
+  // A bot-protection / edge 5xx (502/503 from a protective front door, Cloudflare's
+  // 520–527) is served ONLY to automated clients — the real browser gets through, so
+  // fall back like a 403/429. Other 5xx (500 app error, 504 real gateway timeout) are
+  // surfaced, since the browser would just "load" the origin's error page as content.
+  if (httpStatus !== null && BROWSER_FALLBACK_5XX.has(httpStatus)) return fetchPageWithBrowser(url)
   throw httpErr ?? new Error(`Failed to fetch page: ${url}`)
 }
 

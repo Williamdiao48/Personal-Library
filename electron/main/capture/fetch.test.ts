@@ -48,6 +48,7 @@ import {
   fetchPageWithBrowser,
   fetchPagesSequential,
   fetchPagesWithSession,
+  formatRetryAfter,
 } from './fetch'
 import { SsrfBlockedError } from '../security/net-guard'
 
@@ -64,8 +65,14 @@ function flush(): Promise<void> {
 function okResponse(text: string) {
   return { ok: true, text: async () => text } as Response
 }
-function notOkResponse(status: number, statusText = 'Error') {
-  return { ok: false, status, statusText } as Response
+function notOkResponse(status: number, statusText = 'Error', headers: Record<string, string> = {}) {
+  const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]))
+  return {
+    ok: false,
+    status,
+    statusText,
+    headers: { get: (k: string) => lower[k.toLowerCase()] ?? null },
+  } as unknown as Response
 }
 
 beforeEach(() => {
@@ -144,6 +151,89 @@ describe('fetchPage', () => {
     win.webContents.emit('did-finish-load')
     await expect(p).resolves.toBe('<html>via browser</html>')
     vi.useRealTimers()
+  })
+
+  // A bot-protection / CDN edge (Booksie's 502, Cloudflare's 520–527) serves 5xx to
+  // the plain fetch but real content to a genuine browser — so a persistent one of
+  // these is browser-fell-back like a 403/429, not surfaced as a dead end.
+  it.each([502, 503, 520, 525])(
+    'falls back to the browser on a persistent %d (bot-protection / edge 5xx)',
+    async (status) => {
+      vi.useFakeTimers()
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(notOkResponse(status, 'Edge Error')))
+      const p = fetchPage('https://x.test', 1) // 2 attempts, both 5xx
+      await vi.advanceTimersByTimeAsync(500) // single backoff between the two attempts
+      await flush()
+      const win = latestWindow()
+      win.webContents.executeJavaScript.mockResolvedValue('<html>via browser</html>')
+      win.webContents.emit('did-finish-load')
+      await expect(p).resolves.toBe('<html>via browser</html>')
+      vi.useRealTimers()
+    },
+  )
+
+  // 500 (origin app error) and 504 (real gateway timeout) are NOT the bot-protection
+  // family — a browser won't help, so they stay surfaced rather than loading the
+  // origin's error page as if it were content.
+  it.each([500, 504])(
+    'still throws without a browser on a persistent %d (not an edge status)',
+    async (status) => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(notOkResponse(status, 'Err')))
+      await expect(fetchPage('https://x.test', 0)).rejects.toThrow(
+        `Failed to fetch page: ${status}`,
+      )
+      expect(FakeBrowserWindow.instances).toHaveLength(0)
+    },
+  )
+
+  // A 5xx that carries Retry-After is an explicit throttle (Booksie's 502 +
+  // Retry-After: 60) — fail fast with an actionable message, no retry, no 45s
+  // browser hang (the browser would hit the same wall).
+  it('fails fast with a throttle message on a 5xx carrying Retry-After (no browser, no retry)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(notOkResponse(502, 'Bad Gateway', { 'Retry-After': '60' }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(fetchPage('https://www.booksie.com/782326-x')).rejects.toThrow(
+      'www.booksie.com is temporarily throttling requests (502). Try again in ~60s.',
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(1) // no retry — Retry-After outlasts the backoff
+    expect(FakeBrowserWindow.instances).toHaveLength(0) // no browser fallback
+  })
+
+  it('still browser-falls-back on an edge 5xx WITHOUT Retry-After (silent bot-block)', async () => {
+    vi.useFakeTimers()
+    // no Retry-After header → treated as a possible bot-block, worth the browser
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(notOkResponse(502, 'Bad Gateway')))
+    const p = fetchPage('https://x.test', 1)
+    await vi.advanceTimersByTimeAsync(500)
+    await flush()
+    const win = latestWindow()
+    win.webContents.executeJavaScript.mockResolvedValue('<html>via browser</html>')
+    win.webContents.emit('did-finish-load')
+    await expect(p).resolves.toBe('<html>via browser</html>')
+    vi.useRealTimers()
+  })
+})
+
+describe('formatRetryAfter', () => {
+  it('renders delta-seconds under 90s as "~Ns"', () => {
+    expect(formatRetryAfter('60')).toBe('~60s')
+    expect(formatRetryAfter('5')).toBe('~5s')
+  })
+
+  it('renders larger delta-seconds as "~N min"', () => {
+    expect(formatRetryAfter('180')).toBe('~3 min')
+  })
+
+  it('parses an HTTP-date form relative to now', () => {
+    const inTwoMin = new Date(Date.now() + 120_000).toUTCString()
+    expect(formatRetryAfter(inTwoMin)).toBe('~2 min')
+  })
+
+  it('falls back to a vague phrase for an unparseable or past value', () => {
+    expect(formatRetryAfter('not-a-number')).toBe('a little while')
+    expect(formatRetryAfter('0')).toBe('a little while')
   })
 })
 
