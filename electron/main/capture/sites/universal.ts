@@ -337,6 +337,56 @@ export function extractSeriesTitle(doc: Document, fallback: string): string {
   return fallback
 }
 
+// Navigational anchor text that is never a work title (skipped when harvesting a
+// title from a link).
+const GENERIC_LINK_TEXT_RE =
+  /^\s*(home|back|next|previous|prev|read(\s+(more|now))?|start(\s+reading)?|begin|continue|all\s+chapters?)\s*$/i
+
+// True when a heading/anchor string reads as a chapter LABEL ("Chapter 3",
+// "Part 2 — …", "Prologue") rather than a work title. The keyword forms require a
+// trailing number so real titles like "Book of the Ancestor" are NOT flagged;
+// the standalone set covers the numberless front/back-matter labels. L5 fix:
+// lets a chapter-shaped <h1> be rejected as the work title.
+export function isChapterHeading(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  if (
+    /^(chapter|ch\.?|part|pt\.?|episode|ep\.?|book|volume|vol\.?|arc|section|scene)\s*[-–—:.#]?\s*\d/i.test(
+      t,
+    )
+  )
+    return true
+  if (/^(prologue|epilogue|interlude|afterword|foreword|preface)\b/i.test(t)) return true
+  return false
+}
+
+// Recovers the work title from the anchor that links to the work's landing/TOC
+// page. Many serial hosts render a chapter-shaped <h1> ("Chapter 1: …") but carry
+// a sidebar/byline link whose text IS the book title (e.g. Booksie's "Ballad of
+// Hillcross" link back to /782326-ballad-of-hillcross). That link is a far more
+// reliable title source than the heading. Returns null when no such anchor is
+// found. L5 fix.
+export function titleFromLandingLink(doc: Document, currentUrl: string): string | null {
+  const landing = findTocLink(doc, currentUrl)
+  if (!landing) return null
+  const landingKey = normalizeUrl(landing)
+
+  for (const a of Array.from(doc.querySelectorAll('a[href]'))) {
+    const href = a.getAttribute('href')
+    if (!href || href.startsWith('#')) continue
+    const resolved = resolveSameOrigin(href, currentUrl)
+    if (!resolved || normalizeUrl(resolved) !== landingKey) continue
+
+    const text = (a.textContent ?? '').trim()
+    if (!text || text.length > 200) continue
+    if (GENERIC_LINK_TEXT_RE.test(text)) continue // "Home", "Read", …
+    if (TOC_LINK_TEXT_RE.test(text)) continue // "Table of Contents", "Index", …
+    if (isChapterHeading(text)) continue // a chapter link that happens to hit the landing key
+    return text
+  }
+  return null
+}
+
 export function extractAuthor(doc: Document): string | null {
   const meta = doc.querySelector('meta[name="author"]')?.getAttribute('content')?.trim()
   if (meta) return meta
@@ -483,7 +533,14 @@ async function captureTocPage(
   const chapterUrls = extractTocLinks(tocDoc, tocUrl)
   if (chapterUrls.length < 2) return null
 
-  const tocTitle = tocDoc.querySelector('h1, h2')?.textContent?.trim() ?? ''
+  // Prefer the landing-link title, then a NON-chapter-shaped heading. A page that
+  // was probed as a TOC but is really a chapter page carrying an embedded chapter
+  // list (e.g. Booksie) has a chapter-shaped <h1> — that must NOT become the work
+  // title, so we fall through to extractSeriesTitle on a fetched chapter below. L5 fix.
+  const headingTitle = tocDoc.querySelector('h1, h2')?.textContent?.trim() ?? ''
+  const tocTitle =
+    titleFromLandingLink(tocDoc, tocUrl) ??
+    (headingTitle && !isChapterHeading(headingTitle) ? headingTitle : '')
   const tocAuthor = extractAuthor(tocDoc)
   const tocCover = extractCoverUrl(tocDoc)
 
@@ -613,9 +670,14 @@ async function captureChapterSeries(
           .filter((c): c is ChapterData => c !== null)
 
         if (chapters.length >= 2) {
-          const firstDoc = docs.find((d): d is Document => d !== null)
+          const firstIdx = docs.findIndex((d) => d !== null)
+          const firstDoc = firstIdx >= 0 ? docs[firstIdx]! : undefined
+          const firstUrl = firstIdx >= 0 ? urls[firstIdx] : ch1Url
           return {
-            title: firstDoc ? extractSeriesTitle(firstDoc, chapters[0].title) : chapters[0].title,
+            title: firstDoc
+              ? (titleFromLandingLink(firstDoc, firstUrl) ??
+                extractSeriesTitle(firstDoc, chapters[0].title))
+              : chapters[0].title,
             author: firstDoc ? extractAuthor(firstDoc) : null,
             coverUrl: firstDoc ? extractCoverUrl(firstDoc) : null,
             ...assembleChapters(chapters),
@@ -640,8 +702,10 @@ async function captureChapterSeries(
   if (chapters.length < 2) return null
 
   const firstDoc = allPages[0].doc
+  const firstUrl = allPages[0].url
   return {
-    title: extractSeriesTitle(firstDoc, chapters[0].title),
+    title:
+      titleFromLandingLink(firstDoc, firstUrl) ?? extractSeriesTitle(firstDoc, chapters[0].title),
     author: extractAuthor(firstDoc),
     coverUrl: extractCoverUrl(firstDoc),
     ...assembleChapters(chapters),
