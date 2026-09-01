@@ -1,6 +1,6 @@
 # Personal Library
 
-A local-first desktop app for capturing, organizing, and reading web content — articles, fanfiction, web serials, EPUBs, and PDFs. It runs fully offline and requires no account or server — your whole library lives on your machine. An **optional, opt-in cloud layer** (off by default) adds cross-device backup and sync when you want it.
+A local-first desktop app for capturing, organizing, and reading web content — articles, fanfiction, web serials, EPUBs, and PDFs. It runs fully offline and requires no account or server — your whole library lives on your machine. An **optional cloud layer** adds cross-device backup and sync whenever you want it.
 
 > **Engineering deep-dive → [ARCHITECTURE.md](ARCHITECTURE.md).** How the app is built and why: the local SQLite/FTS5 core, the custom local↔Postgres sync engine (whole-row LWW on a server-stamped clock), content-addressed blob backup via presigned URLs, the on-device recommender, and the testing/CI setup.
 
@@ -75,7 +75,7 @@ The installer is unsigned, so SmartScreen may show a warning:
 - **Trash & recovery** — deleted items move to Trash and can be restored within 30 days; auto-purged on next launch after that
 - **Full-text search** — FTS5 with partial-word matching as you type; indexes HTML, EPUB, and PDF content
 - **Reading stats** — 1-year activity heatmap, streaks, time/count/reading-list goals with progress rings, per-item breakdown with avg WPM and word count
-- **Optional cloud sync & backup** — create an account to sync your library's metadata across devices (edits propagate within seconds via realtime sync, not just on a timer) and back up the files of items you choose. Strictly opt-in and **off by default**, with per-item control over which files leave your machine; signed out, the app is byte-for-byte local-only. Full account self-service in **Settings → Account**: sign up (with an email confirmation code), sign in, reset a forgotten password via a recovery code, and permanently delete your account and all its cloud data. Built on a custom local↔Postgres sync engine with content-addressed file backup — see [ARCHITECTURE.md](ARCHITECTURE.md)
+- **Optional cloud sync & backup** — create an account to sync your library's metadata across devices (edits propagate within seconds via realtime sync, not just on a timer) and back up the files of items you choose. Opt-in, with per-item control over which files leave your machine. Full account self-service in **Settings → Account**: sign up (with an email confirmation code), sign in, reset a forgotten password via a recovery code, and permanently delete your account and all its cloud data. Built on a custom local↔Postgres sync engine with content-addressed file backup — see [ARCHITECTURE.md](ARCHITECTURE.md)
 - **Export & import** — `.plbackup` ZIP contains the full database + all content files; import relaunches cleanly
 - **Auto-updater** — on Windows & Linux, checks for new releases on launch; download and install from the in-app notification (macOS updates are manual — see [Updating](#updating))
 
@@ -83,7 +83,7 @@ The installer is unsigned, so SmartScreen may show a warning:
 
 ## Your Data
 
-All data is stored locally in your system's app data folder — the app is fully functional without any account or cloud connection. (Cloud backup and cross-device sync exist but are strictly opt-in and off by default; nothing leaves your machine unless you sign in and choose it — see [Features](#features).)
+All data is stored locally in your system's app data folder — the app is fully functional without any account or cloud connection. (Optional cloud backup and cross-device sync are there when you want them — nothing leaves your machine unless you sign in and choose it; see [Features](#features).)
 
 If you do use the cloud, **Settings → Account → Delete account** permanently erases your account and everything backed up for it; your local library on this device is left untouched and stays readable offline.
 
