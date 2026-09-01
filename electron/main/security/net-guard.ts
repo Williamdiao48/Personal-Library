@@ -24,6 +24,20 @@ import { lookup } from 'dns/promises'
 
 const MAX_REDIRECTS = 5
 
+/**
+ * Thrown by the SSRF guard when a URL (or a redirect hop) targets a private /
+ * internal address. Distinct from a plain network error so a caller can treat a
+ * block as *fatal* — e.g. the guarded `fetchPage` must NOT fall through to its
+ * real-browser fallback (which would follow the redirect to the private host
+ * itself), whereas a genuine timeout/network error still may.
+ */
+export class SsrfBlockedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SsrfBlockedError'
+  }
+}
+
 /** Throw unless `url` is a well-formed http(s) URL. */
 export function assertHttpUrl(url: string): void {
   let scheme: string
@@ -150,7 +164,7 @@ export async function assertPublicHttpUrl(url: string): Promise<void> {
 
   if (isIP(host)) {
     if (isPrivateAddress(host)) {
-      throw new Error(`Refusing to fetch a private/internal address: ${host}`)
+      throw new SsrfBlockedError(`Refusing to fetch a private/internal address: ${host}`)
     }
     return
   }
@@ -161,7 +175,7 @@ export async function assertPublicHttpUrl(url: string): Promise<void> {
   }
   for (const { address } of addrs) {
     if (isPrivateAddress(address)) {
-      throw new Error(`Host ${host} resolves to a private/internal address: ${address}`)
+      throw new SsrfBlockedError(`Host ${host} resolves to a private/internal address: ${address}`)
     }
   }
 }

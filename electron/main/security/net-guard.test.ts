@@ -5,7 +5,13 @@ import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vite
 // run deterministically without touching the network.
 vi.mock('dns/promises', () => ({ lookup: vi.fn() }))
 
-import { assertHttpUrl, isPrivateAddress, assertPublicHttpUrl, safeFetch } from './net-guard'
+import {
+  assertHttpUrl,
+  isPrivateAddress,
+  assertPublicHttpUrl,
+  safeFetch,
+  SsrfBlockedError,
+} from './net-guard'
 import { lookup } from 'dns/promises'
 
 // dns.lookup is heavily overloaded; vi.mocked resolves to the single-address
@@ -86,6 +92,13 @@ describe('assertPublicHttpUrl (IP-literal hosts, no DNS)', () => {
   })
   it('accepts a public IP literal', async () => {
     await expect(assertPublicHttpUrl('http://8.8.8.8/')).resolves.toBeUndefined()
+  })
+
+  // A private-address rejection is typed SsrfBlockedError (not a plain Error) so
+  // callers can treat it as fatal — the guarded fetchPage relies on this to refuse
+  // an SSRF redirect instead of retrying it through the real-browser fallback.
+  it('rejects a private literal with a typed SsrfBlockedError', async () => {
+    await expect(assertPublicHttpUrl('http://127.0.0.1/')).rejects.toBeInstanceOf(SsrfBlockedError)
   })
 
   // T1-2 regression: `new URL()` re-serializes an IPv4-mapped literal to its hex

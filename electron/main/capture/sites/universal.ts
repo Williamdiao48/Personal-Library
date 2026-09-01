@@ -3,6 +3,7 @@ import { Readability } from '@mozilla/readability'
 import { sanitize } from '../sanitizer'
 import { fetchPage, fetchPagesWithSession, fetchPagesSequential } from '../fetch'
 import type { SiteContent } from '../fetch'
+import { assertPublicHttpUrl } from '../../security/net-guard'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -73,6 +74,19 @@ export function resolveSameOrigin(href: string, base: string): string | null {
     return resolved.href
   } catch {
     return null
+  }
+}
+
+// True when `url` resolves to a public address (no private/internal IP). Wraps
+// the SSRF guard's throw in a boolean so the walk can DECIDE whether to harden
+// rather than reject: a private/unresolvable start URL is a legitimate capture
+// (self-hosted LAN wiki), it just opts out of the redirect guard for its follows.
+async function isPublicUrl(url: string): Promise<boolean> {
+  try {
+    await assertPublicHttpUrl(url)
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -403,8 +417,20 @@ function assembleChapters(chapters: ChapterData[]): Pick<SiteContent, 'html' | '
 async function batchFetchChapters(
   urls: string[],
   onProgress: (msg: string) => void,
+  guardRedirects: boolean,
 ): Promise<(Document | null)[]> {
   const total = urls.length
+
+  // The batch fetchers (session-cookie fetch + BrowserWindow nav) follow redirects
+  // internally with no per-hop hook, so they can't run through `safeFetch` like the
+  // plain-fetchPage walk does. The batch URLs are same-origin as the (already
+  // public-validated) start URL by construction, so re-validating the shared origin
+  // once here is the batch analogue of the walk's per-hop guard: it catches a batch
+  // origin that has since rebound to a private address. A same-origin URL the SERVER
+  // 302-redirects off to an internal host mid-batch is the documented residual for
+  // this path (M2 Option B — see the decision record); the plain-fetchPage walk,
+  // which is the audit's actual <link rel=next> vector, is fully guarded.
+  if (guardRedirects && urls.length > 0) await assertPublicHttpUrl(urls[0])
 
   const pages = await fetchPagesWithSession(
     urls,
@@ -452,6 +478,7 @@ async function captureTocPage(
   tocDoc: Document,
   tocUrl: string,
   onProgress: (msg: string) => void,
+  guardRedirects: boolean,
 ): Promise<SiteContent | null> {
   const chapterUrls = extractTocLinks(tocDoc, tocUrl)
   if (chapterUrls.length < 2) return null
@@ -461,7 +488,7 @@ async function captureTocPage(
   const tocCover = extractCoverUrl(tocDoc)
 
   onProgress(`Found ${chapterUrls.length} chapters in table of contents…`)
-  const docs = await batchFetchChapters(chapterUrls, onProgress)
+  const docs = await batchFetchChapters(chapterUrls, onProgress, guardRedirects)
 
   const chapters = docs
     .map((doc, i) => (doc ? readChapterPage(doc, chapterUrls[i], i + 1) : null))
@@ -491,6 +518,7 @@ async function collectAllByWalking(
   startDoc: Document,
   startUrl: string,
   onProgress: (msg: string) => void,
+  guardRedirects: boolean,
 ): Promise<{ doc: Document; url: string }[]> {
   // ── Backward pass ────────────────────────────────────────────────────────────
   const backward: { doc: Document; url: string }[] = []
@@ -502,7 +530,7 @@ async function collectAllByWalking(
     if (!prevUrl || normalizeUrl(prevUrl) === normalizeUrl(curUrl)) break
 
     onProgress(`Rewinding to chapter 1… (step ${hops + 1})`)
-    const html = await fetchPage(prevUrl)
+    const html = await fetchPage(prevUrl, 2, 30_000, guardRedirects)
     curDoc = new JSDOM(html, { url: prevUrl }).window.document
     curUrl = prevUrl
     backward.push({ doc: curDoc, url: curUrl })
@@ -526,7 +554,7 @@ async function collectAllByWalking(
     visited.add(key)
 
     onProgress(`Fetching chapter ${backward.length + forward.length + 1}…`)
-    const html = await fetchPage(nextUrl)
+    const html = await fetchPage(nextUrl, 2, 30_000, guardRedirects)
     curDoc = new JSDOM(html, { url: nextUrl }).window.document
     curUrl = nextUrl
     forward.push({ doc: curDoc, url: curUrl })
@@ -540,6 +568,7 @@ async function captureChapterSeries(
   startDoc: Document,
   startUrl: string,
   onProgress: (msg: string) => void,
+  guardRedirects: boolean,
 ): Promise<SiteContent | null> {
   // ── Option 1: explicit TOC link ──────────────────────────────────────────────
   // The cleanest path: a "Table of Contents" link gives us every chapter URL
@@ -548,9 +577,9 @@ async function captureChapterSeries(
   if (tocUrl) {
     onProgress('Found table of contents, fetching…')
     try {
-      const tocHtml = await fetchPage(tocUrl)
+      const tocHtml = await fetchPage(tocUrl, 2, 30_000, guardRedirects)
       const tocDoc = new JSDOM(tocHtml, { url: tocUrl }).window.document
-      const result = await captureTocPage(tocDoc, tocUrl, onProgress)
+      const result = await captureTocPage(tocDoc, tocUrl, onProgress, guardRedirects)
       if (result) return result
     } catch {
       /* TOC fetch failed — fall through */
@@ -569,7 +598,7 @@ async function captureChapterSeries(
 
       if (numeric.current > 1) {
         onProgress('Fetching chapter 1…')
-        const html = await fetchPage(ch1Url)
+        const html = await fetchPage(ch1Url, 2, 30_000, guardRedirects)
         ch1Doc = new JSDOM(html, { url: ch1Url }).window.document
       }
 
@@ -577,7 +606,7 @@ async function captureChapterSeries(
       if (chapterCount && chapterCount >= 2) {
         onProgress(`Building ${chapterCount} chapter URLs…`)
         const urls = Array.from({ length: chapterCount }, (_, i) => numeric.build(i + 1))
-        const docs = await batchFetchChapters(urls, onProgress)
+        const docs = await batchFetchChapters(urls, onProgress, guardRedirects)
 
         const chapters = docs
           .map((doc, i) => (doc ? readChapterPage(doc, urls[i], i + 1) : null))
@@ -601,7 +630,7 @@ async function captureChapterSeries(
   // ── Option 3: bidirectional next/prev-link walk ──────────────────────────────
   // Last resort for sites with opaque chapter IDs and no explicit TOC link.
   // Walks backwards to chapter 1 then forwards to the end in N total requests.
-  const allPages = await collectAllByWalking(startDoc, startUrl, onProgress)
+  const allPages = await collectAllByWalking(startDoc, startUrl, onProgress, guardRedirects)
   if (allPages.length < 2) return null
 
   const chapters = allPages
@@ -630,6 +659,16 @@ export async function captureUniversal(
 ): Promise<SiteContent | null> {
   const progress = (msg: string) => onProgress?.(msg)
 
+  // Decide ONCE whether to SSRF-guard the page-derived follow URLs (M2 Option B).
+  // The user-chosen start URL is intentionally allowed to be localhost/LAN (the
+  // capture chokepoint applies scheme-only `assertHttpUrl`), so a deliberately
+  // private capture (self-hosted wiki) must keep working — we only harden the
+  // auto-discovered next/prev/TOC follows when the start URL is PUBLIC. A public
+  // start resolving cleanly ⇒ guard the walk; a private/unresolvable start ⇒ leave
+  // the walk on plain fetch (today's behaviour). This single check also spares
+  // every downstream follow from re-resolving the start host.
+  const guardRedirects = await isPublicUrl(url)
+
   progress('Fetching page…')
   const html = await fetchPage(url)
   const doc = new JSDOM(html, { url }).window.document
@@ -638,9 +677,9 @@ export async function captureUniversal(
   if (pageType === 'article') return null
 
   if (pageType === 'toc') {
-    return captureTocPage(doc, url, progress)
+    return captureTocPage(doc, url, progress, guardRedirects)
   }
 
   // pageType === 'chapter'
-  return captureChapterSeries(doc, url, progress)
+  return captureChapterSeries(doc, url, progress, guardRedirects)
 }

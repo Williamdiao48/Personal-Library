@@ -31,6 +31,17 @@ vi.mock('electron', async (importOriginal) => {
   }
 })
 
+// The guarded fetchPage path routes through net-guard's `safeFetch`. Stub only
+// that seam (its real body does DNS + a live fetch) while keeping the REAL
+// SsrfBlockedError class, so fetchPage's `instanceof SsrfBlockedError` check
+// matches the errors these tests throw. The unguarded default path never calls
+// safeFetch, so this mock is inert for every existing test above.
+const safeFetchMock = vi.hoisted(() => vi.fn())
+vi.mock('../security/net-guard', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../security/net-guard')>()
+  return { ...actual, safeFetch: safeFetchMock }
+})
+
 import {
   fetchPage,
   fetchJson,
@@ -38,6 +49,7 @@ import {
   fetchPagesSequential,
   fetchPagesWithSession,
 } from './fetch'
+import { SsrfBlockedError } from '../security/net-guard'
 
 function latestWindow(): InstanceType<typeof FakeBrowserWindow> {
   return FakeBrowserWindow.instances[FakeBrowserWindow.instances.length - 1]
@@ -60,6 +72,7 @@ beforeEach(() => {
   FakeBrowserWindow.instances.length = 0
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  safeFetchMock.mockReset()
 })
 
 describe('fetchPage', () => {
@@ -131,6 +144,54 @@ describe('fetchPage', () => {
     win.webContents.emit('did-finish-load')
     await expect(p).resolves.toBe('<html>via browser</html>')
     vi.useRealTimers()
+  })
+})
+
+// M2 Option B: when the caller opts into the redirect guard (public start URL),
+// fetchPage routes the request through safeFetch, which re-validates every
+// redirect hop against the private-IP block, and a block is fatal (no browser
+// fallback to the private target).
+describe('fetchPage — guarded redirect (M2 Option B)', () => {
+  it('routes through safeFetch (not plain fetch) and returns its body', async () => {
+    const plainFetch = vi.fn()
+    vi.stubGlobal('fetch', plainFetch)
+    safeFetchMock.mockResolvedValue(okResponse('guarded-ok'))
+
+    await expect(fetchPage('https://x.test', 2, 30_000, true)).resolves.toBe('guarded-ok')
+    expect(safeFetchMock).toHaveBeenCalledTimes(1)
+    expect(plainFetch).not.toHaveBeenCalled() // guarded path bypasses raw fetch
+  })
+
+  it('rethrows an SSRF block WITHOUT falling back to the browser', async () => {
+    safeFetchMock.mockRejectedValue(new SsrfBlockedError('resolves to a private/internal address'))
+
+    // 0 retries so we assert the block is fatal on the first attempt, not after backoff.
+    await expect(fetchPage('https://x.test', 0, 30_000, true)).rejects.toBeInstanceOf(
+      SsrfBlockedError,
+    )
+    // The whole point: a private redirect target must never be loaded via the
+    // real-browser fallback (which would follow the 302 itself).
+    expect(FakeBrowserWindow.instances).toHaveLength(0)
+  })
+
+  it('still falls back to the browser on a genuine (non-SSRF) network error', async () => {
+    vi.useFakeTimers()
+    safeFetchMock.mockRejectedValue(new Error('The operation was aborted due to timeout'))
+
+    const p = fetchPage('https://x.test', 1, 30_000, true) // 2 attempts, both time out
+    await vi.advanceTimersByTimeAsync(500)
+    await flush()
+    const win = latestWindow()
+    win.webContents.executeJavaScript.mockResolvedValue('<html>via browser</html>')
+    win.webContents.emit('did-finish-load')
+    await expect(p).resolves.toBe('<html>via browser</html>')
+    vi.useRealTimers()
+  })
+
+  it('does NOT call safeFetch on the default (unguarded) path', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse('plain')))
+    await expect(fetchPage('https://x.test')).resolves.toBe('plain')
+    expect(safeFetchMock).not.toHaveBeenCalled()
   })
 })
 
