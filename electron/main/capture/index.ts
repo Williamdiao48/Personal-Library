@@ -15,6 +15,7 @@ import { captureWattpad, getWattpadChapterCount } from './sites/wattpad'
 import { captureScribbleHub, getScribbleHubChapterCount } from './sites/scribblehub'
 import { captureXenForo, getXenForoChapterCount } from './sites/forums'
 import { captureUniversal } from './sites/universal'
+import { inlineBodyImages } from './inline-images'
 import { safeContentPath } from '../security/paths'
 import { assertImportFile, normalizeCoverExt } from '../security/validation'
 import { assertHttpUrl, safeFetch } from '../security/net-guard'
@@ -193,13 +194,18 @@ async function saveToLibrary(
   range?: ChapterRange,
   cloudBackup = false,
 ): Promise<CaptureResult> {
-  const { title, author, html, textContent } = content
+  const { title, author, textContent } = content
 
   const id = randomUUID()
   const contentDir = getContentDir()
 
   // Download cover before the transaction (network I/O, fails safely)
   const coverPath = ogImageUrl ? await downloadCover(ogImageUrl, sourceUrl, contentDir, id) : null
+
+  // Inline remote body images as data: URIs (M1) so they render under the tight
+  // reader CSP, matching EPUB. No-op for image-free bodies; time-bounded so it
+  // never hangs capture; never fatal.
+  const html = await inlineBodyImages(content.html, sourceUrl, onProgress)
   const wordCount = textContent.split(/\s+/).filter(Boolean).length
   const contentHash = computeContentHash(textContent)
   const now = Date.now()
@@ -359,6 +365,8 @@ export async function appendChapters(
     start: appendStart,
     end: newEnd,
   })
+  // Inline remote body images in the appended chapters too (M1).
+  newContent.html = await inlineBodyImages(newContent.html, item.source_url, onProgress)
 
   // Determine whether this item uses the new per-chapter file format
   const isMultiChapterFormat = item.file_path.match(/-ch(\d+)\.html$/) !== null
