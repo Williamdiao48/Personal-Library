@@ -74,16 +74,20 @@ describe('startRealtime', () => {
     expect(onChange).toHaveBeenCalledTimes(1)
   })
 
-  it('logs the subscription outcome (SUBSCRIBED vs a failure status)', () => {
+  it('warns on a failure status; the SUBSCRIBED info log is gated off by default', () => {
     const f = makeFakeClient()
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     startRealtime(f.client, 'jwt-1', vi.fn())
 
+    // SUBSCRIBED is the happy path → its info log now sits behind SYNC_DEBUG (off by
+    // default, and forced off under Vitest), so a normal subscribe logs nothing.
     f.fireStatus('SUBSCRIBED')
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('subscribed'))
+    expect(log).not.toHaveBeenCalled()
 
+    // A failure status is ALWAYS surfaced regardless of the debug flag — a silently
+    // dead subscription must stay visible.
     f.fireStatus('CHANNEL_ERROR', new Error('boom'))
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('CHANNEL_ERROR'))
 

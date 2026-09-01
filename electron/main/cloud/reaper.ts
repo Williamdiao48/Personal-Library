@@ -80,13 +80,19 @@ export async function reapOrphanBlobs(): Promise<void> {
   if (reaping || !isConfigured()) return
   const supabase = getSupabase()
   if (!supabase) return
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-  if (!session) return // signed out → nothing to reap
 
+  // Claim the single-flight guard BEFORE the first await. The top check + the
+  // getSession() below span an event-loop yield, so two scheduleReap() calls landing
+  // close together (two sync rounds finishing near one another) could otherwise both
+  // pass the top check and run overlapping sweeps. Overlapping sweeps are idempotent
+  // (see the header), so this only tightens the guard — the try/finally always releases it.
   reaping = true
   try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session) return // signed out → nothing to reap
+
     // The session await above yields the event loop, so the DB can close under us
     // (backup:import's swap) between scheduling this reap and here — bail rather than
     // throw an unhandled rejection off the fire-and-forget scheduleReap() promise.
