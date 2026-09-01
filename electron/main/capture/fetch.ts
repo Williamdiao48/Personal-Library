@@ -1,4 +1,5 @@
 import { BrowserWindow, session as electronSession } from 'electron'
+import { safeFetch, SsrfBlockedError } from '../security/net-guard'
 
 // A native structured tag lifted from a fanfic site's own metadata block (AO3's
 // tag groups, FFN's #profile_top line) — the richest taste signal for a fic. The
@@ -74,15 +75,35 @@ export const BROWSER_HEADERS = {
 // cover the slow-render case. A 403/429 still falls back to the browser immediately
 // (Cloudflare challenge / rate limit); any other 4xx is a real "no such page" and
 // fails fast without retrying.
-export async function fetchPage(url: string, retries = 2, timeoutMs = 30_000): Promise<string> {
+// `guardRedirects` routes the request through `safeFetch` (net-guard), which
+// re-validates the host on the initial URL AND on every redirect hop against the
+// private-IP block. The universal serial walk sets it for page-derived follow
+// URLs (next/prev/TOC) when the capture's start URL is public, so a same-origin
+// link the *server* 302-redirects to an internal address (169.254.169.254, a LAN
+// admin page, localhost) is refused rather than fetched-and-stored (M2 Option B).
+// A private-address block is FATAL here — it throws SsrfBlockedError straight out
+// rather than falling through to the real-browser fallback, which would itself
+// follow the redirect to the private host and defeat the guard. A deliberately
+// private capture (self-hosted LAN wiki) passes guardRedirects=false and keeps
+// plain fetch, so localhost/LAN capture still works.
+export async function fetchPage(
+  url: string,
+  retries = 2,
+  timeoutMs = 30_000,
+  guardRedirects = false,
+): Promise<string> {
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
   let networkErr: unknown = null // a timeout / network failure — worth a browser retry
   let httpErr: Error | null = null // a persistent 5xx — surface it rather than mask it
   for (let attempt = 0; attempt <= retries; attempt++) {
     let res: Response | undefined
     try {
-      res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: BROWSER_HEADERS })
+      const init = { signal: AbortSignal.timeout(timeoutMs), headers: BROWSER_HEADERS }
+      res = guardRedirects ? await safeFetch(url, init) : await fetch(url, init)
     } catch (err) {
+      // An SSRF block must not fall through to the browser fallback (it would load
+      // the private target itself) — surface it as the definitive failure.
+      if (err instanceof SsrfBlockedError) throw err
       networkErr = err // network error / timeout → transient, retry
     }
     if (res) {

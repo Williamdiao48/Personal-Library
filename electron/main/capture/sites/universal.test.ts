@@ -10,6 +10,14 @@ vi.mock('../fetch', () => ({
   fetchPagesSequential: vi.fn(),
 }))
 
+// captureUniversal calls assertPublicHttpUrl at entry to decide whether to guard
+// the page-derived follow URLs (M2 Option B). Mock it so tests don't do real DNS;
+// default = resolves (public start → guard on). A private-start test overrides it
+// to reject.
+vi.mock('../../security/net-guard', () => ({
+  assertPublicHttpUrl: vi.fn(),
+}))
+
 import {
   captureUniversal,
   probePageType,
@@ -28,10 +36,12 @@ import {
   readChapterPage,
 } from './universal'
 import { fetchPage, fetchPagesWithSession, fetchPagesSequential } from '../fetch'
+import { assertPublicHttpUrl } from '../../security/net-guard'
 
 const mockFetchPage = vi.mocked(fetchPage)
 const mockSession = vi.mocked(fetchPagesWithSession)
 const mockSequential = vi.mocked(fetchPagesSequential)
+const mockAssertPublic = vi.mocked(assertPublicHttpUrl)
 
 const docOf = (html: string, url = 'https://example.com/'): Document =>
   new JSDOM(html, { url }).window.document
@@ -104,6 +114,8 @@ beforeEach(() => {
   mockFetchPage.mockReset()
   mockSession.mockReset()
   mockSequential.mockReset()
+  mockAssertPublic.mockReset()
+  mockAssertPublic.mockResolvedValue(undefined) // default: start URL is public
 })
 
 // ── URL utilities ─────────────────────────────────────────────────────────────
@@ -639,5 +651,44 @@ describe('captureUniversal', () => {
     const result = await captureUniversal(url)
     expect(result).not.toBeNull()
     expect((result!.html.match(/class="chapter"/g) ?? []).length).toBe(2)
+  })
+
+  // ── M2 Option B: SSRF-guard the page-derived follow URLs, public-start-only ──
+  const walkFixture = (u: string): Promise<string> => {
+    if (u.includes('ch-b'))
+      return Promise.resolve(chapterPage({ marker: 'BRAVO', next: '/read/ch-c' }))
+    if (u.includes('ch-d'))
+      return Promise.resolve(chapterPage({ marker: 'DELTA', prev: '/read/ch-c' }))
+    return Promise.resolve(
+      chapterPage({ marker: 'CHARLIE', prev: '/read/ch-b', next: '/read/ch-d' }),
+    )
+  }
+
+  it('guards every page-derived follow when the start URL is public, but not the start itself', async () => {
+    const url = 'https://example.com/read/ch-c'
+    mockFetchPage.mockImplementation(walkFixture)
+
+    await captureUniversal(url)
+
+    // The start page is the user-chosen chokepoint URL (LAN-allowed) → fetched
+    // unguarded. Every auto-discovered prev/next follow is fetched guardRedirects=true.
+    const startCall = mockFetchPage.mock.calls.find(([u]) => u === url)
+    expect(startCall?.[3]).toBeUndefined()
+    const followCalls = mockFetchPage.mock.calls.filter(([u]) => u !== url)
+    expect(followCalls.length).toBeGreaterThan(0)
+    for (const call of followCalls) expect(call[3]).toBe(true)
+  })
+
+  it('leaves the follows UNguarded when the start URL is private (self-hosted LAN capture still works)', async () => {
+    mockAssertPublic.mockRejectedValue(new Error('private/internal address'))
+    const url = 'http://192.168.1.9/read/ch-c'
+    mockFetchPage.mockImplementation(walkFixture)
+
+    const result = await captureUniversal(url)
+
+    expect(result).not.toBeNull() // a deliberately private capture is NOT blocked
+    const followCalls = mockFetchPage.mock.calls.filter(([u]) => u !== url)
+    expect(followCalls.length).toBeGreaterThan(0)
+    for (const call of followCalls) expect(call[3]).toBe(false)
   })
 })
