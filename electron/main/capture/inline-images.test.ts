@@ -142,4 +142,36 @@ describe('inlineBodyImages', () => {
     const inlined = out.match(/data:image\/png/g)?.length ?? 0
     expect(inlined).toBe(4)
   })
+
+  it('drops an image whose fetch never settles, without hanging capture', async () => {
+    vi.useFakeTimers()
+    try {
+      // safeFetch never resolves (mimics a hung DNS lookup / dead host).
+      vi.mocked(safeFetch).mockReturnValue(new Promise<Response>(() => {}))
+
+      const pending = inlineBodyImages('<img src="https://img.example/hang.png" alt="h">', BASE)
+      // Advance past the per-image timeout so withTimeout resolves null.
+      await vi.advanceTimersByTimeAsync(7000)
+      const out = await pending
+
+      expect(out).not.toContain('data:')
+      expect(out).not.toContain('src=')
+      expect(out).toContain('alt="h"')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports image count via onProgress', async () => {
+    vi.mocked(safeFetch).mockResolvedValue(imgResponse(Buffer.from([1]), 'image/png'))
+    const onProgress = vi.fn()
+
+    await inlineBodyImages(
+      '<img src="https://img.example/a.png"><img src="https://img.example/b.png">',
+      BASE,
+      onProgress,
+    )
+
+    expect(onProgress).toHaveBeenCalledWith('Downloading 2 images…')
+  })
 })

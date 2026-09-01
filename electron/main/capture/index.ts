@@ -203,8 +203,9 @@ async function saveToLibrary(
   const coverPath = ogImageUrl ? await downloadCover(ogImageUrl, sourceUrl, contentDir, id) : null
 
   // Inline remote body images as data: URIs (M1) so they render under the tight
-  // reader CSP, matching EPUB. No-op for image-free bodies; never fatal.
-  const html = await inlineBodyImages(content.html, sourceUrl)
+  // reader CSP, matching EPUB. No-op for image-free bodies; time-bounded so it
+  // never hangs capture; never fatal.
+  const html = await inlineBodyImages(content.html, sourceUrl, onProgress)
   const wordCount = textContent.split(/\s+/).filter(Boolean).length
   const contentHash = computeContentHash(textContent)
   const now = Date.now()
@@ -365,7 +366,7 @@ export async function appendChapters(
     end: newEnd,
   })
   // Inline remote body images in the appended chapters too (M1).
-  newContent.html = await inlineBodyImages(newContent.html, item.source_url)
+  newContent.html = await inlineBodyImages(newContent.html, item.source_url, onProgress)
 
   // Determine whether this item uses the new per-chapter file format
   const isMultiChapterFormat = item.file_path.match(/-ch(\d+)\.html$/) !== null

@@ -25,12 +25,44 @@ import {
 // a cap — or that fails to fetch / isn't a permitted image type — has its src
 // dropped so the browser renders the `alt` text; capture is never aborted.
 
+// Per-image ceiling. Note this must bound the WHOLE fetch attempt, not just the
+// HTTP body: safeFetch runs a DNS lookup (assertPublicHttpUrl) *before* the fetch,
+// and an AbortSignal only covers the fetch — a dead/slow image host would hang the
+// unabortable lookup indefinitely. So each attempt is additionally raced against
+// this deadline via withTimeout().
 const FETCH_TIMEOUT_MS = 6000
+// Hard wall-clock ceiling on the entire inlining step for one capture. Without
+// it, total latency scales with image count (N images / CONCURRENCY × per-image
+// timeout) — an image-heavy page with slow hosts could hang capture for minutes.
+// Past this deadline, remaining images are dropped (alt text renders).
+const TOTAL_BUDGET_MS = 15000
 const CONCURRENCY = 5
 
 interface FetchedImage {
   bytes: Buffer
   mime: string
+}
+
+/**
+ * Race a promise against a timeout, resolving `null` if it doesn't settle in
+ * time (and swallowing a late rejection). Used to bound a fetch attempt whose
+ * DNS-lookup phase an AbortSignal can't reach.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  if (ms <= 0) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms)
+    p.then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      () => {
+        clearTimeout(timer)
+        resolve(null)
+      },
+    )
+  })
 }
 
 // SVG is deliberately excluded — a `data:image/svg+xml` payload can carry script,
@@ -86,8 +118,16 @@ async function fetchImage(rawSrc: string, baseUrl: string): Promise<FetchedImage
  * Rewrite remote `<img>` sources in a captured HTML fragment to inline `data:`
  * URIs. Returns the input string untouched when there is nothing to inline (the
  * common text-only fic case pays no JSDOM round-trip and stays byte-identical).
+ *
+ * Best-effort and time-bounded: the whole step is capped at TOTAL_BUDGET_MS and
+ * each image at FETCH_TIMEOUT_MS, so capture never hangs on slow/dead image
+ * hosts — anything not inlined in time has its src dropped (alt text renders).
  */
-export async function inlineBodyImages(html: string, baseUrl: string): Promise<string> {
+export async function inlineBodyImages(
+  html: string,
+  baseUrl: string,
+  onProgress?: (msg: string) => void,
+): Promise<string> {
   // Fast path: no images at all → nothing to do, return the original bytes.
   if (!/<img\b/i.test(html)) return html
 
@@ -102,6 +142,9 @@ export async function inlineBodyImages(html: string, baseUrl: string): Promise<s
   })
   if (imgs.length === 0) return html
 
+  onProgress?.(`Downloading ${imgs.length} image${imgs.length === 1 ? '' : 's'}…`)
+
+  const deadline = Date.now() + TOTAL_BUDGET_MS
   let totalBytes = 0
   let next = 0
 
@@ -112,13 +155,20 @@ export async function inlineBodyImages(html: string, baseUrl: string): Promise<s
       const img = imgs[i]
       const src = (img.getAttribute('src') ?? '').trim()
 
-      // Count cap: past the Nth eligible image, don't even fetch — drop the src.
-      if (i >= BODY_IMAGE_MAX_COUNT) {
+      // Count cap, or the overall time budget is spent → drop without fetching.
+      const remaining = deadline - Date.now()
+      if (i >= BODY_IMAGE_MAX_COUNT || remaining <= 0) {
         img.removeAttribute('src')
         continue
       }
 
-      const fetched = await fetchImage(src, baseUrl)
+      // Bound the whole attempt (DNS + fetch) by the smaller of the per-image
+      // timeout and the remaining budget — an AbortSignal alone can't reach the
+      // pre-fetch DNS lookup.
+      const fetched = await withTimeout(
+        fetchImage(src, baseUrl),
+        Math.min(FETCH_TIMEOUT_MS, remaining),
+      )
       if (!fetched) {
         img.removeAttribute('src')
         continue
