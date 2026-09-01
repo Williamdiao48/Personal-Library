@@ -31,6 +31,8 @@ import {
   detectNumericChapter,
   extractChapterCount,
   extractSeriesTitle,
+  isChapterHeading,
+  titleFromLandingLink,
   extractAuthor,
   extractCoverUrl,
   readChapterPage,
@@ -445,6 +447,68 @@ describe('extractSeriesTitle / extractAuthor / extractCoverUrl', () => {
     )
   })
 
+  it('isChapterHeading flags numbered chapter labels but not real titles', () => {
+    // Chapter-shaped → flagged
+    for (const s of [
+      'Chapter 1',
+      'Chapter 1: (1) Everybody Scream',
+      'Ch. 12',
+      'Part 2 — The Fall',
+      'Episode 5',
+      'Book 3',
+      'Volume 1',
+      'Arc 2: Reunion',
+      'Prologue',
+      'Epilogue',
+      'Interlude',
+    ]) {
+      expect(isChapterHeading(s), s).toBe(true)
+    }
+    // Real work titles → NOT flagged (keyword forms need a trailing number)
+    for (const s of [
+      'Ballad of Hillcross',
+      'Book of the Ancestor',
+      'A Part of Me',
+      'The Chapter House',
+      'Volumes of Smoke',
+      'Scenes from a Marriage',
+      '',
+    ]) {
+      expect(isChapterHeading(s), s).toBe(false)
+    }
+  })
+
+  it('titleFromLandingLink recovers the book title from the landing-page anchor', () => {
+    // Booksie shape: a chapter page whose only <h1> is the chapter title, but whose
+    // sidebar has a "Table of Contents" link AND a book-title link, both to /book.
+    const html = `<head><title>Ballad of Hillcross: Chapter 1 - Everybody Scream</title></head><body>
+      <h1>Chapter 1: Everybody Scream</h1>
+      <aside>
+        <a href="/782326-ballad-of-hillcross">Ballad of Hillcross</a>
+        <a href="/782326-ballad-of-hillcross">Table of Contents</a>
+      </aside>
+    </body>`
+    const doc = docOf(html, 'https://www.booksie.com/782326-ballad-of-hillcross-chapter-1')
+    expect(
+      titleFromLandingLink(doc, 'https://www.booksie.com/782326-ballad-of-hillcross-chapter-1'),
+    ).toBe('Ballad of Hillcross')
+  })
+
+  it('titleFromLandingLink returns null when there is no landing link', () => {
+    const doc = docOf('<body><h1>Chapter 1</h1><p>x</p></body>', 'https://x.com/ch/1')
+    expect(titleFromLandingLink(doc, 'https://x.com/ch/1')).toBeNull()
+  })
+
+  it('titleFromLandingLink skips a chapter-shaped anchor pointing at the landing key', () => {
+    // The only anchor to the TOC target is itself chapter-shaped → no title recovered.
+    const html = `<body>
+      <a href="/toc">Table of Contents</a>
+      <a href="/toc">Chapter 1</a>
+    </body>`
+    const doc = docOf(html, 'https://x.com/read/ch1')
+    expect(titleFromLandingLink(doc, 'https://x.com/read/ch1')).toBeNull()
+  })
+
   it('extractAuthor prefers meta[name=author]', () => {
     expect(
       extractAuthor(docOf('<head><meta name="author" content="Jane Doe"></head><body></body>')),
@@ -542,6 +606,39 @@ describe('captureUniversal', () => {
     expect(result!.coverUrl).toBe('https://example.com/cover.jpg')
     expect((result!.html.match(/class="chapter"/g) ?? []).length).toBe(3)
     expect(result!.html.indexOf('ONEE')).toBeLessThan(result!.html.indexOf('THREEE'))
+  })
+
+  // L5 #4 regression: a chapter page that embeds its own chapter list (Booksie)
+  // is probed as a TOC — its <h1> is the CHAPTER title ("Chapter 1: …"), which
+  // used to leak through as the work title. The landing-link title must win.
+  it('titles a Booksie-style chapter-as-TOC page from the landing link, not its chapter <h1>', async () => {
+    const url = 'https://www.booksie.com/782326-ballad-of-hillcross-chapter-1'
+    mockFetchPage.mockResolvedValue(
+      `<!DOCTYPE html><html><head>
+        <title>Ballad of Hillcross: Chapter 1 - (1) Everybody Scream, book by sprocketmakesart</title>
+      </head><body>
+        <h1>Chapter 1: (1) Everybody Scream</h1>
+        <aside>
+          <a href="/782326-ballad-of-hillcross">Ballad of Hillcross</a>
+          <a href="/782326-ballad-of-hillcross">Table of Contents</a>
+          <a href="/782326-ballad-of-hillcross-chapter-1">Chapter 1</a>
+          <a href="/782326-ballad-of-hillcross-chapter-2">Chapter 2</a>
+          <a href="/782326-ballad-of-hillcross-chapter-3">Chapter 3</a>
+          <a href="/782326-ballad-of-hillcross-chapter-4">Chapter 4</a>
+        </aside>
+      </body></html>`,
+    )
+    mockSession.mockResolvedValue([
+      chapterPage({ marker: 'CH2' }),
+      chapterPage({ marker: 'CH3' }),
+      chapterPage({ marker: 'CH4' }),
+    ])
+
+    const result = await captureUniversal(url)
+    expect(result).not.toBeNull()
+    expect(result!.title).toBe('Ballad of Hillcross')
+    expect(result!.title).not.toContain('Chapter')
+    expect((result!.html.match(/class="chapter"/g) ?? []).length).toBe(3)
   })
 
   it('recovers a soft-blocked TOC chapter via the sequential re-fetch', async () => {
