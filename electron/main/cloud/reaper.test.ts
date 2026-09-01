@@ -226,6 +226,78 @@ describe('reapOrphanBlobs', () => {
     expect(ledgerCount()).toBe(1)
     expect(orphanedAtOf('H')).toBeNull() // stamp cleared → no longer a reap candidate
   })
+
+  // ── R2 verification (Wave 3): a permanent-delete racing a sync round self-heals ──
+  // Audit finding R2 claimed emptyTrash/permanentlyDelete racing a sync round could
+  // delete a still-wanted R2 blob or leak an orphan. The claim is FALSE by construction:
+  // the mark-and-sweep grace window makes the reap idempotent and TOCTOU-safe, so no
+  // shared "work-in-progress" registry is needed. The isolated-state tests above pin each
+  // transition; these drive the full mark→(resurrect | reap) machine across SEQUENTIAL
+  // sweeps — reconstructing the purge-mid-round timing the finding worried about — to prove
+  // the sequence self-heals: no false-reap of wanted bytes, no leaked orphan, no double-
+  // delete hazard. Fake ONLY Date so the grace window elapses deterministically (fetch is
+  // mocked, so AbortSignal.timeout never fires and needs no fake timer).
+  describe('R2 verify: a purge racing a sync round self-heals via the grace window', () => {
+    beforeEach(() => vi.useFakeTimers({ toFake: ['Date'] }))
+    afterEach(() => vi.useRealTimers())
+
+    it('only MARKS on the first post-round sweep — a purge seen the instant a round ends is never reaped immediately', async () => {
+      const id = seedItem(db, { deleted_at: 1000 })
+      setBlob(id, { blob_hash: 'H', purged_at: Date.now() }) // just purged, mid-round
+      enqueue('H', 'content') // fresh ledger row, never observed as an orphan
+
+      await reapOrphanBlobs() // first sweep right after the round that carried the purge in
+
+      // TOCTOU-safe: the first sweep starts the clock and deletes nothing, giving a peer's
+      // restore/re-import of the same hash the whole grace window to propagate in.
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(orphanedAtOf('H')).toBeTypeOf('number')
+      expect(ledgerCount()).toBe(1)
+    })
+
+    it('reaps exactly once on a later sweep past grace, and a redundant follow-up sweep is a harmless no-op', async () => {
+      const t0 = Date.now()
+      const id = seedItem(db, { deleted_at: 1000 })
+      setBlob(id, { blob_hash: 'H', purged_at: t0 })
+      enqueue('H', 'content')
+
+      await reapOrphanBlobs() // sweep 1 → stamps orphaned_at = t0
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(orphanedAtOf('H')).toBe(t0)
+
+      vi.setSystemTime(t0 + REAP_GRACE_MS + 1000) // grace elapses, no resurrection arrived
+      await reapOrphanBlobs() // sweep 2 → reap
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(ledgerCount()).toBe(0) // ledger row dropped after the successful DELETE
+
+      // A third sweep — or a second device reaping the same hash concurrently — finds no
+      // ledger row and does nothing; the R2 DELETE is 2xx even on an already-gone key, so
+      // even a genuine double-delete would be harmless. No new fetch.
+      await reapOrphanBlobs()
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('cancels the reap when a peer restore lands between the two sweeps — no false-reap of wanted bytes', async () => {
+      const t0 = Date.now()
+      const id = seedItem(db, { deleted_at: 1000 })
+      setBlob(id, { blob_hash: 'H', purged_at: t0 })
+      enqueue('H', 'content')
+
+      await reapOrphanBlobs() // sweep 1 → stamps the orphan clock
+      expect(orphanedAtOf('H')).toBe(t0)
+
+      // A cross-device restore of the item (or a re-import that dedups to H) pulls in during
+      // the window: purged_at clears, so H is wanted again despite the earlier stamp.
+      setBlob(id, { blob_hash: 'H', purged_at: null })
+
+      vi.setSystemTime(t0 + REAP_GRACE_MS + 1000) // grace would otherwise be up
+      await reapOrphanBlobs() // sweep 2 → sees a live reference, cancels the reap
+
+      expect(fetchMock).not.toHaveBeenCalled() // the resurrected blob is never deleted
+      expect(orphanedAtOf('H')).toBeNull() // stamp cleared → back to a normal wanted blob
+      expect(ledgerCount()).toBe(1) // bytes kept
+    })
+  })
 })
 
 describe('reapPurgedLocalFiles', () => {
