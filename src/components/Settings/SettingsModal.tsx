@@ -96,8 +96,13 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     setImportState('busy')
     setImportError('')
     try {
-      await backupService.import()
-      // app relaunches — this line never runs
+      const result = await backupService.import()
+      // On success the app relaunches, so import() only resolves when nothing was
+      // imported. 'busy' = a capture is in flight and the DB swap was refused.
+      if (result?.status === 'busy') {
+        setImportError('Finish or cancel active captures before importing a backup.')
+        setImportState('error')
+      }
     } catch (err: any) {
       setImportError(err?.message ?? 'Import failed')
       setImportState('error')

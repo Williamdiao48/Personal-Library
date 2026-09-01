@@ -346,6 +346,13 @@ export interface BackupExportResult {
   fileSizeBytes: number
 }
 
+/** Result of `backup:import`. On the normal import path the app relaunches, so the
+ *  call never resolves; it resolves only when the import was NOT performed —
+ *  `undefined` (user cancelled the file dialog) or `{ status: 'busy' }` (a capture is
+ *  in flight, so the DB swap was refused; the caller should ask the user to finish or
+ *  cancel captures and retry). */
+export type BackupImportResult = { status: 'busy' } | undefined
+
 /** Which candidate generator produced a recommendation — drives the source badge. */
 export type RecommendationSource = 'book' | 'ao3' | 'ffn'
 
@@ -538,7 +545,7 @@ export interface Api {
   }
   backup: {
     export: () => Promise<BackupExportResult | null> // null = user cancelled
-    import: () => Promise<void> // never resolves (app relaunches)
+    import: () => Promise<BackupImportResult> // relaunches on success (never resolves); resolves { status:'busy' } if captures active, or undefined on cancel
   }
   stats: {
     recordSession: (itemId: string, startedAt: number, endedAt: number) => Promise<void>

@@ -1,4 +1,5 @@
 import { captureUrl } from '../capture'
+import { beginCaptureWork, endCaptureWork } from './activity'
 import { triggerBackfill } from '../recommender/lifecycle'
 import { enqueueItemBackup } from '../cloud/uploader'
 import { notifyLocalMutation } from '../cloud/sync/syncService'
@@ -205,6 +206,10 @@ export async function runBulkImport(opts: RunBulkImportOptions): Promise<BulkImp
   const { batchId, urls, cloudBackup, onProgress } = opts
   const state: BatchState = { cancelled: false }
   activeBatches.set(batchId, state)
+  // Count the whole batch as in-flight for the L3 backup:import guard — spanning the
+  // polite delays between works too, not just each per-work captureUrl bracket, so an
+  // import can't slip in mid-batch and get overwritten by the next work.
+  beginCaptureWork()
 
   // Dedup baseline: everything already in the library, indexed once. Works captured
   // during this run are add()-ed so a duplicate later in the same list (or a re-run)
@@ -307,6 +312,7 @@ export async function runBulkImport(opts: RunBulkImportOptions): Promise<BulkImp
     if (progress.status === 'running') progress.status = 'done'
   } finally {
     activeBatches.delete(batchId)
+    endCaptureWork()
   }
 
   progress.current = undefined

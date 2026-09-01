@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, cpSync, rmSync, renameSync } from 'fs'
 import AdmZip from 'adm-zip'
 import { get, closeDb } from '../db'
 import { safeExtractAll } from '../security/zip'
+import { captureWorkActive } from '../capture/activity'
+import { flushNow } from '../cloud/sync/syncService'
 
 export function registerBackupHandlers(): void {
   // ── backup:export ────────────────────────────────────────────────────────
@@ -60,7 +62,7 @@ export function registerBackupHandlers(): void {
   })
 
   // ── backup:import ────────────────────────────────────────────────────────
-  ipcMain.handle('backup:import', async () => {
+  ipcMain.handle('backup:import', async (): Promise<{ status: 'busy' } | undefined> => {
     const userData = app.getPath('userData')
     const dbPath = join(userData, 'library.db')
     const contentDir = join(userData, 'content')
@@ -104,6 +106,20 @@ export function registerBackupHandlers(): void {
       testDb?.close()
     }
 
+    // L3 — quiesce before the destructive swap. Import overwrites the entire local
+    // DB and relaunches, so:
+    //   (1) If a capture is writing right now, closeDb() would strand it (its next
+    //       getDb() throws) or let it write into the about-to-be-overwritten file.
+    //       Refuse and let the user finish/cancel captures first (tmpDir cleaned up).
+    //   (2) Any local edit not yet pushed to cloud is destroyed by the overwrite, so
+    //       flush pending dirty rows up first. Best-effort: offline / sync-off users
+    //       no-op and still import (matches prior behavior); it only ADDS durability.
+    if (captureWorkActive()) {
+      rmSync(tmpDir, { recursive: true, force: true })
+      return { status: 'busy' as const }
+    }
+    await flushNow().catch(() => {})
+
     // Close the live DB before overwriting. Everything below runs with NO open DB
     // connection, so a throw here would previously strand the app on a dead/half-
     // swapped DB with no in-process recovery (L3). Two guards fix that: (1) copy the
@@ -143,5 +159,8 @@ export function registerBackupHandlers(): void {
       app.relaunch()
       app.exit(0)
     }
+    // Unreachable in production (app.exit ends the process), but the swap path has no
+    // value to return — satisfy noImplicitReturns explicitly.
+    return undefined
   })
 }

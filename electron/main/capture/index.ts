@@ -16,6 +16,7 @@ import { captureScribbleHub, getScribbleHubChapterCount } from './sites/scribble
 import { captureXenForo, getXenForoChapterCount } from './sites/forums'
 import { captureUniversal } from './sites/universal'
 import { inlineBodyImages } from './inline-images'
+import { beginCaptureWork, endCaptureWork } from './activity'
 import { safeContentPath } from '../security/paths'
 import { assertImportFile, normalizeCoverExt } from '../security/validation'
 import { assertHttpUrl, safeFetch } from '../security/net-guard'
@@ -155,6 +156,21 @@ async function dispatchCapture(
 }
 
 export async function captureUrl(
+  url: string,
+  onProgress?: (msg: string) => void,
+  range?: ChapterRange,
+  cloudBackup = false,
+): Promise<CaptureResult> {
+  // Count this capture as in-flight so backup:import won't swap the DB mid-write (L3).
+  beginCaptureWork()
+  try {
+    return await captureUrlInner(url, onProgress, range, cloudBackup)
+  } finally {
+    endCaptureWork()
+  }
+}
+
+async function captureUrlInner(
   url: string,
   onProgress?: (msg: string) => void,
   range?: ChapterRange,
@@ -330,6 +346,20 @@ export async function getChapterCount(url: string): Promise<number | null> {
 // Fetches new chapters beyond the current chapter_end and appends them to
 // the existing HTML file, then updates the DB and FTS5 index in one transaction.
 export async function appendChapters(
+  itemId: string,
+  newEnd: number,
+  onProgress?: (msg: string) => void,
+): Promise<CaptureResult> {
+  // In-flight for the L3 backup:import guard (writes new chapters into the DB).
+  beginCaptureWork()
+  try {
+    return await appendChaptersInner(itemId, newEnd, onProgress)
+  } finally {
+    endCaptureWork()
+  }
+}
+
+async function appendChaptersInner(
   itemId: string,
   newEnd: number,
   onProgress?: (msg: string) => void,

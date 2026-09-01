@@ -7,6 +7,25 @@ import { invoke, resetIpc, dialog, app } from '../../../test/stubs/electron'
 import { openTestDb, closeTestDb, seedItem, type TestDb } from '../../../test/db/harness'
 import { registerBackupHandlers } from './backup'
 
+// The L3 quiesce guard consults these two seams before the DB swap. Mock them so the
+// import handler is testable up to (and including) the guard without a real relaunch:
+//   - captureWorkActive: is any capture in flight? (default false — off for the export /
+//     cancel / missing-db tests, which return before the guard anyway)
+//   - flushNow: durable push before the overwrite (default no-op)
+//   - closeDb (partial mock — everything else in ../db stays real so the harness works):
+//     a spy we can make throw to abort right after the flush, proving the swap ordering
+//     without performing the real file swap / app.relaunch (kept an E2E concern).
+vi.mock('../capture/activity', () => ({ captureWorkActive: vi.fn(() => false) }))
+vi.mock('../cloud/sync/syncService', () => ({ flushNow: vi.fn(async () => {}) }))
+vi.mock('../db', async (orig) => {
+  const actual = await orig<typeof import('../db')>()
+  return { ...actual, closeDb: vi.fn() }
+})
+
+import { closeDb } from '../db'
+import { captureWorkActive } from '../capture/activity'
+import { flushNow } from '../cloud/sync/syncService'
+
 // backup's full export/import round-trip swaps real DB files and calls app.exit /
 // app.relaunch, so it belongs in the E2E layer. These tests cover the tractable,
 // security-relevant guards: the dialog-cancel early-returns and the "archive
@@ -104,5 +123,81 @@ describe('backup:export — archive contents', () => {
       new AdmZip(outPath).getEntry('manifest.json')!.getData().toString('utf8'),
     )
     expect(manifest).toMatchObject({ version: 1, itemCount: 2, contentFileCount: 1 })
+  })
+})
+
+// L3 — the quiesce guard that runs AFTER extraction + integrity check but BEFORE the
+// destructive closeDb()/swap. Both cases short-circuit before the real file swap, so
+// they're unit-testable (the full swap round-trip stays E2E, per the note above).
+describe('backup:import — L3 quiesce guard', () => {
+  let userData: string
+  let backupPath: string
+
+  beforeEach(async () => {
+    resetIpc()
+    registerBackupHandlers()
+    vi.mocked(captureWorkActive).mockReturnValue(false)
+    vi.mocked(flushNow)
+      .mockClear()
+      .mockResolvedValue(undefined as never)
+    vi.mocked(closeDb)
+      .mockReset()
+      .mockImplementation(() => {})
+
+    // A per-test userData dir so import-tmp lands in a temp location.
+    userData = mkdtempSync(join(tmpdir(), 'pl-backup-import-ud-'))
+    vi.spyOn(app, 'getPath').mockImplementation((name: string) =>
+      name === 'userData' ? userData : join('/tmp', `pl-test-${name}`),
+    )
+
+    // A REAL, valid sqlite DB so extraction + integrity_check pass and the handler
+    // reaches the guard. adm-zip packs it as library.db at the archive root.
+    const Database = (await import('better-sqlite3')).default
+    const dbFile = join(userData, 'valid-library.db')
+    const d = new Database(dbFile)
+    d.exec('CREATE TABLE t (x)')
+    d.close()
+    const zip = new AdmZip()
+    zip.addLocalFile(dbFile, '', 'library.db')
+    backupPath = join(userData, 'good.plbackup')
+    writeFileSync(backupPath, zip.toBuffer())
+
+    vi.spyOn(dialog, 'showOpenDialog').mockResolvedValue({
+      canceled: false,
+      filePaths: [backupPath],
+    })
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    rmSync(userData, { recursive: true, force: true })
+  })
+
+  it('refuses (status: busy) without closing the DB while a capture is in flight', async () => {
+    vi.mocked(captureWorkActive).mockReturnValue(true)
+
+    const result = await invoke('backup:import')
+
+    expect(result).toEqual({ status: 'busy' })
+    // The destructive path was never entered, and no dirty-row flush was forced.
+    expect(closeDb).not.toHaveBeenCalled()
+    expect(flushNow).not.toHaveBeenCalled()
+    // The extracted tmp dir is cleaned up so a refused import leaves no residue.
+    expect(existsSync(join(userData, 'import-tmp'))).toBe(false)
+  })
+
+  it('flushes pending dirty rows to the cloud BEFORE closing the DB when idle', async () => {
+    // Abort at closeDb so we prove the ordering without performing the real swap/relaunch.
+    vi.mocked(closeDb).mockImplementation(() => {
+      throw new Error('__STOP_BEFORE_SWAP__')
+    })
+
+    await expect(invoke('backup:import')).rejects.toThrow('__STOP_BEFORE_SWAP__')
+
+    expect(flushNow).toHaveBeenCalledOnce()
+    expect(closeDb).toHaveBeenCalledOnce()
+    // flushNow was awaited before closeDb was reached.
+    expect(vi.mocked(flushNow).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(closeDb).mock.invocationCallOrder[0],
+    )
   })
 })
