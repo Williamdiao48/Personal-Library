@@ -70,12 +70,12 @@ The installer is unsigned, so SmartScreen may show a warning:
 - **Annotations** — highlight any text (multiple colors), attach notes, and drop bookmarks in all three readers, PDF included. Highlights and notes live in a dedicated Annotations panel; bookmarks in a separate Bookmarks panel. Right-click any mark to delete, copy, or edit inline. Manual reordering via up/down buttons. Clicking a note mark opens a popover with the note and quoted passage.
 - **Annotation organization** — group highlights into color categories and named themes, browse every mark across your whole library in a cross-book Annotations hub, and export selected quotes to Markdown or plain text
 - **Dictionary lookup** — select or double-click a word in any reader to see its definition in an inline popover; fully offline (bundled WordNet)
-- **Discover** — on-device recommendations: a local embedding model matches your library's taste against fresh works pulled from AO3, FanFiction.net, and Open Library. No accounts, no tracking; embeddings are computed on your machine and cards you dismiss or already own don't come back
+- **Discover** — on-device recommendations: a local embedding model matches your library's taste against fresh works pulled from AO3, FanFiction.net, and Open Library. Each card shows the work's own description, and a Refresh button pulls a new batch. No accounts, no tracking; embeddings are computed on your machine and cards you dismiss or already own don't come back
 - **Library management** — tags (with rename, recolor, delete, item counts), collections (dedicated shelf with drag-to-reorder), reading status (Unread / Reading / Finished / On Hold / Dropped), bulk operations, author view, inline title editing
 - **Trash & recovery** — deleted items move to Trash and can be restored within 30 days; auto-purged on next launch after that
 - **Full-text search** — FTS5 with partial-word matching as you type; indexes HTML, EPUB, and PDF content
 - **Reading stats** — 1-year activity heatmap, streaks, time/count/reading-list goals with progress rings, per-item breakdown with avg WPM and word count
-- **Optional cloud sync & backup** — sign in to back up chosen items and sync your library (metadata + files) across devices. Strictly opt-in and **off by default**, with per-item control over what leaves your machine; signed out, the app is byte-for-byte local-only. Built on a custom local↔Postgres sync engine with content-addressed file backup — see [ARCHITECTURE.md](ARCHITECTURE.md)
+- **Optional cloud sync & backup** — create an account to sync your library's metadata across devices (edits propagate within seconds via realtime sync, not just on a timer) and back up the files of items you choose. Strictly opt-in and **off by default**, with per-item control over which files leave your machine; signed out, the app is byte-for-byte local-only. Full account self-service in **Settings → Account**: sign up (with an email confirmation code), sign in, reset a forgotten password via a recovery code, and permanently delete your account and all its cloud data. Built on a custom local↔Postgres sync engine with content-addressed file backup — see [ARCHITECTURE.md](ARCHITECTURE.md)
 - **Export & import** — `.plbackup` ZIP contains the full database + all content files; import relaunches cleanly
 - **Auto-updater** — on Windows & Linux, checks for new releases on launch; download and install from the in-app notification (macOS updates are manual — see [Updating](#updating))
 
@@ -84,6 +84,8 @@ The installer is unsigned, so SmartScreen may show a warning:
 ## Your Data
 
 All data is stored locally in your system's app data folder — the app is fully functional without any account or cloud connection. (Cloud backup and cross-device sync exist but are strictly opt-in and off by default; nothing leaves your machine unless you sign in and choose it — see [Features](#features).)
+
+If you do use the cloud, **Settings → Account → Delete account** permanently erases your account and everything backed up for it; your local library on this device is left untouched and stays readable offline.
 
 | Platform | Location |
 |---|---|
@@ -166,7 +168,7 @@ electron/
     index.ts          App entry, window creation, IPC registration
     db/
       schema.ts       v1-baseline DDL — CREATE TABLE / FTS5 / index statements
-      index.ts        DB init, versioned migrations (v1–v33), query helpers
+      index.ts        DB init, versioned migrations (v1–v45), query helpers
       ftsText.ts      FTS5 mirror table + index/query helpers
     ipc/
       library.ts      Item CRUD, progress, cover, status, refresh, soft-delete, trash
@@ -183,6 +185,10 @@ electron/
       llm.ts          Optional local LLM rerank (Ollama, if present)
       updater.ts      Auto-update checks (electron-updater)
       log.ts          Crash log writes (error boundary → userData/logs/)
+      auth.ts         Cloud identity — sign up/in/out, password reset, delete account
+      cloud.ts        Per-item file backup to R2 (presigned upload, backup state)
+      sync.ts         Cross-device sync control (enable, Sync now, live status)
+      processing.ts   Off-device EPUB/PDF text extraction (opt-in Edge Function)
     capture/
       index.ts        Orchestrates fetch → parse → sanitize → save → FTS index
       fetch.ts        HTTP fetch with site-specific headers
@@ -192,6 +198,12 @@ electron/
     recommender/      Discover engine — candidate sources, on-device embeddings,
                       taste modeling, rerank, candidate cache; sources/ (ao3, ffn,
                       openLibrary) + llm/ (llmRerank, ollamaClient)
+    cloud/            Optional cloud layer — R2 blob backup (presign/upload/reaper)
+                      + sync/ (local↔Postgres engine: reconcile, cursors, realtime)
+    auth/             Supabase client + encrypted session store (tokens never
+                      reach the renderer)
+    security/         SSRF net-guard + path/input validation for outbound fetches
+    dictionary/       Offline WordNet lookup
     workers/          utilityProcess workers + host/protocol wiring:
                       embed-worker (embeddings), parse-worker (HTML parsing)
   preload/
@@ -222,6 +234,7 @@ src/
     ToastContext      Global toast notifications
     UpdaterContext    Auto-update state + prompts
     CaptureJobsContext  App-level capture-job state + capture:* listeners
+    AuthContext       Cloud sign-in state (auth:stateChange) — drives Settings → Account
   hooks/
     useReadingSession Track reading time per session for stats
     useAnnotations    Annotation CRUD + apply highlights to the DOM
@@ -254,7 +267,7 @@ LibraryView → libraryService.getAll()
 
 This keeps the IPC surface minimal and makes it easy to see exactly what the renderer can and cannot do.
 
-**API namespaces:** `library`, `tags`, `capture`, `reader`, `collections`, `annotations`, `annotationThemes`, `convert`, `stats`, `goals`, `backup`, `discover`, `dictionary`, `llm`, `updater`, `log`
+**API namespaces:** `library`, `tags`, `capture`, `reader`, `collections`, `annotations`, `annotationThemes`, `convert`, `stats`, `goals`, `backup`, `discover`, `dictionary`, `llm`, `updater`, `log`, `auth`, `cloud`, `sync`, `processing`
 
 Capture is the only async-streamed namespace: `capture:start` returns a `jobId` immediately, then the main process emits `capture:progress`, `capture:complete`, or `capture:error` events as it fetches and parses content.
 
@@ -283,9 +296,11 @@ Two pragmas are set on every open: `PRAGMA foreign_keys = ON` (enforces all FK c
 | `item_embeddings` | On-device embedding vectors for owned items (taste modeling) |
 | `item_source_meta` / `item_source_tags` / `taste_seeds` | Source metadata, source-derived tags, and taste seeds feeding Discover |
 | `candidate_cache` / `candidate_embeddings` | Fetched Discover candidate works + their embeddings |
-| `discover_cache` / `dismissed_recommendations` | Rendered recommendation feed + per-user dismissals |
+| `discover_cache` / `dismissed_recommendations` / `discover_interactions` | Rendered recommendation feed, per-user dismissals, and interaction signals |
+| `blob_sync` | Per-file cloud-backup ledger (content hash → R2 upload state; drives orphan reaping) — cloud only |
+| `sync_cursors` / `sync_meta` | Per-table pull cursors + local sync identity (last-synced account) for the local↔Postgres sync engine — cloud only |
 
-**Migrations** are versioned integers in `electron/main/db/index.ts`. Bump `CURRENT_VERSION` and add a SQL string to `MIGRATIONS` to add a new migration. Runs automatically on startup inside a transaction (via `execMigration()`, which tolerates re-applied `ADD COLUMN`s so already-shipped DBs self-heal). Current version: **v33**.
+**Migrations** are versioned integers in `electron/main/db/index.ts`. Bump `CURRENT_VERSION` and add a SQL string to `MIGRATIONS` to add a new migration. Runs automatically on startup inside a transaction (via `execMigration()`, which tolerates re-applied `ADD COLUMN`s so already-shipped DBs self-heal). Current version: **v45**.
 
 > **`schema.ts` must stay the v1 baseline.** A column a later migration adds via
 > `ALTER TABLE ADD COLUMN` must *not* also appear in `schema.ts`, or a fresh install
@@ -315,8 +330,9 @@ URL → `captureUrl()` in `electron/main/capture/index.ts`:
 2. **Fetch** pages with appropriate headers
 3. **Parse** via `@mozilla/readability` + `jsdom`
 4. **Sanitize** via `sanitize-html` (custom allowlist)
-5. **Save** to `{userData}/content/{uuid}[-chN].html`
-6. **Insert** metadata to SQLite + FTS5 index
+5. **Inline images** — remote `<img>` sources are fetched (SSRF-guarded, size/time-bounded) and rewritten to `data:` URIs so captured pages show their images fully offline
+6. **Save** to `{userData}/content/{uuid}[-chN].html`
+7. **Insert** metadata to SQLite + FTS5 index
 
 Multi-chapter works are saved as individual chapter files and lazy-loaded in the reader (active chapter + prefetch neighbors).
 
