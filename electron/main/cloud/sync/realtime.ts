@@ -27,6 +27,12 @@ let channel: RealtimeChannel | null = null
 
 const CHANNEL_NAME = 'library-sync'
 
+// Opt-in verbose logging for the realtime lifecycle. Off by default so a release build
+// doesn't log a line per sync event (the feature is validated + shipped); set SYNC_DEBUG=1
+// to trace the subscription + per-change nudges. Connection FAILURES are always warned
+// regardless — a silently-dead subscription must stay visible. Mirrors recommender/timing.ts.
+const DEBUG = process.env.SYNC_DEBUG === '1' && !process.env.VITEST
+
 /**
  * Start (or refresh the auth token of) the realtime subscription.
  *
@@ -52,8 +58,8 @@ export function startRealtime(
     // No `table` filter → every table in the publication. We don't care which
     // table or what changed, only that we should pull.
     .on('postgres_changes', { event: '*', schema: 'public' }, (payload) => {
-      // Visibility while we validate the feature end-to-end: which table fired.
-      console.log(`[realtime] change on ${payload.table} (${payload.eventType}) → pull`)
+      // Under SYNC_DEBUG: which table fired. The event itself is a pure "go pull" nudge.
+      if (DEBUG) console.log(`[realtime] change on ${payload.table} (${payload.eventType}) → pull`)
       onChange()
     })
     .subscribe((status, err) => {
@@ -61,7 +67,7 @@ export function startRealtime(
       // table not in the publication, socket blocked) is visible rather than just
       // "realtime doesn't work". SUBSCRIBED = we're live; the rest are failures.
       if (status === 'SUBSCRIBED') {
-        console.log('[realtime] subscribed — live pull on server changes')
+        if (DEBUG) console.log('[realtime] subscribed — live pull on server changes')
       } else {
         console.warn(`[realtime] channel status: ${status}${err ? ` — ${err.message}` : ''}`)
       }
