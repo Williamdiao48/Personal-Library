@@ -179,10 +179,15 @@ describe('columnForMark', () => {
 })
 
 describe('pageCount', () => {
-  it('rounds rendered width over column width', () => {
-    expect(pageCount(1000, 100)).toBe(10)
+  it('rounds a partial trailing page UP so no tail content is dropped', () => {
+    expect(pageCount(1000, 100)).toBe(10) // exact multiple — no spurious extra page
     expect(pageCount(160, 100)).toBe(2)
-    expect(pageCount(140, 100)).toBe(1)
+    expect(pageCount(140, 100)).toBe(2) // 1.4 pages of content needs 2 pages, not 1
+  })
+
+  it('does not add a spurious page for an exact (or near-exact) multiple', () => {
+    expect(pageCount(200, 100)).toBe(2)
+    expect(pageCount(100, 100)).toBe(1)
   })
 
   it('floors at 1 for empty content', () => {

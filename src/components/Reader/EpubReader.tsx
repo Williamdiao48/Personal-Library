@@ -77,11 +77,15 @@ export function columnForMark(
   return Math.max(0, Math.min(Math.floor(logicalX / colWidth), totalPages - 1))
 }
 
-/** Pages a chapter occupies: rendered width over the viewport column width,
- *  rounded, floored at 1. Guards a zero/negative width to avoid Infinity/NaN. */
+/** Pages a chapter occupies: rendered width over the viewport page (spread) width.
+ *  Rounds a partial trailing page UP — `Math.round` dropped any tail that ended in
+ *  the first half of its final page, making that content unreachable (paging jumped
+ *  straight to the next chapter, skipping it). The small epsilon absorbs sub-pixel
+ *  measurement slop so an exact multiple doesn't gain a spurious blank page. Floored
+ *  at 1; guards a zero/negative width to avoid Infinity/NaN. */
 export function pageCount(scrollWidth: number, colWidth: number): number {
   if (colWidth <= 0) return 1
-  return Math.max(1, Math.round(scrollWidth / colWidth))
+  return Math.max(1, Math.ceil(scrollWidth / colWidth - 0.02))
 }
 
 /**
