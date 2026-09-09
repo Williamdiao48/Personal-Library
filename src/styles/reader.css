@@ -61,6 +61,22 @@
 .html-reader h1 {
   font-size: 28px;
 }
+/* Headline prepended to a generic web-article capture (Readability strips the page's
+   own <h1>). It's the first element, so drop the default heading top-margin that would
+   otherwise push it down the page. Centered to match the reader's title convention
+   (fanfic .chapter-title is centered too) so headlines look consistent across sources. */
+.html-reader .article-title {
+  /* Center the headline BOX, not just its text. The base `.html-reader h1` rule sets
+     `margin: 1.6em 0 0.6em` — i.e. margin-left/right: 0 — and outranks the
+     `.html-reader > *` auto side-margins that center every other block, so the heading
+     otherwise pins to the left of the column while the body sits centered. Restore auto
+     side-margins here; top 0 since it's the first element, small bottom gap before the body. */
+  margin: 0 auto 0.6em;
+  text-align: center;
+  /* Balance the wrapped lines to roughly equal length so the centered headline reads
+     like a news hero rather than a long first line with a short centered remainder. */
+  text-wrap: balance;
+}
 .html-reader h2 {
   font-size: 22px;
 }

@@ -103,6 +103,35 @@ function getContentDir(): string {
 
 // Private helper: dispatches to the right site parser (or universal/generic fallback).
 // Returns the assembled SiteContent without saving to disk or DB.
+/** Prepend the article headline as an <h1> to a generic (Readability) capture.
+ *  Readability lifts the page's title into `article.title` (which we store as the
+ *  item's metadata) and STRIPS it from `article.content` — so a captured news article
+ *  renders with no visible headline in the body; only the reader's toolbar chrome
+ *  shows it. Site parsers (AO3/FFN/etc.) keep their own chapter headings, so this runs
+ *  on the generic path ONLY. Skips prepending when the body already opens with a
+ *  heading whose text contains this title (some pages Readability leaves the <h1> in),
+ *  to avoid a doubled headline. Title text is HTML-escaped since it's injected as markup;
+ *  an empty/whitespace title is a no-op. */
+export function prependArticleTitle(html: string, title: string): string {
+  const t = title.trim()
+  if (!t) return html
+  const norm = t.replace(/\s+/g, ' ').toLowerCase()
+  // Guard against a doubled headline: if the body already opens with a heading whose
+  // text carries the whole title, leave it alone. Requiring the heading to contain the
+  // full title (not merely overlap) keeps an unrelated section heading from suppressing us.
+  const firstHeading = html.match(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/i)
+  if (firstHeading) {
+    const headingText = firstHeading[1]
+      .replace(/<[^>]+>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase()
+    if (headingText && (headingText === norm || headingText.includes(norm))) return html
+  }
+  const esc = t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return `<h1 class="article-title">${esc}</h1>\n${html}`
+}
+
 async function dispatchCapture(
   url: string,
   onProgress?: (msg: string) => void,
@@ -147,7 +176,7 @@ async function dispatchCapture(
   return {
     title: article.title,
     author: article.byline ?? null,
-    html: sanitize(article.content),
+    html: prependArticleTitle(sanitize(article.content), article.title ?? ''),
     textContent: article.textContent ?? '',
     coverUrl:
       dom.window.document.querySelector('meta[property="og:image"]')?.getAttribute('content') ??
