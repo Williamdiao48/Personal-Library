@@ -43,7 +43,14 @@ vi.mock('./pdfText', () => ({
   extractPdfText: vi.fn(async () => 'pdf words extracted'),
 }))
 
-import { captureUrl, refreshContent, getChapterCount, appendChapters, captureFile } from './index'
+import {
+  captureUrl,
+  refreshContent,
+  getChapterCount,
+  appendChapters,
+  captureFile,
+  prependArticleTitle,
+} from './index'
 import { captureAo3, getAo3ChapterCount } from './sites/ao3'
 import { captureFfnet } from './sites/ffnet'
 import { captureRoyalRoad, getRoyalRoadChapterCount } from './sites/royalroad'
@@ -113,6 +120,41 @@ beforeEach(() => {
 afterEach(() => {
   closeTestDb()
   rmSync(CONTENT, { recursive: true, force: true })
+})
+
+// ── prependArticleTitle (generic Readability headline) ───────────────────────
+describe('prependArticleTitle', () => {
+  it('prepends the title as an <h1> when the body has no matching heading', () => {
+    const out = prependArticleTitle('<p>The story begins.</p>', 'Trump Data Centers')
+    expect(out).toBe('<h1 class="article-title">Trump Data Centers</h1>\n<p>The story begins.</p>')
+  })
+
+  it('is a no-op for an empty or whitespace title', () => {
+    expect(prependArticleTitle('<p>x</p>', '')).toBe('<p>x</p>')
+    expect(prependArticleTitle('<p>x</p>', '   ')).toBe('<p>x</p>')
+  })
+
+  it('does not double the headline when the body already opens with it', () => {
+    const body = '<h1>Trump Data Centers</h1><p>lede</p>'
+    expect(prependArticleTitle(body, 'Trump Data Centers')).toBe(body)
+  })
+
+  it('ignores casing/whitespace when matching an existing heading', () => {
+    const body = '<h2>  trump   data centers  </h2><p>lede</p>'
+    expect(prependArticleTitle(body, 'Trump Data Centers')).toBe(body)
+  })
+
+  it('still prepends when the first heading is an unrelated section (not the title)', () => {
+    const body = '<h2>Related coverage</h2><p>lede</p>'
+    const out = prependArticleTitle(body, 'Trump Data Centers')
+    expect(out.startsWith('<h1 class="article-title">Trump Data Centers</h1>')).toBe(true)
+  })
+
+  it('HTML-escapes the title so it cannot inject markup', () => {
+    const out = prependArticleTitle('<p>x</p>', 'A <b>bold</b> & risky "title"')
+    expect(out).toContain('A &lt;b&gt;bold&lt;/b&gt; &amp; risky "title"')
+    expect(out).not.toContain('<b>bold</b>')
+  })
 })
 
 // ── Dispatch routing ─────────────────────────────────────────────────────────
