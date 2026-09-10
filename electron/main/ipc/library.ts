@@ -217,7 +217,7 @@ export function registerLibraryHandlers(): void {
         WHERE items_fts MATCH ? AND i.deleted_at IS NULL
         ORDER BY rank
       `,
-        [toFtsPrefix(query)],
+        [toFtsQuery(query)],
       )
     } catch {
       return []
@@ -605,21 +605,31 @@ export function registerLibraryHandlers(): void {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-// Transforms a plain query into an FTS5 prefix query so that partial words
-// typed by the user still match: "the dark" → "the* dark*".
-// FTS5 operators (AND, OR, NOT) and already-quoted or already-suffixed tokens
-// are left untouched.
-function toFtsPrefix(raw: string): string {
-  return raw
+// Builds an FTS5 MATCH query from a raw user string.
+//
+//   • Single word   → a prefix token ("prom" → prom*) so partial words match
+//                     as you type (title or body).
+//   • Multiple words → one contiguous PHRASE ("war of the worlds" → the literal
+//                     quoted phrase).
+//
+// The multi-word case is deliberately a phrase, NOT an AND of prefix tokens.
+// ANDing prefix tokens over full body text is far too loose: every long book
+// contains common words like "war"/"world" or "crime"/"punishment" *somewhere*,
+// so "war of the worlds" matched nearly the entire library. A phrase match keeps
+// multi-word queries precise (title- and quotation-oriented); LibraryView's
+// instant metadata filter still narrows titles by partial last word while typing.
+//
+// Embedded double-quotes are stripped so a stray quote can't break out of the
+// phrase (the caller also try/catches FTS syntax errors as a backstop).
+function toFtsQuery(raw: string): string {
+  const tokens = raw
     .trim()
     .split(/\s+/)
+    .map((t) => t.replace(/"/g, ''))
     .filter(Boolean)
-    .map((token) => {
-      if (/^(AND|OR|NOT)$/i.test(token)) return token
-      if (token.startsWith('"') || token.endsWith('*')) return token
-      return token + '*'
-    })
-    .join(' ')
+  if (tokens.length === 0) return ''
+  if (tokens.length === 1) return `${tokens[0]}*`
+  return `"${tokens.join(' ')}"`
 }
 
 // Issues a HEAD request with If-Modified-Since and returns true if the content

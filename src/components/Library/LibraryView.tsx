@@ -50,6 +50,10 @@ export default function LibraryView() {
   const [formatPrefs, setFormatPrefs] = useState<Record<string, 'epub' | 'pdf'>>({})
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
+  // IDs whose full-text (title/author/body) matched the query via the FTS5 index.
+  // Unioned with the client-side metadata filter below so content matches surface
+  // alongside title/author/description/tag matches. Empty when there's no query.
+  const [ftsMatchIds, setFtsMatchIds] = useState<Set<string>>(new Set())
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkTag, setShowBulkTag] = useState(false)
   const [showBulkCol, setShowBulkCol] = useState(false)
@@ -115,6 +119,31 @@ export default function LibraryView() {
     const id = setTimeout(() => setDebouncedQuery(searchQuery), 300)
     return () => clearTimeout(id)
   }, [searchQuery])
+
+  // Full-text search: query the FTS5 index for the debounced term and keep the
+  // matching item IDs. This runs alongside (not instead of) the client-side
+  // metadata filter — FTS indexes title/author/body content but not description
+  // or tags, so the two are unioned in the filter pass. A stale-response guard
+  // (`active`) prevents an earlier, slower query from clobbering a newer one.
+  useEffect(() => {
+    const q = debouncedQuery.trim()
+    if (!q) {
+      setFtsMatchIds(new Set())
+      return
+    }
+    let active = true
+    libraryService
+      .search(q)
+      .then((hits) => {
+        if (active) setFtsMatchIds(new Set(hits.map((h) => h.id)))
+      })
+      .catch(() => {
+        if (active) setFtsMatchIds(new Set())
+      })
+    return () => {
+      active = false
+    }
+  }, [debouncedQuery])
 
   // ── Capture job management ─────────────────────────────────────
   // The job lifecycle (sidebar list + progress/complete/error) is owned globally by
@@ -633,6 +662,10 @@ export default function LibraryView() {
       const q = debouncedQuery.trim().toLowerCase()
       result = result.filter((i) => {
         const d = resolveDisplay(i)
+        // Full-text (body content) match from the FTS5 index.
+        if (ftsMatchIds.has(d.id)) return true
+        // Metadata matches the FTS index doesn't cover (description, tags) plus
+        // instant title/author narrowing before the async FTS result lands.
         if (d.title.toLowerCase().includes(q)) return true
         if (d.author?.toLowerCase().includes(q)) return true
         if (d.description?.toLowerCase().includes(q)) return true
@@ -652,6 +685,7 @@ export default function LibraryView() {
     authorFiltersKey,
     typeFiltersKey,
     debouncedQuery,
+    ftsMatchIds,
     itemTagsMap,
     itemCollectionsMap,
     groupedEpubIds,
@@ -783,7 +817,7 @@ export default function LibraryView() {
               <input
                 className="library-search-input"
                 type="text"
-                placeholder="Search title, author, tags…"
+                placeholder="Search title, author, tags, contents…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 aria-label="Search library"
