@@ -6,9 +6,15 @@ import { openTestDb, closeTestDb, seedItem, type TestDb } from '../../../test/db
 // it so this suite stays focused on the handler's DB behaviour (gate flip + guards).
 const h = vi.hoisted(() => ({
   enqueueItemBackup: vi.fn(() => Promise.resolve()),
+  recordItemBlobs: vi.fn(),
+  drainOutbox: vi.fn(() => Promise.resolve()),
   flushNow: vi.fn(() => Promise.resolve()),
 }))
-vi.mock('../cloud/uploader', () => ({ enqueueItemBackup: h.enqueueItemBackup }))
+vi.mock('../cloud/uploader', () => ({
+  enqueueItemBackup: h.enqueueItemBackup,
+  recordItemBlobs: h.recordItemBlobs,
+  drainOutbox: h.drainOutbox,
+}))
 // The backup handler AWAITS a durable sync push so blob_hash/cover_hash reach the
 // user's other devices before the call returns (durable "fire and forget" — the
 // user can quit immediately after). Mock the seam.
@@ -106,6 +112,72 @@ describe('cloud:backupItem', () => {
     expect(cloudBackupOf(id)).toBe(0)
     // Nothing was stamped/uploaded → no sync to flush.
     expect(h.flushNow).not.toHaveBeenCalled()
+  })
+})
+
+describe('cloud:backupAll', () => {
+  it('enqueues only not-yet-backed-up items, flips their gate, drains once', async () => {
+    const a = seedItem(db, { file_path: 'a.html' }) // cloud_backup 0
+    const b = seedItem(db, { file_path: 'b.html' }) // cloud_backup 0
+    const c = seedItem(db, { file_path: 'c.html' })
+    db.prepare(`UPDATE items SET cloud_backup = 1 WHERE id = ?`).run(c) // already backed up
+
+    const res = await invoke('cloud:backupAll')
+
+    expect(res).toEqual({ enqueued: 2, alreadyBackedUp: 1 })
+    // Only the two un-backed items are recorded; the already-backed one is skipped.
+    expect(h.recordItemBlobs).toHaveBeenCalledTimes(2)
+    expect(h.recordItemBlobs).toHaveBeenCalledWith(a)
+    expect(h.recordItemBlobs).toHaveBeenCalledWith(b)
+    expect(h.recordItemBlobs).not.toHaveBeenCalledWith(c)
+    expect(cloudBackupOf(a)).toBe(1)
+    expect(cloudBackupOf(b)).toBe(1)
+    // The whole outbox drains in a single pass, and the pointers push once.
+    expect(h.drainOutbox).toHaveBeenCalledTimes(1)
+    expect(h.flushNow).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps going (and still flips the gate) when one item cannot be recorded', async () => {
+    const good = seedItem(db, { file_path: 'good.html' })
+    const bad = seedItem(db, { file_path: 'bad.html' })
+    h.recordItemBlobs.mockImplementation((id: string) => {
+      if (id === bad) throw new Error('no local source')
+    })
+
+    const res = await invoke('cloud:backupAll')
+
+    // Both counted as enqueued; the bad one's blobs just aren't in the ledger.
+    expect(res).toEqual({ enqueued: 2, alreadyBackedUp: 0 })
+    expect(cloudBackupOf(good)).toBe(1)
+    expect(cloudBackupOf(bad)).toBe(1) // intent flips on → card shows Retry, not a silent opt-out
+    expect(h.drainOutbox).toHaveBeenCalledTimes(1)
+  })
+
+  it('is idempotent — a second run enqueues nothing', async () => {
+    seedItem(db, { file_path: 'a.html' })
+    seedItem(db, { file_path: 'b.html' })
+
+    const first = await invoke('cloud:backupAll')
+    expect(first).toEqual({ enqueued: 2, alreadyBackedUp: 0 })
+
+    h.recordItemBlobs.mockClear()
+    const second = await invoke('cloud:backupAll')
+
+    expect(second).toEqual({ enqueued: 0, alreadyBackedUp: 2 })
+    expect(h.recordItemBlobs).not.toHaveBeenCalled()
+  })
+
+  it('ignores soft-deleted items', async () => {
+    const live = seedItem(db, { file_path: 'live.html' })
+    const gone = seedItem(db, { file_path: 'gone.html' })
+    db.prepare(`UPDATE items SET deleted_at = ? WHERE id = ?`).run(Date.now(), gone)
+
+    const res = await invoke('cloud:backupAll')
+
+    expect(res).toEqual({ enqueued: 1, alreadyBackedUp: 0 })
+    expect(h.recordItemBlobs).toHaveBeenCalledTimes(1)
+    expect(h.recordItemBlobs).toHaveBeenCalledWith(live)
+    expect(cloudBackupOf(gone)).toBe(0) // untouched
   })
 })
 

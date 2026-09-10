@@ -51,6 +51,10 @@ describe('cloudService delegation', () => {
     cloudService.onBlobState(cb)
     expect(api.cloud.onBlobState).toHaveBeenCalledWith(cb)
   })
+  it('backupAll → api.cloud.backupAll', () => {
+    cloudService.backupAll()
+    expect(api.cloud.backupAll).toHaveBeenCalledTimes(1)
+  })
   it('getBackupCounts → api.cloud.getBackupCounts', () => {
     cloudService.getBackupCounts()
     expect(api.cloud.getBackupCounts).toHaveBeenCalledTimes(1)

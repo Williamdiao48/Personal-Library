@@ -322,6 +322,7 @@ contextBridge.exposeInMainWorld('api', {
   // backup — flips its gate and enqueues its blobs for the uploader to drain.
   cloud: {
     backupItem: (id: string) => ipcRenderer.invoke('cloud:backupItem', id),
+    backupAll: () => ipcRenderer.invoke('cloud:backupAll'),
     getBackupCounts: () => ipcRenderer.invoke('cloud:getBackupCounts'),
     onBlobState: (
       callback: (ev: { hash: string; state: 'pending' | 'synced' | 'error' }) => void,

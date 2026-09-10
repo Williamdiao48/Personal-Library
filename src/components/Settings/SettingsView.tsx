@@ -11,6 +11,7 @@ import { backupService } from '../../services/backup'
 import { llmService } from '../../services/llm'
 import { discoverService } from '../../services/discover'
 import { syncService } from '../../services/sync'
+import { cloudService } from '../../services/cloud'
 import { deriveCustomTheme, isValidHex } from '../../utils/themeDerive'
 import '../../styles/settings.css'
 
@@ -547,6 +548,12 @@ function AccountSettings() {
   const [deleteError, setDeleteError] = useState('')
   const deleteConfirmId = useId()
 
+  // "Back up all existing books" state (signed-in view). Enqueues every not-yet-
+  // backed-up item; progress is then reported by the SyncStatusPill, so this only
+  // tracks the enqueue call itself + a one-line result notice.
+  const [backingUp, setBackingUp] = useState(false)
+  const [backupNotice, setBackupNotice] = useState('')
+
   // On any account change — sign in, sign out, or switching accounts — snap back to a
   // clean slate so one account's typed state never bleeds into the next. A later
   // sign-out lands on a fresh sign-in form (not the reset page, and not pre-filled with
@@ -564,6 +571,8 @@ function AccountSettings() {
     setShowDelete(false)
     setDeleteConfirm('')
     setDeleteError('')
+    setBackingUp(false)
+    setBackupNotice('')
   }, [user])
 
   // Guard: the destructive button only enables once the typed value matches the
@@ -585,6 +594,27 @@ function AccountSettings() {
       setDeleteError(err?.message ?? 'Could not delete your account. Please try again.')
     } finally {
       setDeleting(false)
+    }
+  }
+
+  async function handleBackupAll() {
+    setBackingUp(true)
+    setBackupNotice('')
+    try {
+      const { enqueued, alreadyBackedUp } = await cloudService.backupAll()
+      if (enqueued === 0) {
+        setBackupNotice(
+          alreadyBackedUp > 0 ? 'All books are already backed up.' : 'No books to back up yet.',
+        )
+      } else {
+        setBackupNotice(
+          `Backing up ${enqueued} book${enqueued === 1 ? '' : 's'} — progress shows in the status pill.`,
+        )
+      }
+    } catch {
+      setBackupNotice('Couldn’t start the backup. Check your connection and try again.')
+    } finally {
+      setBackingUp(false)
     }
   }
 
@@ -631,6 +661,26 @@ function AccountSettings() {
             onChange={(v) => updateSettings({ cloudBackupEnabled: v })}
           />
         </div>
+
+        {settings.cloudBackupEnabled && (
+          <div className="settings-row settings-row--top">
+            <div className="settings-row-stack">
+              <span className="settings-row-label">Back up existing books</span>
+              <span className="settings-row-hint">
+                Upload the files for every book already in your library. New captures back up per
+                book — this catches up everything you added before turning backup on.
+              </span>
+              {backupNotice && <span className="settings-row-hint">{backupNotice}</span>}
+            </div>
+            <button
+              className="settings-action-btn settings-action-btn--ghost"
+              disabled={backingUp}
+              onClick={() => void handleBackupAll()}
+            >
+              {backingUp ? 'Backing up…' : 'Back up all books'}
+            </button>
+          </div>
+        )}
 
         <SyncSettings />
 

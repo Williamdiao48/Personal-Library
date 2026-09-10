@@ -6,6 +6,12 @@ export const cloudService = {
   ): Promise<{ ok: boolean; state?: 'pending' | 'synced' | 'error'; error?: string }> =>
     window.api.cloud.backupItem(id),
 
+  // Opt EVERY not-yet-backed-up item into cloud backup in one action. Resolves once
+  // the outbox drain has been kicked (not once every upload finishes) — progress is
+  // reported by the status pill. Returns how many items were newly enqueued.
+  backupAll: (): Promise<{ enqueued: number; alreadyBackedUp: number }> =>
+    window.api.cloud.backupAll(),
+
   // Authoritative tally of in-flight / failed blob backups for the status pill.
   getBackupCounts: (): Promise<{ pending: number; error: number }> =>
     window.api.cloud.getBackupCounts(),
