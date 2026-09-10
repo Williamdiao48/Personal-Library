@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { getDb, isDbOpen } from '../db'
-import { enqueueItemBackup } from '../cloud/uploader'
+import { enqueueItemBackup, recordItemBlobs, drainOutbox } from '../cloud/uploader'
 import { flushNow } from '../cloud/sync/syncService'
 
 // Renderer-facing seam for the Phase 2 per-item cloud actions. "Back up this
@@ -59,6 +59,47 @@ export function registerCloudHandlers(): void {
     if (state === 'error') return { ok: false, state, error: row?.error ?? 'Upload failed.' }
     return { ok: true, state: state ?? 'pending' }
   })
+
+  // Bulk counterpart to backupItem: opt EVERY not-yet-backed-up library item into
+  // cloud backup in one action (the "back up my existing library" affordance for a
+  // user who just enabled backup). Records all blobs first, then drains the whole
+  // outbox in a SINGLE pass rather than one drain per item.
+  //
+  // Deliberately non-blocking (unlike per-item backupItem, which awaits the drain):
+  // a large library could take minutes to upload, so we kick the drain in the
+  // background and let the status pill (getBackupCounts + blobState) report progress.
+  // The blob_hash pointers are re-dirtied by recordItemBlobs; flushNow pushes them so
+  // other devices learn about the books, and an interrupted drain resumes on the next
+  // launch — pull-on-open retries a blob that isn't in R2 yet, so it self-heals.
+  ipcMain.handle(
+    'cloud:backupAll',
+    async (): Promise<{ enqueued: number; alreadyBackedUp: number }> => {
+      const db = getDb()
+      const already = (
+        db
+          .prepare(`SELECT COUNT(*) AS n FROM items WHERE deleted_at IS NULL AND cloud_backup = 1`)
+          .get() as { n: number }
+      ).n
+      const rows = db
+        .prepare(`SELECT id FROM items WHERE deleted_at IS NULL AND cloud_backup != 1`)
+        .all() as { id: string }[]
+
+      for (const { id } of rows) {
+        // One unreadable/missing file must not abort the whole run. Still flip the
+        // intent flag so the card shows "Retry" rather than silently opting out.
+        try {
+          recordItemBlobs(id)
+        } catch {
+          /* skip — leave this item's blobs unrecorded; the drain has nothing to do */
+        }
+        db.prepare(`UPDATE items SET cloud_backup = 1 WHERE id = ?`).run(id)
+      }
+
+      void drainOutbox() // fire-and-forget; progress shows in the status pill
+      await flushNow() // push the freshly-recorded blob_hash pointers now
+      return { enqueued: rows.length, alreadyBackedUp: already }
+    },
+  )
 
   // Authoritative backup tally for the status pill. blobState broadcasts nudge the
   // renderer to refetch this, so a dropped event self-corrects on the next one.

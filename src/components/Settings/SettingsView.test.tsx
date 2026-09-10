@@ -38,11 +38,18 @@ vi.mock('../../services/auth', () => ({
     onStateChange: vi.fn(() => () => {}),
   },
 }))
+// Cloud actions (the "Back up all books" affordance). The component talks only to
+// this service; progress itself is the SyncStatusPill's job (not rendered here).
+vi.mock('../../services/cloud', () => ({
+  cloudService: { backupAll: vi.fn() },
+}))
 import { backupService } from '../../services/backup'
 const backup = backupService as unknown as {
   export: ReturnType<typeof vi.fn>
   import: ReturnType<typeof vi.fn>
 }
+import { cloudService } from '../../services/cloud'
+const cloud = cloudService as unknown as Record<string, ReturnType<typeof vi.fn>>
 import { authService } from '../../services/auth'
 const auth = authService as unknown as Record<string, ReturnType<typeof vi.fn>>
 import { syncService } from '../../services/sync'
@@ -533,6 +540,61 @@ describe('SettingsView — Account section', () => {
     expect(JSON.parse(localStorage.getItem('app-settings') ?? '{}')).toMatchObject({
       enableCloudProcessing: true,
     })
+  })
+
+  it('hides "Back up all books" until cloud backup is turned on', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })
+    renderView()
+    // Signed in, but cloudBackupEnabled defaults off → no bulk-backup affordance.
+    await screen.findByText('me@x.com')
+    expect(screen.queryByRole('button', { name: 'Back up all books' })).toBeNull()
+  })
+
+  it('signed-in with backup on: "Back up all books" enqueues + reports progress', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })
+    localStorage.setItem('app-settings', JSON.stringify({ cloudBackupEnabled: true }))
+    cloud.backupAll.mockResolvedValueOnce({ enqueued: 3, alreadyBackedUp: 0 })
+
+    renderView()
+
+    const btn = await screen.findByRole('button', { name: 'Back up all books' })
+    await act(async () => {
+      fireEvent.click(btn)
+    })
+    expect(cloud.backupAll).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText(/Backing up 3 books/)).toBeInTheDocument()
+  })
+
+  it('reports when there is nothing new to back up', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })
+    localStorage.setItem('app-settings', JSON.stringify({ cloudBackupEnabled: true }))
+    cloud.backupAll.mockResolvedValueOnce({ enqueued: 0, alreadyBackedUp: 5 })
+
+    renderView()
+
+    const btn = await screen.findByRole('button', { name: 'Back up all books' })
+    await act(async () => {
+      fireEvent.click(btn)
+    })
+    expect(await screen.findByText('All books are already backed up.')).toBeInTheDocument()
+  })
+
+  it('surfaces an error if the backup could not be started', async () => {
+    auth.isConfigured.mockResolvedValueOnce(true)
+    auth.getSession.mockResolvedValueOnce({ user: { id: 'u1', email: 'me@x.com' } })
+    localStorage.setItem('app-settings', JSON.stringify({ cloudBackupEnabled: true }))
+    cloud.backupAll.mockRejectedValueOnce(new Error('offline'))
+
+    renderView()
+
+    const btn = await screen.findByRole('button', { name: 'Back up all books' })
+    await act(async () => {
+      fireEvent.click(btn)
+    })
+    expect(await screen.findByText(/Couldn.t start the backup/)).toBeInTheDocument()
   })
 
   it('signed-in with sync on shows last-synced status and runs a manual sync', async () => {

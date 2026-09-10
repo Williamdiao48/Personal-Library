@@ -69,10 +69,12 @@ function markState(hash: string, state: 'synced' | 'error', error: string | null
 
 /**
  * Compute an item's content (+ cover) blob hashes, record them on the item, and
- * enqueue them for upload, then kick a drain. Called after a capture the user
- * opted into cloud backup for. Safe to call more than once (idempotent).
+ * enqueue them in the ledger — WITHOUT draining. The caller is responsible for a
+ * subsequent `drainOutbox()`. Split out from `enqueueItemBackup` so a bulk backup
+ * can record every item first and then drain the whole outbox in a single pass,
+ * rather than one full drain per item. Safe to call more than once (idempotent).
  */
-export async function enqueueItemBackup(itemId: string): Promise<void> {
+export function recordItemBlobs(itemId: string): void {
   const db = getDb()
   const item = db
     .prepare(`SELECT id, file_path, cover_path FROM items WHERE id = ? AND deleted_at IS NULL`)
@@ -93,7 +95,15 @@ export async function enqueueItemBackup(itemId: string): Promise<void> {
     db.prepare(`UPDATE items SET cover_hash = ?, dirty = 1 WHERE id = ?`).run(cover.hash, itemId)
     enqueueBlob(cover.hash, 'cover')
   }
+}
 
+/**
+ * Compute an item's content (+ cover) blob hashes, record them on the item, and
+ * enqueue them for upload, then kick a drain. Called after a capture the user
+ * opted into cloud backup for. Safe to call more than once (idempotent).
+ */
+export async function enqueueItemBackup(itemId: string): Promise<void> {
+  recordItemBlobs(itemId)
   await drainOutbox()
 }
 

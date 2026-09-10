@@ -696,6 +696,10 @@ export interface Api {
     backupItem: (
       id: string,
     ) => Promise<{ ok: boolean; state?: 'pending' | 'synced' | 'error'; error?: string }>
+    /** Opt every not-yet-backed-up library item into cloud backup in one action.
+     *  Resolves once the drain is kicked (progress shows in the status pill), not
+     *  once uploads finish. Returns the count newly enqueued vs. already backed up. */
+    backupAll: () => Promise<{ enqueued: number; alreadyBackedUp: number }>
     /** Authoritative count of in-flight / failed blob backups, for the status pill. */
     getBackupCounts: () => Promise<{ pending: number; error: number }>
     /** Subscribe to blob sync-state changes (content_hash → pending/synced/error) so
