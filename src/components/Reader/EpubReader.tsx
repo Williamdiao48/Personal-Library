@@ -485,10 +485,18 @@ export default function EpubReader({ item, onBack }: Props) {
     setOuterWidth(w)
     setOuterHeight(el.clientHeight)
 
+    // ResizeObserver fires once synchronously on observe() reporting the CURRENT
+    // size — not a real resize. That initial delivery runs after effect 3's rAF in
+    // the same frame, so unconditionally setting noTransition here would clobber
+    // effect 3's setNoTransition(false) and leave the ENTRY chapter with instant
+    // page jumps (no slide) until the first chapter change re-enables it. Only
+    // suppress the page-slide transition on genuine, post-initial resizes.
+    let primed = false
     const ro = new ResizeObserver(([entry]) => {
-      setNoTransition(true)
       const newW = Math.round(entry.contentRect.width)
       const newH = Math.round(entry.contentRect.height)
+      if (primed) setNoTransition(true)
+      primed = true
       outerWidthRef.current = newW
       setOuterWidth(newW)
       setOuterHeight(newH)
