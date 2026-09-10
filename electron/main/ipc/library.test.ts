@@ -371,13 +371,28 @@ describe('library IPC — FTS search', () => {
     indexFts(a, 'a tale of dragons and knights')
     indexFts(b, 'a tale of dragons and castles')
 
-    const hits = (await invoke('library:search', 'drag')) as Item[] // prefix → drag*
+    const hits = (await invoke('library:search', 'drag')) as Item[] // single word → drag*
     expect(hits.map((i) => i.id)).toEqual(['sa']) // sb is trashed
+  })
+
+  it('runs a multi-word query as a contiguous phrase, not an AND of words', async () => {
+    // Both bodies contain "dragons" and "knights" as separate words; only `x`
+    // contains the contiguous phrase. An AND-of-prefixes query (the old behavior)
+    // would return both — a phrase query must return only `x`.
+    const x = seedItem(db, { id: 'px', title: 'One' })
+    const y = seedItem(db, { id: 'py', title: 'Two' })
+    indexFts(x, 'a tale of dragons and knights in the north')
+    indexFts(y, 'dragons roamed the hills; the knights had long since fallen')
+
+    const hits = (await invoke('library:search', 'dragons and knights')) as Item[]
+    expect(hits.map((i) => i.id)).toEqual(['px'])
   })
 
   it('returns [] for malformed FTS syntax instead of throwing', () => {
     seedItem(db, {})
-    expect(invoke('library:search', '"unbalanced')).toEqual([])
+    // A lone paren survives sanitizing into `(*`, which FTS5 rejects — the
+    // handler must swallow the error and return [] rather than propagate it.
+    expect(invoke('library:search', '(')).toEqual([])
   })
 })
 

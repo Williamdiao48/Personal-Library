@@ -173,6 +173,7 @@ vi.mock('../../services/library', () => ({
     setStatus: vi.fn().mockResolvedValue(undefined),
     getById: vi.fn(),
     refresh: vi.fn(),
+    search: vi.fn().mockResolvedValue([]),
   },
   tagService: {
     getAll: vi.fn().mockResolvedValue([]),
@@ -375,17 +376,35 @@ describe('LibraryView — filtering', () => {
     ])
     renderLibrary()
     await screen.findByText('Dune')
-    fireEvent.change(screen.getByPlaceholderText('Search title, author, tags…'), {
+    fireEvent.change(screen.getByPlaceholderText('Search title, author, tags, contents…'), {
       target: { value: 'hyper' },
     })
     await waitFor(() => expect(screen.queryByText('Dune')).toBeNull())
     expect(screen.getByText('Hyperion')).toBeInTheDocument()
   })
 
+  it('surfaces a full-text (body content) match with no title/author/tag hit', async () => {
+    // Neither item's title/author matches "prometheus"; the FTS index reports i2
+    // as a body-content match, so only i2 should show.
+    lib.getAll.mockResolvedValue([
+      mkItem({ id: 'i1', title: 'Dracula', author: 'Stoker' }),
+      mkItem({ id: 'i2', title: 'Frankenstein', author: 'Shelley' }),
+    ])
+    lib.search.mockResolvedValueOnce([mkItem({ id: 'i2', title: 'Frankenstein' })])
+    renderLibrary()
+    await screen.findByText('Dracula')
+    fireEvent.change(screen.getByPlaceholderText('Search title, author, tags, contents…'), {
+      target: { value: 'prometheus' },
+    })
+    await waitFor(() => expect(screen.queryByText('Dracula')).toBeNull())
+    expect(screen.getByText('Frankenstein')).toBeInTheDocument()
+    expect(lib.search).toHaveBeenCalledWith('prometheus')
+  })
+
   it('clears the search with the ✕ button', async () => {
     lib.getAll.mockResolvedValue([mkItem({ id: 'i1', title: 'Dune' })])
     renderLibrary()
-    const input = screen.getByPlaceholderText('Search title, author, tags…')
+    const input = screen.getByPlaceholderText('Search title, author, tags, contents…')
     fireEvent.change(input, { target: { value: 'zzz' } })
     await waitFor(() => expect(screen.getByText('No items match this filter.')).toBeInTheDocument())
     fireEvent.click(screen.getByLabelText('Clear search'))
@@ -823,7 +842,7 @@ describe('LibraryView — keyboard shortcuts', () => {
   it('Cmd+A is ignored while typing in the search input', async () => {
     renderLibrary()
     await screen.findByText('Alpha')
-    const input = screen.getByPlaceholderText('Search title, author, tags…')
+    const input = screen.getByPlaceholderText('Search title, author, tags, contents…')
     input.focus()
     fireEvent.keyDown(input, { key: 'a', metaKey: true })
     expect(screen.queryByText('2 selected')).toBeNull()
