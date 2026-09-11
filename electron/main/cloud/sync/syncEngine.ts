@@ -11,6 +11,7 @@ import { planPull } from './reconcile'
 import type { CloudRepo } from './cloudRepo'
 import {
   selectDirty,
+  countDirty,
   applyReadback,
   getCursor,
   setCursor,
@@ -52,16 +53,41 @@ export async function runSyncRound(db: Database, repo: CloudRepo): Promise<SyncR
     // push below carries no colliding name. Only tags/collections/annotation_themes
     // have a naturalKey, and none FK-depend on a not-yet-pulled table (the ref-repoint
     // only touches links whose rows already exist locally), so this is FK-safe.
+    //
+    // When this table has its OWN dirty row to push, run the pre-pull from cursor 0
+    // (full scan) instead of the incremental `.gt(cursor)` window. The contested cloud
+    // row can sit BELOW the cursor — e.g. a peer created the name long ago, our cursor
+    // already advanced past it, then a re-import minted a fresh local id for the same
+    // name. Incremental pre-pull never re-fetches that row, so the merge never sees the
+    // collision and the push trips UNIQUE(user_id, name) (23505) and deadlocks. A full
+    // scan (these tables are tiny; the cursor re-advances to the true max within the
+    // same round) guarantees the merge sees the whole cloud set before the push.
     for (const spec of SYNC_SPECS) {
-      if (spec.naturalKey) addApplied(spec.table, await pullTable(db, repo, spec))
+      if (!spec.naturalKey) continue
+      const startOverride = countDirty(db, spec) > 0 ? 0 : undefined
+      addApplied(spec.table, await pullTable(db, repo, spec, startOverride))
     }
 
     // ── PUSH (parent-first: a child's FK parent must exist server-side) ──────────
     for (const spec of SYNC_SPECS) {
       const dirty = selectDirty(db, spec)
       if (dirty.length === 0) continue
-      const server = await repo.push(spec, dirty)
-      db.transaction(() => applyReadback(db, spec, dirty, server))()
+      // For natural-key tables, push name-freeing tombstones BEFORE live rows. The C4
+      // merge can leave BOTH a dirty tombstone (a loser whose name it just mangled) and a
+      // dirty live survivor claiming that same name. A single multi-row upsert checks
+      // UNIQUE(user_id, name) row-by-row, so if the survivor is applied before the loser's
+      // rename it trips 23505 mid-statement (the ON CONFLICT target is id, so it can't
+      // absorb a name collision). Splitting the push guarantees the server vacates the name
+      // before the survivor claims it. Non-natural-key tables push in one batch as before.
+      const batches =
+        spec.naturalKey && dirty.some((r) => r.deleted_at != null)
+          ? [dirty.filter((r) => r.deleted_at != null), dirty.filter((r) => r.deleted_at == null)]
+          : [dirty]
+      for (const batch of batches) {
+        if (batch.length === 0) continue
+        const server = await repo.push(spec, batch)
+        db.transaction(() => applyReadback(db, spec, batch, server))()
+      }
       report.pushed[spec.table] = dirty.length
     }
 
@@ -87,10 +113,15 @@ async function pullTable(
   db: Database,
   repo: CloudRepo,
   spec: (typeof SYNC_SPECS)[number],
+  startOverride?: number,
 ): Promise<number> {
   let applied = 0
   for (let page = 0; page < MAX_PULL_PAGES; page++) {
-    const cursor = getCursor(db, spec.table)
+    // `startOverride` lowers ONLY the first page's bound (a full re-scan for the C4
+    // merge); later pages resume from the cursor this loop advances, so paging and the
+    // truncated-tail back-off below are unchanged.
+    const cursor =
+      page === 0 && startOverride !== undefined ? startOverride : getCursor(db, spec.table)
     const remote = await repo.pull(spec, cursor)
     if (remote.length === 0) break
 
