@@ -26,7 +26,9 @@ A local-first desktop app for capturing, organizing, and reading web content —
 
 *Three formats in one polished, keyboard-driven reader.*
 
-<img src="docs/assets/reading-formats.gif" alt="Reading a PDF and an EPUB, with an offline dictionary lookup and a theme toggle" width="720">
+<p align="center">
+  <img src="docs/assets/reading-formats.gif" alt="Reading a PDF and an EPUB, with an offline dictionary lookup and a theme toggle" width="720">
+</p>
 
 - **Three readers** — HTML (articles + serials), EPUB, PDF; all with keyboard navigation and Cmd+F search. PDF adds continuous pinch/wheel zoom (0.5–3×) with cursor anchoring
 - **Typography controls** — font, size, line height, max width, theme per reader; continuous or paged scroll
@@ -37,7 +39,9 @@ A local-first desktop app for capturing, organizing, and reading web content —
 
 *Highlights, notes, and bookmarks in every format, gathered in one place.*
 
-<img src="docs/assets/annotations.gif" alt="Highlighting text in a book and browsing highlights across the library in the Annotations hub" width="720">
+<p align="center">
+  <img src="docs/assets/annotations.gif" alt="Highlighting text in a book and browsing highlights across the library in the Annotations hub" width="720">
+</p>
 
 - **Annotations** — highlight any text (multiple colors), attach notes, and drop bookmarks in all three readers, PDF included. Highlights and notes live in a dedicated Annotations panel; bookmarks in a separate Bookmarks panel. Right-click any mark to delete, copy, or edit inline. Manual reordering via up/down buttons. Clicking a note mark opens a popover with the note and quoted passage.
 - **Annotation organization** — group highlights into color categories and named themes, browse every mark across your whole library in a cross-book Annotations hub, and export selected quotes to Markdown or plain text
@@ -46,7 +50,9 @@ A local-first desktop app for capturing, organizing, and reading web content —
 
 *Tag, shelve, and full-text search a large library.*
 
-<img src="docs/assets/search.gif" alt="Typing a query and seeing full-text search results filter live" width="720">
+<p align="center">
+  <img src="docs/assets/search.gif" alt="Typing a query and seeing full-text search results filter live" width="720">
+</p>
 
 - **Library management** — tags (with rename, recolor, delete, item counts), collections (dedicated shelf with drag-to-reorder), reading status (Unread / Reading / Finished / On Hold / Dropped), bulk operations, author view, inline title editing
 - **Full-text search** — FTS5 with partial-word matching as you type; indexes HTML, EPUB, and PDF content
@@ -56,7 +62,9 @@ A local-first desktop app for capturing, organizing, and reading web content —
 
 *On-device recommendations, plus stats on what you actually read.*
 
-<img src="docs/assets/discover.gif" alt="The Discover view showing recommendation cards, then refreshing for a new batch" width="720">
+<p align="center">
+  <img src="docs/assets/discover.gif" alt="The Discover view showing recommendation cards, then refreshing for a new batch" width="720">
+</p>
 
 - **Discover** — on-device recommendations: a local embedding model matches your library's taste against fresh works pulled from AO3, FanFiction.net, and Open Library. Each card shows the work's own description, and a Refresh button pulls a new batch. No accounts, no tracking; embeddings are computed on your machine and cards you dismiss or already own don't come back
 - **Reading stats** — 1-year activity heatmap, streaks, time/count/reading-list goals with progress rings, per-item breakdown with avg WPM and word count
@@ -65,7 +73,9 @@ A local-first desktop app for capturing, organizing, and reading web content —
 
 *Optional cloud backup and cross-device sync, entirely in your control.*
 
-<img src="docs/assets/sync.gif" alt="Signing into an account and watching the library sync in and populate the shelf" width="720">
+<p align="center">
+  <img src="docs/assets/sync.gif" alt="Signing into an account and watching the library sync in and populate the shelf" width="720">
+</p>
 
 - **Optional cloud sync & backup** — create an account to sync your library's metadata across devices (edits propagate within seconds via realtime sync, not just on a timer) and back up the files of items you choose. Opt-in, with per-item control over which files leave your machine. Full account self-service in **Settings → Account**: sign up (with an email confirmation code), sign in, reset a forgotten password via a recovery code, and permanently delete your account and all its cloud data. Built on a custom local↔Postgres sync engine with content-addressed file backup — see [ARCHITECTURE.md](ARCHITECTURE.md)
 - **Export & import** — `.plbackup` ZIP contains the full database + all content files; import relaunches cleanly
