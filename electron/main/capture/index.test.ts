@@ -761,4 +761,75 @@ describe('captureFile', () => {
     // The already-present file is left untouched (not clobbered by the import).
     expect(readFileSync(join(CONTENT, 'present.epub')).toString()).toBe('ORIGINAL LOCAL BYTES')
   })
+
+  // ── Cover heal on dedup ─────────────────────────────────────────────────────
+  // A wiped content dir (or a cross-device sync that never carried the cover) can
+  // leave a matched item with cover_path set but its file gone. Byte adoption made
+  // the book openable but historically left a broken cover; the epub path now re-
+  // extracts it. Epub-only: pdf items carry no cover, so there's nothing to heal.
+  it('heals a missing cover on dedup by re-extracting it from the picked file', async () => {
+    vi.mocked(parseEpub).mockResolvedValue({
+      title: 'Cover Heal',
+      author: null,
+      coverBuffer: Buffer.from([9, 9, 9]),
+      coverExt: 'png',
+      plainText: 't',
+      wordCount: 1,
+    })
+    const hash = computeFileHash(readFileSync(epubFixture))
+    const id = seedItem(db, {
+      content_type: 'epub',
+      file_path: 'healme.epub',
+      cover_path: 'content/healme-cover.jpg', // recorded, but the file is gone
+    })
+    db.prepare('UPDATE items SET file_hash = ?, dirty = 0 WHERE id = ?').run(hash, id)
+    writeFileSync(join(CONTENT, 'healme.epub'), 'bytes') // content present; only the cover is broken
+    expect(existsSync(join(CONTENT, 'healme-cover.jpg'))).toBe(false)
+
+    const res = await captureFile(epubFixture)
+
+    expect(res.duplicate).toBe(true)
+    expect(res.id).toBe(id)
+    // Re-parsed once solely for the cover, wrote a fresh file, and repointed cover_path.
+    expect(parseEpub).toHaveBeenCalledTimes(1)
+    expect(existsSync(join(CONTENT, `${id}-cover.png`))).toBe(true)
+    const row = db.prepare('SELECT cover_path, dirty FROM items WHERE id = ?').get(id) as any
+    expect(row.cover_path).toBe(`content/${id}-cover.png`)
+    expect(row.dirty).toBe(0) // cover_path is device-local — the heal must not dirty the row
+  })
+
+  it('leaves an intact cover untouched on dedup (no re-parse)', async () => {
+    const hash = computeFileHash(readFileSync(epubFixture))
+    const id = seedItem(db, {
+      content_type: 'epub',
+      file_path: 'keep.epub',
+      cover_path: 'content/keep-cover.jpg',
+    })
+    db.prepare('UPDATE items SET file_hash = ? WHERE id = ?').run(hash, id)
+    writeFileSync(join(CONTENT, 'keep.epub'), 'bytes')
+    writeFileSync(join(CONTENT, 'keep-cover.jpg'), 'COVER BYTES') // present
+
+    const res = await captureFile(epubFixture)
+
+    expect(res.duplicate).toBe(true)
+    expect(parseEpub).not.toHaveBeenCalled() // cover present → nothing to heal, no parse
+    expect(readFileSync(join(CONTENT, 'keep-cover.jpg')).toString()).toBe('COVER BYTES')
+    const row = db.prepare('SELECT cover_path FROM items WHERE id = ?').get(id) as any
+    expect(row.cover_path).toBe('content/keep-cover.jpg')
+  })
+
+  it('does not re-parse for a cover when the dup never had one (cover_path NULL)', async () => {
+    const hash = computeFileHash(readFileSync(epubFixture))
+    const id = seedItem(db, { content_type: 'epub', file_path: 'nocov.epub', cover_path: null })
+    db.prepare('UPDATE items SET file_hash = ? WHERE id = ?').run(hash, id)
+    // Content missing → bytes get adopted, but a NULL cover_path is not a heal signal
+    // (the original parse found no cover; re-parsing wouldn't either).
+    expect(existsSync(join(CONTENT, 'nocov.epub'))).toBe(false)
+
+    const res = await captureFile(epubFixture)
+
+    expect(res.duplicate).toBe(true)
+    expect(existsSync(join(CONTENT, 'nocov.epub'))).toBe(true) // bytes still adopted
+    expect(parseEpub).not.toHaveBeenCalled() // no cover heal attempted
+  })
 })

@@ -38,6 +38,14 @@ export interface CaptureResult {
   duplicate?: boolean
 }
 
+// A resolved file-hash duplicate. `coverMissing` flags that the matched item's
+// cover_path is set but its file is gone — the caller (epub only; pdf has no cover)
+// re-parses the picked file for a fresh cover and heals the row. See healEpubCover.
+interface FileDuplicate {
+  result: CaptureResult
+  coverMissing: boolean
+}
+
 // A pre-existing library item that a re-imported file collapsed onto, looked up
 // by items.file_hash. Only LIVE items dedup: a byte-identical file whose item is
 // in trash re-imports fresh (the user deleted it — a new copy is the intent).
@@ -48,10 +56,10 @@ export interface CaptureResult {
 // to R2). When the matched item's local file is missing, we adopt the just-imported
 // bytes into its path so the de-duped book is immediately openable here (the user
 // clearly has the file — they just picked it). `importPath` is that picked file.
-function resolveFileDuplicate(fileHash: string, importPath: string): CaptureResult | null {
+function resolveFileDuplicate(fileHash: string, importPath: string): FileDuplicate | null {
   const dup = getDb()
     .prepare(
-      `SELECT id, title, author, word_count, file_path FROM items
+      `SELECT id, title, author, word_count, file_path, cover_path FROM items
        WHERE file_hash = ? AND deleted_at IS NULL LIMIT 1`,
     )
     .get(fileHash) as
@@ -61,6 +69,7 @@ function resolveFileDuplicate(fileHash: string, importPath: string): CaptureResu
         author: string | null
         word_count: number | null
         file_path: string
+        cover_path: string | null
       }
     | undefined
   if (!dup) return null
@@ -79,12 +88,43 @@ function resolveFileDuplicate(fileHash: string, importPath: string): CaptureResu
     }
   }
 
+  // The cover (device-local column, never synced) can be gone even after the bytes
+  // are healed — a wiped content dir takes both. Flag it when cover_path points at
+  // an absent file so the epub caller can re-extract. A NULL cover_path means the
+  // original parse found no cover; re-parsing wouldn't either, so don't signal it.
+  // cover_path already carries the `content/` prefix (unlike the bare file_path), so
+  // it resolves under userData directly — as every other cover-path read does.
+  const coverMissing =
+    dup.cover_path != null && !existsSync(join(app.getPath('userData'), dup.cover_path))
+
   return {
-    id: dup.id,
-    title: dup.title,
-    author: dup.author,
-    wordCount: dup.word_count,
-    duplicate: true,
+    result: {
+      id: dup.id,
+      title: dup.title,
+      author: dup.author,
+      wordCount: dup.word_count,
+      duplicate: true,
+    },
+    coverMissing,
+  }
+}
+
+// Re-extract and rewrite an epub's cover when a dedup match healed its bytes but
+// its cover file was missing (coverMissing). Best-effort and epub-only (pdf items
+// carry no cover): a parse failure or an epub that genuinely has no cover leaves
+// the row as-is. cover_path is device-local, so this must NOT set dirty=1 — the
+// column never syncs and a spurious dirty flag would re-push the whole row.
+async function healEpubCover(itemId: string, importPath: string): Promise<void> {
+  try {
+    const parsed = await resolveEpubParse(importPath)
+    if (!parsed.coverBuffer || !parsed.coverExt) return
+    const coverFile = `${itemId}-cover.${normalizeCoverExt(parsed.coverExt)}`
+    writeFileSync(safeContentPath(coverFile), parsed.coverBuffer)
+    getDb()
+      .prepare('UPDATE items SET cover_path = ? WHERE id = ?')
+      .run(`content/${coverFile}`, itemId)
+  } catch {
+    // leave the cover unresolved; the (now openable) item still stands.
   }
 }
 
@@ -569,7 +609,13 @@ async function captureEpub(filePath: string, cloudBackup = false): Promise<Captu
   // re-import costs a single hash + indexed lookup, not another cloud round-trip.
   const fileHash = computeFileHash(readFileSync(filePath))
   const existing = resolveFileDuplicate(fileHash, filePath)
-  if (existing) return existing
+  if (existing) {
+    // A byte-missing dedup match usually lost its cover too (wiped content dir);
+    // re-extract it before returning so the healed book shows its cover, not a
+    // broken image. Only fires when cover_path pointed at an absent file.
+    if (existing.coverMissing) await healEpubCover(existing.result.id, filePath)
+    return existing.result
+  }
 
   // Parse metadata + text off-device when the user opted into cloud processing
   // (Phase 4) — the untrusted file is extracted in an isolated Cloud Run
@@ -669,10 +715,11 @@ async function capturePdf(filePath: string, cloudBackup = false): Promise<Captur
   // Import-time gate: size cap + %PDF- magic before any parse or copy (F2).
   await assertImportFile(filePath, 'pdf')
 
-  // De-dup on the raw file bytes before parse/copy/upload (see captureEpub).
+  // De-dup on the raw file bytes before parse/copy/upload (see captureEpub). PDFs
+  // carry no cover, so there is nothing to heal — just return the collapsed item.
   const fileHash = computeFileHash(readFileSync(filePath))
   const existing = resolveFileDuplicate(fileHash, filePath)
-  if (existing) return existing
+  if (existing) return existing.result
 
   const id = randomUUID()
   const contentDir = getContentDir()
