@@ -54,6 +54,55 @@ function makeFakeServer(): { repo: CloudRepo; clock: () => number } {
   return { repo, clock: () => clock }
 }
 
+// A stricter fake server than makeFakeServer: it also enforces the Postgres
+// UNIQUE(user_id, name) on naturalKey tables, so a colliding push throws 23505 (which
+// makeFakeServer, keyed only by id, silently tolerates). Used by the two C4 tests whose
+// whole point is that a bug would trip that constraint.
+function makeStrictServer(): CloudRepo {
+  const tables = new Map<string, Map<string, SyncRow>>()
+  let clock = 1000
+  const tbl = (t: string) => {
+    let m = tables.get(t)
+    if (!m) tables.set(t, (m = new Map()))
+    return m
+  }
+  return {
+    async push(spec, rows) {
+      const m = tbl(spec.table)
+      const out: SyncRow[] = []
+      for (const r of rows) {
+        if (spec.naturalKey && r.deleted_at == null) {
+          const name = r[spec.naturalKey]
+          for (const other of m.values()) {
+            if (
+              other.deleted_at == null &&
+              keyOf(spec, other) !== keyOf(spec, r) &&
+              other[spec.naturalKey] === name
+            ) {
+              throw new Error(
+                `push ${spec.table} failed: duplicate key value violates unique constraint "${spec.table}_user_id_name_key"`,
+              )
+            }
+          }
+        }
+        clock += 1
+        const stamped: SyncRow = {}
+        for (const c of spec.columns) stamped[c] = r[c] ?? null
+        stamped.updated_at = clock
+        m.set(keyOf(spec, stamped), stamped)
+        out.push(stamped)
+      }
+      return out
+    },
+    async pull(spec, cursor) {
+      return [...tbl(spec.table).values()]
+        .filter((r) => Number(r.updated_at ?? 0) > cursor)
+        .sort((a, b) => Number(a.updated_at ?? 0) - Number(b.updated_at ?? 0))
+        .map((r) => ({ ...r }))
+    },
+  }
+}
+
 function newDevice(): Database.Database {
   const db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
@@ -192,6 +241,119 @@ describe('C4 — same-named tag created independently on two devices', () => {
         .all() as { tag_id: string }[]
       expect(links.map((l) => l.tag_id)).toEqual(['aaa'])
     }
+  })
+})
+
+describe('C4 blind spot — a contested cloud name sits BELOW our pull cursor', () => {
+  // The plain C4 test converges because the contested name arrives ABOVE the cursor and
+  // is merged pre-push. This reproduces the deadlock the incremental pre-pull can't see:
+  // a peer's same-named tag was created long ago (updated_at below our cursor), our cursor
+  // already advanced past it, then a fresh local id was minted for the same name. An
+  // incremental `.gt(cursor)` pre-pull never re-fetches the peer's row, so the merge never
+  // runs and the push trips the server UNIQUE(user_id, name). The fix pre-pulls from cursor
+  // 0 whenever the table has a dirty row to push.
+
+  it('a full-scan pre-pull merges the below-cursor collision so the push succeeds', async () => {
+    const repo = makeStrictServer()
+
+    // Peer A creates 'sci-fi' (id 'aaa') and syncs — the cloud now holds it live.
+    seedItem(A, 'i1')
+    A.prepare(
+      `INSERT INTO tags (id, name, color, updated_at) VALUES ('aaa','sci-fi','#fff',200)`,
+    ).run()
+    A.prepare(`INSERT INTO item_tags (item_id, tag_id, updated_at) VALUES ('i1','aaa',200)`).run()
+    const aReport = await runSyncRound(A, repo)
+    expect(aReport.ok).toBe(true)
+
+    // Device B independently mints its OWN 'sci-fi' (id 'zzz'), but its tags cursor has
+    // ALREADY advanced far past the cloud copy's updated_at — the blind-spot precondition.
+    // An incremental `.gt(hugeCursor)` pre-pull returns nothing, so without the full scan
+    // the merge never sees 'aaa' and B's push of 'zzz' trips 23505.
+    seedItem(B, 'i1', { updated_at: 100 })
+    B.prepare(
+      `INSERT INTO tags (id, name, color, updated_at) VALUES ('zzz','sci-fi','#000',300)`,
+    ).run()
+    B.prepare(`INSERT INTO item_tags (item_id, tag_id, updated_at) VALUES ('i1','zzz',300)`).run()
+    B.prepare(`INSERT INTO sync_cursors (table_name, pull_cursor) VALUES ('tags', 9_000_000)`).run()
+
+    const bReport = await runSyncRound(B, repo)
+
+    // The round completes cleanly — no 23505 — because the from-0 pre-pull fetched 'aaa',
+    // the merge picked survivor 'aaa' (smallest id) and renamed B's loser 'zzz' to a freed
+    // tombstone name, so the push carried no colliding live name.
+    expect(bReport.ok).toBe(true)
+    expect(bReport.error).toBeUndefined()
+
+    // B converged onto the survivor: one live 'sci-fi' (aaa), loser tombstoned, link moved.
+    const live = B.prepare(
+      `SELECT id FROM tags WHERE name = 'sci-fi' AND deleted_at IS NULL`,
+    ).all() as { id: string }[]
+    expect(live.map((r) => r.id)).toEqual(['aaa'])
+    expect(B.prepare(`SELECT deleted_at FROM tags WHERE id = 'zzz'`).get()).not.toMatchObject({
+      deleted_at: null,
+    })
+    const links = B.prepare(
+      `SELECT tag_id FROM item_tags WHERE item_id = 'i1' AND deleted_at IS NULL`,
+    ).all() as { tag_id: string }[]
+    expect(links.map((l) => l.tag_id)).toEqual(['aaa'])
+  })
+})
+
+describe('C4 survivor-is-local — the local row wins, but the cloud loser is still live', () => {
+  // The blind-spot test above has the CLOUD row win the merge (smallest id lives on the
+  // server), so the local loser tombstones itself and pushes — the name frees naturally.
+  // This is the reverse and nastier case: the LOCAL row is the survivor (smaller id) and
+  // the incoming CLOUD row is the loser but is still LIVE on the server. The old merge just
+  // wrote the incoming loser as a dirty=0 local tombstone ("its owner pushes the real one")
+  // and deferred — but no other device ever tombstones it (every device keeps the same
+  // survivor), so the cloud loser is immortal and every push of our live survivor trips
+  // UNIQUE(user_id, name) forever. The fix makes THIS device tombstone the cloud loser with
+  // dirty=1 and push it (tombstones-before-live) so the server name is vacated.
+
+  it('this device tombstones + pushes the cloud loser so its own survivor stops colliding', async () => {
+    const repo = makeStrictServer()
+
+    // Peer A creates 'sci-fi' with the LARGER id ('zzz') and syncs — the cloud holds it live.
+    seedItem(A, 'i1')
+    A.prepare(
+      `INSERT INTO tags (id, name, color, updated_at) VALUES ('zzz','sci-fi','#000',200)`,
+    ).run()
+    A.prepare(`INSERT INTO item_tags (item_id, tag_id, updated_at) VALUES ('i1','zzz',200)`).run()
+    expect((await runSyncRound(A, repo)).ok).toBe(true)
+
+    // Device B independently mints 'sci-fi' with the SMALLER id ('aaa') → B is the survivor.
+    seedItem(B, 'i1', { updated_at: 100 })
+    B.prepare(
+      `INSERT INTO tags (id, name, color, updated_at) VALUES ('aaa','sci-fi','#fff',300)`,
+    ).run()
+    B.prepare(`INSERT INTO item_tags (item_id, tag_id, updated_at) VALUES ('i1','aaa',300)`).run()
+
+    // One round must resolve it: B pulls 'zzz', keeps 'aaa' (smaller), tombstones 'zzz'
+    // dirty=1, and the tombstones-before-live push frees the server name before 'aaa' lands.
+    const bReport = await runSyncRound(B, repo)
+    expect(bReport.ok).toBe(true)
+    expect(bReport.error).toBeUndefined()
+
+    // B converged: one live 'sci-fi' (the local survivor aaa), the cloud loser tombstoned.
+    const bLive = B.prepare(
+      `SELECT id FROM tags WHERE name = 'sci-fi' AND deleted_at IS NULL`,
+    ).all() as { id: string }[]
+    expect(bLive.map((r) => r.id)).toEqual(['aaa'])
+    expect(
+      B.prepare(`SELECT deleted_at, dirty FROM tags WHERE id = 'zzz'`).get(),
+    ).not.toMatchObject({ deleted_at: null })
+
+    // And the resolution propagates to A: it pulls the survivor + the loser tombstone, keeps
+    // 'aaa', tombstones its own 'zzz', and moves the link — both devices agree on 'aaa'.
+    for (let i = 0; i < 2; i++) await runSyncRound(A, repo)
+    const aLive = A.prepare(
+      `SELECT id FROM tags WHERE name = 'sci-fi' AND deleted_at IS NULL`,
+    ).all() as { id: string }[]
+    expect(aLive.map((r) => r.id)).toEqual(['aaa'])
+    const aLinks = A.prepare(
+      `SELECT tag_id FROM item_tags WHERE item_id = 'i1' AND deleted_at IS NULL`,
+    ).all() as { tag_id: string }[]
+    expect(aLinks.map((l) => l.tag_id)).toEqual(['aaa'])
   })
 })
 

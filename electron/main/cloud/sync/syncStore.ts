@@ -155,15 +155,19 @@ export function localByKeys(db: Database, spec: SyncSpec, rows: SyncRow[]): Map<
   return map
 }
 
-/** Upsert a single row (dirty=0). Shared by applyPull and the C4 survivor insert. */
-function upsertOne(db: Database, spec: SyncSpec, row: SyncRow): void {
+/**
+ * Upsert a single row. Shared by applyPull and the C4 merge. `dirty` defaults to 0
+ * (a pulled row must not immediately re-push); the C4 incoming-loser tombstone passes
+ * dirty=1 because THIS device has to push that tombstone itself (see resolveNameCollisions).
+ */
+function upsertOne(db: Database, spec: SyncSpec, row: SyncRow, dirty: 0 | 1 = 0): void {
   const cols = spec.columns
   const placeholders = cols.map(() => '?').join(', ')
   const nonKey = cols.filter((c) => !spec.key.includes(c))
   db.prepare(
-    `INSERT INTO ${spec.table} (${cols.join(', ')}, dirty) VALUES (${placeholders}, 0)
+    `INSERT INTO ${spec.table} (${cols.join(', ')}, dirty) VALUES (${placeholders}, ${dirty})
      ON CONFLICT(${spec.key.join(', ')}) DO UPDATE SET
-       ${nonKey.map((c) => `${c} = excluded.${c}`).join(', ')}, dirty = 0`,
+       ${nonKey.map((c) => `${c} = excluded.${c}`).join(', ')}, dirty = ${dirty}`,
   ).run(...cols.map((c) => (row[c] === undefined ? null : row[c])))
 }
 
@@ -227,9 +231,12 @@ function reindexItemFts(db: Database, row: SyncRow): void {
  *   • Repoint the loser's references onto the survivor (create survivor ref +
  *     tombstone loser ref, so the loser ref's removal propagates instead of
  *     orphaning the server's copy as a dangling link).
- *   • A LOCAL loser is tombstoned here; an INCOMING loser is mutated to a tombstone
- *     so applyPull writes it as one (its authoritative server tombstone is pushed by
- *     the device that OWNS it, which runs the same deterministic merge).
+ *   • Either loser is tombstoned with dirty=1 so THIS device pushes the tombstone: a
+ *     LOCAL loser (incoming survives) and — critically — an INCOMING loser (local
+ *     survives), which we write as a fresh local dirty=1 tombstone rather than deferring
+ *     to a "server owner" that may not exist. That deferral was the survivor-is-local
+ *     deadlock: the loser stayed live on the server and every push of the survivor tripped
+ *     UNIQUE(user_id, name).
  * Deterministic survivor ⇒ both devices converge; idempotent across rounds.
  */
 export function resolveNameCollisions(
@@ -264,10 +271,24 @@ export function resolveNameCollisions(
       ).run(now, now, local.id)
       upsertOne(db, spec, r) // survivor is the incoming row r
     } else {
-      // Incoming row loses → apply it as a tombstone (its owner pushes the real one).
-      // The survivor is the existing local row, so refs already have a valid target.
-      r.deleted_at = now
-      r[nk] = `${String(name)}${NAME_TOMB_SEP}${rid}`
+      // Incoming row loses, and the SURVIVOR is our LOCAL row. The loser is still LIVE
+      // on the server, holding the contested UNIQUE(user_id, name). No other device will
+      // free it — every device's deterministic merge keeps the same survivor and would
+      // defer to "the owner", but a survivor with no publishing owner (an orphaned import,
+      // a re-minted id) leaves the loser immortal, so our survivor's push collides forever.
+      // Break the deadlock here: write the loser as a LOCAL dirty=1 tombstone (mangled name
+      // frees the local UNIQUE(name)) so THIS device pushes the tombstone and vacates the
+      // server name. dirty=1 (not the pulled-row dirty=0) is the whole point — and it also
+      // makes planPull skip the incoming live copy (a dirty local row is never clobbered),
+      // so the tombstone survives to be pushed. The push is ordered tombstones-before-live
+      // (syncEngine) so the freed name lands before our survivor claims it.
+      const tomb: SyncRow = {
+        ...r,
+        deleted_at: now,
+        updated_at: now,
+        [nk]: `${String(name)}${NAME_TOMB_SEP}${rid}`,
+      }
+      upsertOne(db, spec, tomb, 1)
     }
 
     for (const ref of refs) {
