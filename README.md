@@ -2,7 +2,84 @@
 
 A local-first desktop app for capturing, organizing, and reading web content — articles, fanfiction, web serials, EPUBs, and PDFs. It runs fully offline and requires no account or server — your whole library lives on your machine. An **optional cloud layer** adds cross-device backup and sync whenever you want it.
 
+<p align="center">
+  <img src="docs/assets/web-capture.gif" alt="Capturing a news article and a fanfiction in parallel, then opening one in the reader" width="820">
+</p>
+
+<p align="center"><em>Paste a URL — the app fetches, parses, and stores it locally. Here, two captures run in parallel, then one opens in the reader.</em></p>
+
 > **Engineering deep-dive → [ARCHITECTURE.md](ARCHITECTURE.md).** How the app is built and why: the local SQLite/FTS5 core, the custom local↔Postgres sync engine (whole-row LWW on a server-stamped clock), content-addressed blob backup via presigned URLs, the on-device recommender, and the testing/CI setup.
+
+---
+
+## Features
+
+### Capture
+
+*Paste a link and get clean, fully offline content.*
+
+- **Capture anything** — paste a URL and the app fetches, parses, and stores the content locally. Works offline after capture.
+- **Dedicated parsers** for Archive of Our Own, FanFiction.net, Royal Road, Wattpad, Scribble Hub, Spacebattles, Sufficient Velocity — plus a universal parser for everything else
+- **Multi-chapter serials** — fetches all chapters in one go with a live progress bar; lazy-loads in the reader
+
+### Read
+
+*Three formats in one polished, keyboard-driven reader.*
+
+<p align="center">
+  <img src="docs/assets/reading-formats.gif" alt="Reading a PDF and an EPUB, with an offline dictionary lookup and a theme toggle" width="720">
+</p>
+
+- **Three readers** — HTML (articles + serials), EPUB, PDF; all with keyboard navigation and Cmd+F search. PDF adds continuous pinch/wheel zoom (0.5–3×) with cursor anchoring
+- **Typography controls** — font, size, line height, max width, theme per reader; continuous or paged scroll
+- **15 built-in themes** + unlimited custom themes (pick two seed colors, the rest is derived)
+- **Dictionary lookup** — select or double-click a word in any reader to see its definition in an inline popover; fully offline (bundled WordNet)
+
+### Annotate
+
+*Highlights, notes, and bookmarks in every format, gathered in one place.*
+
+<p align="center">
+  <img src="docs/assets/annotations.gif" alt="Highlighting text in a book and browsing highlights across the library in the Annotations hub" width="720">
+</p>
+
+- **Annotations** — highlight any text (multiple colors), attach notes, and drop bookmarks in all three readers, PDF included. Highlights and notes live in a dedicated Annotations panel; bookmarks in a separate Bookmarks panel. Right-click any mark to delete, copy, or edit inline. Manual reordering via up/down buttons. Clicking a note mark opens a popover with the note and quoted passage.
+- **Annotation organization** — group highlights into color categories and named themes, browse every mark across your whole library in a cross-book Annotations hub, and export selected quotes to Markdown or plain text
+
+### Organize & search
+
+*Tag, shelve, and full-text search a large library.*
+
+<p align="center">
+  <img src="docs/assets/search.gif" alt="Typing a query and seeing full-text search results filter live" width="720">
+</p>
+
+- **Library management** — tags (with rename, recolor, delete, item counts), collections (dedicated shelf with drag-to-reorder), reading status (Unread / Reading / Finished / On Hold / Dropped), bulk operations, author view, inline title editing
+- **Full-text search** — FTS5 with partial-word matching as you type; indexes HTML, EPUB, and PDF content
+- **Trash & recovery** — deleted items move to Trash and can be restored within 30 days; auto-purged on next launch after that
+
+### Discover & insights
+
+*On-device recommendations, plus stats on what you actually read.*
+
+<p align="center">
+  <img src="docs/assets/discover.gif" alt="The Discover view showing recommendation cards, then refreshing for a new batch" width="720">
+</p>
+
+- **Discover** — on-device recommendations: a local embedding model matches your library's taste against fresh works pulled from AO3, FanFiction.net, and Open Library. Each card shows the work's own description, and a Refresh button pulls a new batch. No accounts, no tracking; embeddings are computed on your machine and cards you dismiss or already own don't come back
+- **Reading stats** — 1-year activity heatmap, streaks, time/count/reading-list goals with progress rings, per-item breakdown with avg WPM and word count
+
+### Sync & data
+
+*Optional cloud backup and cross-device sync, entirely in your control.*
+
+<p align="center">
+  <img src="docs/assets/sync.gif" alt="Signing into an account and watching the library sync in and populate the shelf" width="720">
+</p>
+
+- **Optional cloud sync & backup** — create an account to sync your library's metadata across devices (edits propagate within seconds via realtime sync, not just on a timer) and back up the files of items you choose. Opt-in, with per-item control over which files leave your machine. Full account self-service in **Settings → Account**: sign up (with an email confirmation code), sign in, reset a forgotten password via a recovery code, and permanently delete your account and all its cloud data. Built on a custom local↔Postgres sync engine with content-addressed file backup — see [ARCHITECTURE.md](ARCHITECTURE.md)
+- **Export & import** — `.plbackup` ZIP contains the full database + all content files; import relaunches cleanly
+- **Auto-updater** — on Windows & Linux, checks for new releases on launch; download and install from the in-app notification (macOS updates are manual — see [Updating](#updating))
 
 ---
 
@@ -56,28 +133,6 @@ The installer is unsigned, so SmartScreen may show a warning:
 **macOS** — because these builds are unsigned, the auto-updater can't run, so updating is manual: download the latest `.dmg` from the [Releases page](https://github.com/Williamdiao48/Personal-Library/releases/latest), then either drag the new app over the old one in Applications (**Replace** when prompted) or drag the old app to the Trash and install the new one. You'll need to repeat the [First Launch — macOS](#first-launch--macos) Gatekeeper step afterward.
 
 **Your library is preserved either way** — all data lives in `~/Library/Application Support/Personal Library/` (see [Your Data](#your-data)), which a reinstall never touches. If you want a safety net first, use Settings → Data → Export Library.
-
----
-
-## Features
-
-- **Capture anything** — paste a URL and the app fetches, parses, and stores the content locally. Works offline after capture.
-- **Dedicated parsers** for Archive of Our Own, FanFiction.net, Royal Road, Wattpad, Scribble Hub, Spacebattles, Sufficient Velocity — plus a universal parser for everything else
-- **Multi-chapter serials** — fetches all chapters in one go with a live progress bar; lazy-loads in the reader
-- **Three readers** — HTML (articles + serials), EPUB, PDF; all with keyboard navigation and Cmd+F search. PDF adds continuous pinch/wheel zoom (0.5–3×) with cursor anchoring
-- **Typography controls** — font, size, line height, max width, theme per reader; continuous or paged scroll
-- **15 built-in themes** + unlimited custom themes (pick two seed colors, the rest is derived)
-- **Annotations** — highlight any text (multiple colors), attach notes, and drop bookmarks in all three readers, PDF included. Highlights and notes live in a dedicated Annotations panel; bookmarks in a separate Bookmarks panel. Right-click any mark to delete, copy, or edit inline. Manual reordering via up/down buttons. Clicking a note mark opens a popover with the note and quoted passage.
-- **Annotation organization** — group highlights into color categories and named themes, browse every mark across your whole library in a cross-book Annotations hub, and export selected quotes to Markdown or plain text
-- **Dictionary lookup** — select or double-click a word in any reader to see its definition in an inline popover; fully offline (bundled WordNet)
-- **Discover** — on-device recommendations: a local embedding model matches your library's taste against fresh works pulled from AO3, FanFiction.net, and Open Library. Each card shows the work's own description, and a Refresh button pulls a new batch. No accounts, no tracking; embeddings are computed on your machine and cards you dismiss or already own don't come back
-- **Library management** — tags (with rename, recolor, delete, item counts), collections (dedicated shelf with drag-to-reorder), reading status (Unread / Reading / Finished / On Hold / Dropped), bulk operations, author view, inline title editing
-- **Trash & recovery** — deleted items move to Trash and can be restored within 30 days; auto-purged on next launch after that
-- **Full-text search** — FTS5 with partial-word matching as you type; indexes HTML, EPUB, and PDF content
-- **Reading stats** — 1-year activity heatmap, streaks, time/count/reading-list goals with progress rings, per-item breakdown with avg WPM and word count
-- **Optional cloud sync & backup** — create an account to sync your library's metadata across devices (edits propagate within seconds via realtime sync, not just on a timer) and back up the files of items you choose. Opt-in, with per-item control over which files leave your machine. Full account self-service in **Settings → Account**: sign up (with an email confirmation code), sign in, reset a forgotten password via a recovery code, and permanently delete your account and all its cloud data. Built on a custom local↔Postgres sync engine with content-addressed file backup — see [ARCHITECTURE.md](ARCHITECTURE.md)
-- **Export & import** — `.plbackup` ZIP contains the full database + all content files; import relaunches cleanly
-- **Auto-updater** — on Windows & Linux, checks for new releases on launch; download and install from the in-app notification (macOS updates are manual — see [Updating](#updating))
 
 ---
 
