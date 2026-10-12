@@ -3,8 +3,8 @@
 Personal Library is a **local-first desktop reading app** (Electron + React + TypeScript)
 with an **optional, opt-in cloud layer** for cross-device backup and sync. This document
 is the engineering deep-dive: the systems that were interesting to build, the tradeoffs
-behind them, and why the app is shaped the way it is. For install/usage and a full
-directory map, see the [README](README.md).
+behind them, and why the app is shaped the way it is. For installing, see [docs/install.md](docs/install.md); for the
+directory map and build steps, see [docs/development.md](docs/development.md).
 
 > **The one-line pitch for the impatient:** a fully offline SQLite/FTS5 reading app that
 > *optionally* grows a custom local↔Postgres sync engine (whole-row LWW on a server-stamped
