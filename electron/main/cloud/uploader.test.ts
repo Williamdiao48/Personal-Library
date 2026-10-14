@@ -280,6 +280,60 @@ describe('content changes after the hash was recorded (CLO-7)', () => {
     expect(itemRow(a).blob_hash).toBe('contenthash')
   })
 
+  it('uploads from a sibling that matches when another holder of the hash fails to pack', async () => {
+    const a = seedItem(db, { id: 'a', file_path: 'a.html' })
+    const b = seedItem(db, { id: 'b', file_path: 'b.html' })
+    signedOut()
+    await enqueueItemBackup(a)
+    await enqueueItemBackup(b)
+    h.buildContentBlob.mockImplementation((item: { id: string }) => {
+      if (item.id === 'a') throw new Error('ENOENT a.html')
+      return { data: Buffer.from('CONTENT'), hash: 'contenthash' }
+    })
+    signedIn()
+
+    await drainOutbox()
+
+    expect(blobRow('contenthash')).toMatchObject({ state: 'synced' })
+    expect(putHashes()).toEqual(['contenthash'])
+  })
+
+  it('keeps the row retriable (not dropped, nothing PUT) when every source fails to pack', async () => {
+    const id = seedItem(db, { file_path: 'a.html' })
+    signedOut()
+    await enqueueItemBackup(id)
+    h.buildContentBlob.mockImplementation(() => {
+      throw new Error('ENOENT a.html')
+    })
+    signedIn()
+
+    await drainOutbox()
+
+    // Not drift — the bytes are unreadable right now. Dropping would lose the backup;
+    // uploading is impossible. It stays in the ledger as a retriable error.
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(blobRow('contenthash')).toMatchObject({ state: 'error' })
+    expect(blobRow('contenthash')?.error).toMatch(/ENOENT/)
+    expect(itemRow(id).blob_hash).toBe('contenthash')
+  })
+
+  it('re-addresses a changed cover too, never PUTting it under the old cover hash', async () => {
+    const id = seedItem(db, { file_path: 'a.html', cover_path: 'content/a-cover.png' })
+    h.buildCoverBlob.mockReturnValue({ data: Buffer.from('OLDCOVER'), hash: 'oldcover' })
+    signedOut()
+    await enqueueItemBackup(id)
+    h.buildCoverBlob.mockReturnValue({ data: Buffer.from('NEWCOVER'), hash: 'newcover' })
+    signedIn()
+
+    await drainOutbox()
+
+    expect(putHashes()).not.toContain('oldcover')
+    expect(blobRow('oldcover')).toBeUndefined()
+    expect(blobRow('newcover')).toMatchObject({ state: 'synced' })
+    const row = db.prepare(`SELECT cover_hash FROM items WHERE id = ?`).get(id) as any
+    expect(row.cover_hash).toBe('newcover')
+  })
+
   it('drops the row (no upload) when the drifted item cannot be re-packed', async () => {
     const id = seedItem(db, { file_path: 'a-ch0.html' })
     signedOut()

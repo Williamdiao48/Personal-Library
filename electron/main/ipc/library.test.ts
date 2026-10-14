@@ -507,6 +507,21 @@ describe('library IPC — cover images', () => {
     expect(row.cover_hash).toMatch(/^[0-9a-f]{64}$/)
   })
 
+  it('setCover re-records a backed-up derived item that inherits the cover', async () => {
+    seedItem(db, { id: 'src', file_path: 'src.html', cover_path: null })
+    seedItem(db, { id: 'der', file_path: 'der.html', cover_path: null })
+    db.prepare('UPDATE items SET derived_from = ?, cloud_backup = 1 WHERE id = ?').run('src', 'der')
+    writeFileSync(join(CONTENT_DIR, 'src.html'), '<p>src</p>')
+    writeFileSync(join(CONTENT_DIR, 'der.html'), '<p>der</p>')
+
+    await invoke('library:setCover', 'src', new Uint8Array([7, 7]).buffer, 'png')
+    const der = db.prepare('SELECT cover_hash FROM items WHERE id = ?').get('der') as any
+    expect(der.cover_hash).toMatch(/^[0-9a-f]{64}$/)
+    // The source was never backed up, so it gets no hashes.
+    const src = db.prepare('SELECT cover_hash FROM items WHERE id = ?').get('src') as any
+    expect(src.cover_hash).toBeNull()
+  })
+
   it('setCover leaves an existing account cover_hash alone (auto-render, not a user pick)', async () => {
     seedItem(db, { id: 'bk2', file_path: 'bk2.html', cover_path: null })
     db.prepare("UPDATE items SET cloud_backup = 1, cover_hash = 'peer' WHERE id = ?").run('bk2')
@@ -610,6 +625,25 @@ describe('library IPC — refresh', () => {
     expect(mockAppendChapters).toHaveBeenCalledWith('mc2', 8)
     expect(result).toEqual({ changed: true, wordCount: 900 })
     expect(triggerBackfill).toHaveBeenCalled()
+  })
+
+  it('append re-addresses a backed-up item to its new chapter bytes (CLO-7)', async () => {
+    seedItem(db, { id: 'bka', source_url: 'https://x', file_path: 'bka-ch0.html' })
+    db.prepare(
+      "UPDATE items SET chapter_start = 1, chapter_end = 1, cloud_backup = 1, blob_hash = 'old' WHERE id = ?",
+    ).run('bka')
+    writeFileSync(join(CONTENT_DIR, 'bka-ch0.html'), '<p>one</p>')
+    mockGetChapterCount.mockResolvedValue(2)
+    mockAppendChapters.mockImplementation(async () => {
+      writeFileSync(join(CONTENT_DIR, 'bka-ch1.html'), '<p>two</p>') // the appended chapter
+      return { wordCount: 2 }
+    })
+
+    await invoke('library:refresh', 'bka')
+    const row = db.prepare('SELECT blob_hash, dirty FROM items WHERE id = ?').get('bka') as any
+    expect(row.blob_hash).toMatch(/^[0-9a-f]{64}$/)
+    expect(row.blob_hash).not.toBe('old')
+    expect(row.dirty).toBe(1)
   })
 
   it('full re-scrape: skips all I/O when the content hash is unchanged', async () => {
