@@ -12,6 +12,7 @@ import type { Item, Tag, RefreshResult } from '../../../src/types'
 import { computeContentHash } from '../util/contentHash'
 import { triggerBackfill } from '../recommender/lifecycle'
 import { notifyLocalMutation } from '../cloud/sync/syncService'
+import { refreshItemBackup } from '../cloud/uploader'
 import {
   indexFtsText,
   readStoredFtsText,
@@ -333,8 +334,8 @@ export function registerLibraryHandlers(): void {
     const db = getDb()
 
     // Remove any existing cover file first
-    const row = db.prepare('SELECT cover_path FROM items WHERE id = ?').get(id) as
-      { cover_path: string | null } | undefined
+    const row = db.prepare('SELECT cover_path, cover_hash FROM items WHERE id = ?').get(id) as
+      { cover_path: string | null; cover_hash: string | null } | undefined
     if (row?.cover_path)
       try {
         unlinkSync(safeUserDataPath(row.cover_path))
@@ -366,8 +367,13 @@ export function registerLibraryHandlers(): void {
         Date.now(),
         derivedId,
       )
+      refreshItemBackup(derivedId)
     }
 
+    // A backed-up item's new cover needs its own blob hash. Skip when the account
+    // already has a cover (cover_hash, possibly from another device): this is an
+    // auto-render, and re-addressing would just swap in this device's render.
+    if (!row?.cover_hash) refreshItemBackup(id)
     notifyLocalMutation()
     return coverPath
   })
@@ -493,6 +499,7 @@ export function registerLibraryHandlers(): void {
         // New chapters exist — append only the delta.
         const result = await appendChapters(id, currentCount)
         triggerBackfill() // content changed → reconcile embedding (C2.6)
+        refreshItemBackup(id) // new bytes → new blob hash (before the push below)
         notifyLocalMutation() // word_count/content changed → push
         return { changed: true, wordCount: result.wordCount ?? 0 }
       }
@@ -562,6 +569,7 @@ export function registerLibraryHandlers(): void {
     })()
 
     triggerBackfill() // content changed → reconcile embedding (C2.6)
+    refreshItemBackup(id) // new bytes → new blob hash (before the push below)
     notifyLocalMutation() // word_count/content changed → push
     return { changed: true, wordCount: newWordCount }
   })
@@ -598,6 +606,7 @@ export function registerLibraryHandlers(): void {
       Date.now(),
       id,
     )
+    refreshItemBackup(id) // a user-picked cover replaces the backed-up one
     notifyLocalMutation()
     return coverPath
   })

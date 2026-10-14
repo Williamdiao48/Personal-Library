@@ -21,6 +21,7 @@ import { safeContentPath } from '../security/paths'
 import { assertImportFile, normalizeCoverExt } from '../security/validation'
 import { assertHttpUrl, safeFetch } from '../security/net-guard'
 import { resolveEpubParse, resolvePdfParse } from '../cloud/processing'
+import { ensureLocalContent } from '../cloud/downloader'
 import { indexFtsText, readStoredFtsText } from '../db/ftsText'
 import { computeContentHash } from '../util/contentHash'
 import { computeFileHash } from './fileHash'
@@ -455,6 +456,12 @@ async function appendChaptersInner(
   if (!item) throw new Error('Item not found.')
   if (!item.source_url) throw new Error('This item has no source URL.')
   if (item.chapter_end == null) throw new Error('This item has no chapter_end — cannot append.')
+
+  // On a device that has this item's metadata but has never opened it, the existing
+  // chapters live only in the cloud backup. Pull them first: appending onto nothing
+  // would number the new chapters from ch0 and (once re-backed-up) replace the
+  // backup with an archive missing every earlier chapter.
+  await ensureLocalContent(item.file_path)
 
   const appendStart = item.chapter_end + 1
   if (newEnd < appendStart) throw new Error(`New end (${newEnd}) must be ≥ ${appendStart}.`)

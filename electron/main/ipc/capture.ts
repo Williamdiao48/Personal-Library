@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { captureUrl, captureFile, appendChapters } from '../capture'
 import { discoverFavorites, runBulkImport, cancelBulkImport } from '../capture/bulkImport'
 import { triggerBackfill } from '../recommender/lifecycle'
-import { enqueueItemBackup } from '../cloud/uploader'
+import { enqueueItemBackup, refreshItemBackup } from '../cloud/uploader'
 import { notifyLocalMutation } from '../cloud/sync/syncService'
 import type { BulkSource } from '../../../src/types'
 
@@ -171,6 +171,7 @@ export function registerCaptureHandlers(): void {
       .then((result) => {
         // Appended chapters change the item's content — reconcile in background.
         triggerBackfill()
+        refreshItemBackup(itemId) // new bytes → new blob hash (before the push below)
         notifyLocalMutation() // content/word_count changed → push
         if (!event.sender.isDestroyed()) {
           event.sender.send('capture:complete', { jobId, result })

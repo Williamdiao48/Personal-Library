@@ -15,7 +15,10 @@ vi.mock('../capture', () => ({
 vi.mock('../recommender/lifecycle', () => ({ triggerBackfill: vi.fn() }))
 // The Phase 2 cloud uploader (enqueued on opted-in capture) pulls in the DB +
 // Supabase client — stub it so this suite stays DB-free and we just assert wiring.
-vi.mock('../cloud/uploader', () => ({ enqueueItemBackup: vi.fn(() => Promise.resolve()) }))
+vi.mock('../cloud/uploader', () => ({
+  enqueueItemBackup: vi.fn(() => Promise.resolve()),
+  refreshItemBackup: vi.fn(),
+}))
 // Tier 1 #3: a new/updated item schedules a debounced sync push — mock the trigger.
 vi.mock('../cloud/sync/syncService', () => ({ notifyLocalMutation: vi.fn() }))
 // Bulk-favorites discovery/import pulls in ../db via bulkImport — stub it so this
@@ -30,7 +33,7 @@ import { registerCaptureHandlers, isHttpUrl, isAllowedBulkHost } from './capture
 import { captureUrl, captureFile, appendChapters } from '../capture'
 import { discoverFavorites, runBulkImport, cancelBulkImport } from '../capture/bulkImport'
 import { triggerBackfill } from '../recommender/lifecycle'
-import { enqueueItemBackup } from '../cloud/uploader'
+import { enqueueItemBackup, refreshItemBackup } from '../cloud/uploader'
 import { notifyLocalMutation } from '../cloud/sync/syncService'
 
 type Mock = ReturnType<typeof vi.fn>
@@ -133,6 +136,7 @@ describe('capture:start — SEC-3 scheme guard', () => {
 
     expect(typeof jobId).toBe('string')
     expect(triggerBackfill).not.toHaveBeenCalled()
+    expect(refreshItemBackup).not.toHaveBeenCalled()
   })
 })
 
@@ -307,6 +311,8 @@ describe('capture:append', () => {
 
     expect(appendChapters).toHaveBeenCalledWith('item-1', 7, expect.any(Function))
     expect(triggerBackfill).toHaveBeenCalledOnce()
+    // CLO-7: appended chapters change the content bytes → re-record the backup hash.
+    expect(refreshItemBackup).toHaveBeenCalledWith('item-1')
   })
 
   it('swallows an append failure via the error path', async () => {
