@@ -28,7 +28,16 @@ export function contentFileNames(item: ItemBlobRow): string[] {
     .filter((n) => n.startsWith(`${item.id}-ch`) && MULTI_CHAPTER_RE.test(n))
     .sort((a, b) => chapterIndex(a) - chapterIndex(b))
   // Defensive: if enumeration finds nothing, fall back to the recorded file_path.
-  return names.length ? names : [item.file_path]
+  if (!names.length) return [item.file_path]
+  // Chapters are written contiguously from ch0. A gap means this device holds only
+  // part of the item (e.g. chapters appended before its backup was ever pulled), and
+  // packing it would publish an archive that silently drops chapters — refuse.
+  names.forEach((name, i) => {
+    if (chapterIndex(name) !== i) {
+      throw new Error(`Item ${item.id} has incomplete chapter files locally (missing ch${i}).`)
+    }
+  })
+  return names
 }
 
 function chapterIndex(name: string): number {

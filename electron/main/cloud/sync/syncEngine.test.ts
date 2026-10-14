@@ -5,54 +5,12 @@ import { keyOf } from './reconcile'
 import { type SyncRow } from './specs'
 import type { CloudRepo } from './cloudRepo'
 import { runSyncRound } from './syncEngine'
+import { makeFakeServer } from '../../../../test/cloud/fakeSyncServer'
 
 // End-to-end sync tests: a fake in-memory "server" (standing in for the cloudRepo
 // seam + Postgres) drives independent device DBs through real sync rounds. This
 // exercises the whole engine — dirty push + server-stamped read-back, cursor pull,
 // LWW apply, tombstone propagation, C4 merge, append union — with zero network.
-
-// ── A fake server: server-stamped monotonic updated_at + cursor pull, exactly the
-//    contract cloudRepo/Postgres provide. ────────────────────────────────────────
-function makeFakeServer(): { repo: CloudRepo; clock: () => number } {
-  const tables = new Map<string, Map<string, SyncRow>>()
-  let clock = 1000
-  const tbl = (t: string) => {
-    let m = tables.get(t)
-    if (!m) tables.set(t, (m = new Map()))
-    return m
-  }
-  const repo: CloudRepo = {
-    async push(spec, rows) {
-      const m = tbl(spec.table)
-      const out: SyncRow[] = []
-      for (const r of rows) {
-        clock += 1
-        const prev = m.get(keyOf(spec, r))
-        const stamped: SyncRow = {}
-        for (const c of spec.columns) stamped[c] = r[c] ?? null
-        // Model the server-side grow-only max trigger (specs.merge → GREATEST(new,old)),
-        // so a shallower push can't lower the authoritative high-water mark.
-        for (const [col, strat] of Object.entries(spec.merge ?? {})) {
-          if (strat !== 'max' || !prev) continue
-          const a = typeof stamped[col] === 'number' ? (stamped[col] as number) : null
-          const b = typeof prev[col] === 'number' ? (prev[col] as number) : null
-          if (a != null || b != null) stamped[col] = Math.max(a ?? 0, b ?? 0)
-        }
-        stamped.updated_at = clock // server trigger overwrites the client value
-        m.set(keyOf(spec, stamped), stamped)
-        out.push(stamped)
-      }
-      return out
-    },
-    async pull(spec, cursor) {
-      return [...tbl(spec.table).values()]
-        .filter((r) => Number(r.updated_at ?? 0) > cursor)
-        .sort((a, b) => Number(a.updated_at ?? 0) - Number(b.updated_at ?? 0))
-        .map((r) => ({ ...r }))
-    },
-  }
-  return { repo, clock: () => clock }
-}
 
 // A stricter fake server than makeFakeServer: it also enforces the Postgres
 // UNIQUE(user_id, name) on naturalKey tables, so a colliding push throws 23505 (which

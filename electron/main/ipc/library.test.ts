@@ -495,6 +495,65 @@ describe('library IPC — cover images', () => {
     expect(row.cover_path).toBe('content/c2-cover.jpg')
   })
 
+  // ── CLO-7: a new cover on a backed-up item must be re-addressed (new cover_hash) ──
+  it("setCover re-records a backed-up item's blob hashes", async () => {
+    seedItem(db, { id: 'bk', file_path: 'bk.html', cover_path: null })
+    db.prepare('UPDATE items SET cloud_backup = 1 WHERE id = ?').run('bk')
+    writeFileSync(join(CONTENT_DIR, 'bk.html'), '<p>body</p>')
+
+    await invoke('library:setCover', 'bk', new Uint8Array([1, 2, 3]).buffer, 'png')
+    const row = db.prepare('SELECT blob_hash, cover_hash FROM items WHERE id = ?').get('bk') as any
+    expect(row.blob_hash).toMatch(/^[0-9a-f]{64}$/)
+    expect(row.cover_hash).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('setCover re-records a backed-up derived item that inherits the cover', async () => {
+    seedItem(db, { id: 'src', file_path: 'src.html', cover_path: null })
+    seedItem(db, { id: 'der', file_path: 'der.html', cover_path: null })
+    db.prepare('UPDATE items SET derived_from = ?, cloud_backup = 1 WHERE id = ?').run('src', 'der')
+    writeFileSync(join(CONTENT_DIR, 'src.html'), '<p>src</p>')
+    writeFileSync(join(CONTENT_DIR, 'der.html'), '<p>der</p>')
+
+    await invoke('library:setCover', 'src', new Uint8Array([7, 7]).buffer, 'png')
+    const der = db.prepare('SELECT cover_hash FROM items WHERE id = ?').get('der') as any
+    expect(der.cover_hash).toMatch(/^[0-9a-f]{64}$/)
+    // The source was never backed up, so it gets no hashes.
+    const src = db.prepare('SELECT cover_hash FROM items WHERE id = ?').get('src') as any
+    expect(src.cover_hash).toBeNull()
+  })
+
+  it('setCover leaves an existing account cover_hash alone (auto-render, not a user pick)', async () => {
+    seedItem(db, { id: 'bk2', file_path: 'bk2.html', cover_path: null })
+    db.prepare("UPDATE items SET cloud_backup = 1, cover_hash = 'peer' WHERE id = ?").run('bk2')
+    writeFileSync(join(CONTENT_DIR, 'bk2.html'), '<p>body</p>')
+
+    await invoke('library:setCover', 'bk2', new Uint8Array([1, 2, 3]).buffer, 'png')
+    const row = db.prepare('SELECT cover_hash FROM items WHERE id = ?').get('bk2') as any
+    expect(row.cover_hash).toBe('peer')
+  })
+
+  it('setCover does not record hashes for an item that was never backed up', async () => {
+    seedItem(db, { id: 'lo', file_path: 'lo.html', cover_path: null })
+    writeFileSync(join(CONTENT_DIR, 'lo.html'), '<p>body</p>')
+    await invoke('library:setCover', 'lo', new Uint8Array([1]).buffer, 'png')
+    const row = db.prepare('SELECT blob_hash, cover_hash FROM items WHERE id = ?').get('lo') as any
+    expect(row.blob_hash).toBeNull()
+    expect(row.cover_hash).toBeNull()
+  })
+
+  it("pickCover replaces a backed-up item's cover_hash", async () => {
+    seedItem(db, { id: 'pk', file_path: 'pk.html', cover_path: null })
+    db.prepare("UPDATE items SET cloud_backup = 1, cover_hash = 'old' WHERE id = ?").run('pk')
+    writeFileSync(join(CONTENT_DIR, 'pk.html'), '<p>body</p>')
+    const src = join(CONTENT_DIR, 'picked.png')
+    writeFileSync(src, 'pickedbytes')
+    vi.spyOn(dialog, 'showOpenDialog').mockResolvedValue({ canceled: false, filePaths: [src] })
+
+    await invoke('library:pickCover', 'pk')
+    const row = db.prepare('SELECT cover_hash FROM items WHERE id = ?').get('pk') as any
+    expect(row.cover_hash).toMatch(/^[0-9a-f]{64}$/)
+  })
+
   it('pickCover returns null when the dialog is canceled', async () => {
     seedItem(db, { id: 'pc' })
     vi.spyOn(dialog, 'showOpenDialog').mockResolvedValue({ canceled: true, filePaths: [] })
@@ -568,6 +627,25 @@ describe('library IPC — refresh', () => {
     expect(triggerBackfill).toHaveBeenCalled()
   })
 
+  it('append re-addresses a backed-up item to its new chapter bytes (CLO-7)', async () => {
+    seedItem(db, { id: 'bka', source_url: 'https://x', file_path: 'bka-ch0.html' })
+    db.prepare(
+      "UPDATE items SET chapter_start = 1, chapter_end = 1, cloud_backup = 1, blob_hash = 'old' WHERE id = ?",
+    ).run('bka')
+    writeFileSync(join(CONTENT_DIR, 'bka-ch0.html'), '<p>one</p>')
+    mockGetChapterCount.mockResolvedValue(2)
+    mockAppendChapters.mockImplementation(async () => {
+      writeFileSync(join(CONTENT_DIR, 'bka-ch1.html'), '<p>two</p>') // the appended chapter
+      return { wordCount: 2 }
+    })
+
+    await invoke('library:refresh', 'bka')
+    const row = db.prepare('SELECT blob_hash, dirty FROM items WHERE id = ?').get('bka') as any
+    expect(row.blob_hash).toMatch(/^[0-9a-f]{64}$/)
+    expect(row.blob_hash).not.toBe('old')
+    expect(row.dirty).toBe(1)
+  })
+
   it('full re-scrape: skips all I/O when the content hash is unchanged', async () => {
     const text = 'the very same words'
     seedItem(db, {
@@ -606,6 +684,25 @@ describe('library IPC — refresh', () => {
     expect(row.content_hash).not.toBe('stale')
     expect(readFileSync(join(CONTENT_DIR, 'chg.html'), 'utf8')).toContain('brand new content')
     expect(triggerBackfill).toHaveBeenCalled()
+  })
+
+  it('full re-scrape re-addresses a backed-up item to the new bytes (CLO-7)', async () => {
+    ;(globalThis.fetch as Mock).mockRejectedValue(new Error('HEAD failed'))
+    seedItem(db, {
+      id: 'bkr',
+      source_url: 'https://x',
+      file_path: 'bkr.html',
+      content_hash: 'stale',
+    })
+    db.prepare("UPDATE items SET cloud_backup = 1, blob_hash = 'old' WHERE id = ?").run('bkr')
+    writeFileSync(join(CONTENT_DIR, 'bkr.html'), '<p>old body</p>')
+    indexFts('bkr', 'old body')
+    mockRefreshContent.mockResolvedValue({ html: '<p>fresh</p>', textContent: 'fresh' })
+
+    await invoke('library:refresh', 'bkr')
+    const row = db.prepare('SELECT blob_hash FROM items WHERE id = ?').get('bkr') as any
+    expect(row.blob_hash).toMatch(/^[0-9a-f]{64}$/)
+    expect(row.blob_hash).not.toBe('old')
   })
 
   // ── M1 regression: refresh must delete the OLD postings exactly (from the

@@ -37,15 +37,29 @@ describe('contentFileNames', () => {
   })
 
   it('enumerates all chapter siblings, numerically sorted, for multi-chapter HTML', () => {
-    // Deliberately create out-of-order and double-digit chapters.
-    for (const i of [0, 2, 1, 10]) writeContent(`m1-ch${i}.html`, `c${i}`)
+    // Deliberately create out-of-order and double-digit chapters (a lexical sort
+    // would put ch10 before ch2).
+    for (const i of [10, 0, 2, 1, 9, 3, 8, 4, 7, 5, 6]) writeContent(`m1-ch${i}.html`, `c${i}`)
     writeContent('other-ch0.html', 'nope') // a different item must not leak in
-    expect(contentFileNames({ id: 'm1', file_path: 'm1-ch0.html', cover_path: null })).toEqual([
-      'm1-ch0.html',
-      'm1-ch1.html',
-      'm1-ch2.html',
-      'm1-ch10.html',
-    ])
+    expect(contentFileNames({ id: 'm1', file_path: 'm1-ch0.html', cover_path: null })).toEqual(
+      Array.from({ length: 11 }, (_, i) => `m1-ch${i}.html`),
+    )
+  })
+
+  // regression CLO-7: a device holding only SOME chapters (e.g. chapters appended
+  // before its backup was pulled) must not pack — and so publish — a partial archive.
+  it('refuses a chapter set with a gap', () => {
+    for (const i of [0, 1, 3]) writeContent(`m1-ch${i}.html`, `c${i}`)
+    expect(() =>
+      contentFileNames({ id: 'm1', file_path: 'm1-ch0.html', cover_path: null }),
+    ).toThrow(/incomplete chapter files.*ch2/)
+  })
+
+  it('refuses a chapter set missing ch0', () => {
+    for (const i of [1, 2]) writeContent(`m1-ch${i}.html`, `c${i}`)
+    expect(() =>
+      contentFileNames({ id: 'm1', file_path: 'm1-ch0.html', cover_path: null }),
+    ).toThrow(/missing ch0/)
   })
 })
 

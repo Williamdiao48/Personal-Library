@@ -502,6 +502,30 @@ describe('appendChapters — per-chapter file format', () => {
     expect(hit).toBeTruthy()
   })
 
+  // CLO-7: on a device that synced the row but never pulled the backup, the earlier
+  // chapters are absent. Appending must materialize them first (ensureLocalContent)
+  // rather than number the new chapters from ch0 and later publish a partial archive.
+  it('pulls a cloud-backed item before appending, writing nothing if that fails', async () => {
+    const id = seedItem(db, {
+      title: 'Serial',
+      source_url: 'https://www.royalroad.com/fiction/1',
+      file_path: 'cloudonly-ch0.html',
+    })
+    db.prepare(
+      "UPDATE items SET chapter_start = 1, chapter_end = 2, blob_hash = 'abc' WHERE id = ?",
+    ).run(id)
+    vi.mocked(captureRoyalRoad).mockResolvedValue(
+      siteContent({ html: '<div class="chapter"><p>new</p></div>', textContent: 'new' }),
+    )
+
+    // Cloud isn't configured under test, so the pull fails loudly.
+    await expect(appendChapters(id, 3)).rejects.toThrow(/cloud backup/)
+    expect(captureRoyalRoad).not.toHaveBeenCalled()
+    expect(existsSync(join(CONTENT, 'cloudonly-ch0.html'))).toBe(false)
+    const row = db.prepare('SELECT chapter_end FROM items WHERE id = ?').get(id) as any
+    expect(row.chapter_end).toBe(2)
+  })
+
   // T1-3 regression: the new chapter files are written before the DB transaction,
   // so a txn failure must roll them back — otherwise orphaned -chN.html files
   // inflate the next append's chapter count and duplicate chapters. Force the txn

@@ -17,6 +17,15 @@ const RETRY_BACKOFF_MS = 60_000
 
 // Guards against overlapping drains (startup + a fresh capture) double-uploading.
 let draining = false
+// A drain requested while one was running. Honoured by one follow-up pass once the
+// current drain finishes, so a blob enqueued mid-drain (e.g. a re-address after a
+// content change) doesn't wait for the next unrelated trigger.
+let drainRequested = false
+
+// A drain re-addresses items whose bytes drifted under a pending hash (see
+// resolveBlobBytes), which enqueues new rows. Re-select at most this many times so
+// those uploads happen in the same drain, without risking an unbounded loop.
+const MAX_DRAIN_PASSES = 3
 
 interface BlobSyncRow {
   content_hash: string
@@ -98,6 +107,36 @@ export function recordItemBlobs(itemId: string): void {
 }
 
 /**
+ * Re-address a backed-up item's blobs after its on-disk bytes changed (appended
+ * chapters, a re-scrape, a new cover). Blobs are content-addressed, so changed bytes
+ * need a NEW hash: without this, blob_hash keeps pointing at the old archive (peers
+ * restore stale content) and a still-pending upload would ship the new bytes under
+ * the old key.
+ *
+ * "Backed up" is cloud_backup = 1 (this device's intent) OR a blob_hash (another
+ * device backed it up — cloud_backup is device-local, the pointer is synced).
+ * Synchronous up to the hash update, so a caller's following notifyLocalMutation()
+ * pushes the new pointer in the same round; the upload drains in the background.
+ * Never throws: a failure leaves the previous (stale but intact) backup in place.
+ */
+export function refreshItemBackup(itemId: string): void {
+  const row = getDb()
+    .prepare(`SELECT cloud_backup, blob_hash FROM items WHERE id = ? AND deleted_at IS NULL`)
+    .get(itemId) as { cloud_backup: number; blob_hash: string | null } | undefined
+  if (!row || (row.cloud_backup !== 1 && !row.blob_hash)) return
+  try {
+    recordItemBlobs(itemId)
+  } catch (err) {
+    console.warn(
+      `[uploader] couldn't re-address backup for ${itemId}:`,
+      err instanceof Error ? err.message : String(err),
+    )
+    return
+  }
+  void drainOutbox().catch(() => {})
+}
+
+/**
  * Compute an item's content (+ cover) blob hashes, record them on the item, and
  * enqueue them for upload, then kick a drain. Called after a capture the user
  * opted into cloud backup for. Safe to call more than once (idempotent).
@@ -109,17 +148,46 @@ export async function enqueueItemBackup(itemId: string): Promise<void> {
 
 // ── drain ────────────────────────────────────────────────────────────────────
 
-/** Rebuild a blob's bytes from whichever live item carries that hash (any item
- *  with identical bytes yields the same blob — content-addressing). */
-function resolveBlobBytes(hash: string, kind: BlobKind): Buffer | null {
+/**
+ * Rebuild a blob's bytes from a live item that carries that hash (any item with
+ * identical bytes yields the same blob — content-addressing).
+ *
+ * The bytes are re-packed from the CURRENT files, which may have changed since the
+ * hash was recorded (an append/re-scrape/new cover racing a pending upload).
+ * Uploading them under the old key would plant bytes that fail every peer's
+ * integrity check forever, so a hash mismatch is never uploaded: each drifted item
+ * is re-addressed (a fresh hash + ledger row) and the stale row is dropped.
+ */
+function resolveBlobBytes(hash: string, kind: BlobKind): Buffer {
   const col = kind === 'content' ? 'blob_hash' : 'cover_hash'
-  const item = getDb()
-    .prepare(
-      `SELECT id, file_path, cover_path FROM items WHERE ${col} = ? AND deleted_at IS NULL LIMIT 1`,
-    )
-    .get(hash) as ItemBlobRow | undefined
-  if (!item) return null
-  return kind === 'content' ? buildContentBlob(item).data : (buildCoverBlob(item)?.data ?? null)
+  const items = getDb()
+    .prepare(`SELECT id, file_path, cover_path FROM items WHERE ${col} = ? AND deleted_at IS NULL`)
+    .all(hash) as ItemBlobRow[]
+  // The source item was deleted before we drained — nothing to upload.
+  if (!items.length)
+    throw new NoSourceError(`no local source for ${kind} blob ${hash.slice(0, 12)}`)
+
+  const drifted: string[] = []
+  let firstError: unknown = null
+  for (const item of items) {
+    try {
+      const blob = kind === 'content' ? buildContentBlob(item) : buildCoverBlob(item)
+      if (blob && blob.hash === hash) return blob.data
+      drifted.push(item.id)
+    } catch (err) {
+      firstError ??= err // e.g. a file missing on disk — another item may still match
+    }
+  }
+  if (!drifted.length) throw firstError
+
+  for (const id of drifted) {
+    try {
+      recordItemBlobs(id)
+    } catch {
+      // Unpackable now (e.g. incomplete chapters) — the item keeps its stale pointer.
+    }
+  }
+  throw new StaleSourceError(`${kind} blob ${hash.slice(0, 12)} no longer matches its source`)
 }
 
 /** The blob's source item is gone (permanently deleted) — there's nothing to upload
@@ -127,10 +195,12 @@ function resolveBlobBytes(hash: string, kind: BlobKind): Buffer | null {
  *  parking it in 'error' forever (which would falsely read as "backup failed"). */
 class NoSourceError extends Error {}
 
+/** Every item that carried the hash now has different bytes and was re-addressed —
+ *  the hash no longer names anything to upload, so its row is dropped like NoSource. */
+class StaleSourceError extends Error {}
+
 async function uploadBlob(hash: string, kind: BlobKind): Promise<void> {
   const data = resolveBlobBytes(hash, kind)
-  // The source item was deleted before we drained — nothing to upload.
-  if (!data) throw new NoSourceError(`no local source for ${kind} blob ${hash.slice(0, 12)}`)
   const url = await presignBlobUrl('put', kind, hash, data.length)
   // Buffer isn't in fetch's BodyInit union; hand it a plain Uint8Array view over
   // the same bytes (no copy). A Node Buffer is always ArrayBuffer-backed (never
@@ -151,10 +221,15 @@ async function uploadBlob(hash: string, kind: BlobKind): Promise<void> {
 /**
  * Drain pending (and retry-eligible errored) blobs to R2. No-ops when cloud is
  * unconfigured or no one is signed in, so it's always safe to call (startup,
- * after a capture, on sign-in). Serialized via the `draining` guard.
+ * after a capture, on sign-in). Serialized via the `draining` guard; a call made
+ * while a drain is running is honoured by one follow-up drain when it finishes.
  */
 export async function drainOutbox(): Promise<void> {
-  if (draining || !isConfigured()) return
+  if (draining) {
+    drainRequested = true
+    return
+  }
+  if (!isConfigured()) return
   const supabase = getSupabase()
   if (!supabase) return
   const {
@@ -163,33 +238,42 @@ export async function drainOutbox(): Promise<void> {
   if (!session) return // signed out → nothing to upload
 
   draining = true
+  drainRequested = false
   try {
-    const cutoff = Date.now() - RETRY_BACKOFF_MS
-    const rows = getDb()
-      .prepare(
-        `SELECT content_hash, kind FROM blob_sync
-         WHERE state = 'pending'
-            OR (state = 'error' AND (last_attempt_at IS NULL OR last_attempt_at < ?))
-         ORDER BY updated_at ASC`,
-      )
-      .all(cutoff) as BlobSyncRow[]
+    for (let pass = 0; pass < MAX_DRAIN_PASSES; pass++) {
+      let readdressed = false
+      const cutoff = Date.now() - RETRY_BACKOFF_MS
+      const rows = getDb()
+        .prepare(
+          `SELECT content_hash, kind FROM blob_sync
+           WHERE state = 'pending'
+              OR (state = 'error' AND (last_attempt_at IS NULL OR last_attempt_at < ?))
+           ORDER BY updated_at ASC`,
+        )
+        .all(cutoff) as BlobSyncRow[]
 
-    for (const row of rows) {
-      try {
-        await uploadBlob(row.content_hash, row.kind)
-        markState(row.content_hash, 'synced')
-      } catch (err) {
-        if (err instanceof NoSourceError) {
-          // Dead row — the item it came from was permanently deleted. Drop it so it
-          // stops re-failing every drain and no longer counts as a failed backup.
-          getDb().prepare(`DELETE FROM blob_sync WHERE content_hash = ?`).run(row.content_hash)
-          broadcastBlobState(row.content_hash, 'synced') // nudge the pill to refetch (no live card matches this orphan hash)
-        } else {
-          markState(row.content_hash, 'error', err instanceof Error ? err.message : String(err))
+      for (const row of rows) {
+        try {
+          await uploadBlob(row.content_hash, row.kind)
+          markState(row.content_hash, 'synced')
+        } catch (err) {
+          if (err instanceof NoSourceError || err instanceof StaleSourceError) {
+            // Dead row — the item it came from was permanently deleted, or its bytes
+            // changed and it was re-addressed under a new hash. Drop it so it stops
+            // re-failing every drain and no longer counts as a failed backup.
+            getDb().prepare(`DELETE FROM blob_sync WHERE content_hash = ?`).run(row.content_hash)
+            broadcastBlobState(row.content_hash, 'synced') // nudge the pill to refetch (no live card matches this orphan hash)
+            if (err instanceof StaleSourceError) readdressed = true
+          } else {
+            markState(row.content_hash, 'error', err instanceof Error ? err.message : String(err))
+          }
         }
       }
+      // Re-addressing enqueued fresh rows — upload them now rather than next drain.
+      if (!readdressed) break
     }
   } finally {
     draining = false
   }
+  if (drainRequested) await drainOutbox()
 }
