@@ -13,7 +13,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-14 # Apple Silicon (arm64)
+          - os: macos-latest # Apple Silicon (arm64); --arm64 below pins the arch regardless
             platform: mac
             arch: arm64
             arch_flag: --arm64
