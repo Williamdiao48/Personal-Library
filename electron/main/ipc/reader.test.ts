@@ -4,16 +4,23 @@ import { join } from 'path'
 import { app, invoke, resetIpc } from '../../../test/stubs/electron'
 import { registerReaderHandlers } from './reader'
 import { buildEpub } from '../../../test/fixtures/epub'
+import { openTestDb, closeTestDb } from '../../../test/db/harness'
 
 const contentDir = join(app.getPath('userData'), 'content')
 
 beforeEach(() => {
+  // Pull-on-open always looks the item up (to check its local copy is current), so
+  // the handlers need a DB even for files that are already on disk.
+  openTestDb()
   resetIpc()
   rmSync(contentDir, { recursive: true, force: true })
   mkdirSync(contentDir, { recursive: true })
   registerReaderHandlers()
 })
-afterEach(() => rmSync(contentDir, { recursive: true, force: true }))
+afterEach(() => {
+  closeTestDb()
+  rmSync(contentDir, { recursive: true, force: true })
+})
 
 describe('reader IPC — path-traversal guards', () => {
   it('rejects traversal on loadContent', async () => {

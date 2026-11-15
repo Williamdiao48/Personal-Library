@@ -11,7 +11,7 @@ let db: Database.Database
 
 // Bump this number whenever you add a new entry to MIGRATIONS below.
 // Exported so the test harness can assert a fresh DB reaches the current version.
-export const CURRENT_VERSION = 45
+export const CURRENT_VERSION = 46
 
 // Each key is the version being migrated TO.
 // The SQL runs inside a transaction; user_version is updated automatically.
@@ -560,6 +560,19 @@ ALTER TABLE items ADD COLUMN review TEXT DEFAULT NULL;`,
   // only (never in schema.ts SCHEMA — sync_meta is created in migration 38).
   45: `
     ALTER TABLE sync_meta ADD COLUMN last_user_id TEXT;
+  `,
+  // CLO-14 — which blob_hash/cover_hash this device's on-disk bytes came from.
+  // Pull-on-open used to stop at "a file exists", so a peer that had already opened
+  // an item never fetched a newer blob (appended chapters, new cover). The downloader
+  // now re-fetches when the synced pointer differs from this marker. DEVICE-LOCAL —
+  // not in SYNC_SPECS, so push never sends it and a pulled upsert never touches it.
+  // Backfilled from the current pointers: on upgrade, assume the bytes on disk match
+  // (today's assumption) so the upgrade itself triggers no downloads, while any
+  // later pointer change is detected. ALTER-ADD, MIGRATIONS only (never in SCHEMA).
+  46: `
+    ALTER TABLE items ADD COLUMN local_blob_hash TEXT;
+    ALTER TABLE items ADD COLUMN local_cover_hash TEXT;
+    UPDATE items SET local_blob_hash = blob_hash, local_cover_hash = cover_hash;
   `,
 }
 

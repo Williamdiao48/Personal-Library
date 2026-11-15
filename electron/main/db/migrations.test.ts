@@ -27,6 +27,34 @@ describe('database bring-up', () => {
     expect(cols).toContain('last_user_id')
   })
 
+  it('items carries the local_* materialized-hash markers (migration 46, CLO-14)', () => {
+    const db = openTestDb()
+    const cols = (db.pragma('table_info(items)') as { name: string }[]).map((c) => c.name)
+    expect(cols).toEqual(expect.arrayContaining(['local_blob_hash', 'local_cover_hash']))
+  })
+
+  it('migration 46 backfills the markers from the current pointers (no download on upgrade)', () => {
+    const db = new Database(':memory:')
+    db.exec(SCHEMA)
+    for (let v = 2; v <= 45; v++) if (MIGRATIONS[v]) execMigration(db, MIGRATIONS[v])
+    db.pragma('user_version = 45')
+    db.prepare(
+      `INSERT INTO items (id, title, content_type, file_path, date_saved, date_modified,
+         blob_hash, cover_hash)
+       VALUES ('b', 'T', 'article', 'b.html', 1, 1, 'H', 'C'),
+              ('n', 'T', 'article', 'n.html', 1, 1, NULL, NULL)`,
+    ).run()
+
+    bringUpSchema(db)
+    expect(
+      db.prepare(`SELECT id, local_blob_hash, local_cover_hash FROM items ORDER BY id`).all(),
+    ).toEqual([
+      { id: 'b', local_blob_hash: 'H', local_cover_hash: 'C' },
+      { id: 'n', local_blob_hash: null, local_cover_hash: null },
+    ])
+    db.close()
+  })
+
   it('creates every expected table', () => {
     const db = openTestDb()
     const tables = (

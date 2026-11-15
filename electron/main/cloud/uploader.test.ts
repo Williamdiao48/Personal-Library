@@ -403,6 +403,22 @@ describe('refreshItemBackup', () => {
   })
 })
 
+describe('local materialized-hash markers (CLO-14)', () => {
+  it('recordItemBlobs marks this device as holding the hashes it just recorded', () => {
+    h.buildCoverBlob.mockReturnValue({ data: Buffer.from('JPEG'), hash: 'coverhash' })
+    const id = seedItem(db, { file_path: 'a.epub', cover_path: 'content/a-cover.jpg' })
+    db.prepare(
+      `UPDATE items SET local_blob_hash = 'old', local_cover_hash = 'old' WHERE id = ?`,
+    ).run(id)
+    recordItemBlobs(id)
+    // Without this the downloader would treat this device's own change as stale and
+    // re-fetch it from R2.
+    expect(
+      db.prepare(`SELECT local_blob_hash, local_cover_hash FROM items WHERE id = ?`).get(id),
+    ).toEqual({ local_blob_hash: 'contenthash', local_cover_hash: 'coverhash' })
+  })
+})
+
 describe('drainOutbox serialization', () => {
   it('runs a follow-up drain for a request made while one was in flight', async () => {
     const a = seedItem(db, { id: 'a', file_path: 'a.html' })

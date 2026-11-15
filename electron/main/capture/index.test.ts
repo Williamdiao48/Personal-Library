@@ -526,6 +526,50 @@ describe('appendChapters — per-chapter file format', () => {
     expect(row.chapter_end).toBe(2)
   })
 
+  // CLO-14: a local copy older than the synced row (marker ≠ blob_hash) can't be
+  // refreshed here (cloud unavailable) → refuse rather than append onto it.
+  it('refuses to append onto a stale local copy it cannot refresh, writing nothing', async () => {
+    const id = seedItem(db, {
+      title: 'Serial',
+      source_url: 'https://www.royalroad.com/fiction/1',
+      file_path: 'stale-ch0.html',
+    })
+    db.prepare(
+      `UPDATE items SET chapter_start = 1, chapter_end = 4, blob_hash = 'new',
+         local_blob_hash = 'old' WHERE id = ?`,
+    ).run(id)
+    writeFileSync(join(CONTENT, 'stale-ch0.html'), '<div class="chapter"><p>zero</p></div>')
+    writeFileSync(join(CONTENT, 'stale-ch1.html'), '<div class="chapter"><p>one</p></div>')
+
+    await expect(appendChapters(id, 6)).rejects.toThrow(/updated on another device/)
+    expect(captureRoyalRoad).not.toHaveBeenCalled()
+    expect(existsSync(join(CONTENT, 'stale-ch2.html'))).toBe(false)
+    const row = db.prepare('SELECT chapter_end FROM items WHERE id = ?').get(id) as any
+    expect(row.chapter_end).toBe(4)
+  })
+
+  it('appends normally onto a current local copy of a cloud-backed item (no download)', async () => {
+    const id = seedItem(db, {
+      title: 'Serial',
+      source_url: 'https://www.royalroad.com/fiction/1',
+      file_path: 'cur-ch0.html',
+    })
+    db.prepare(
+      `UPDATE items SET chapter_start = 1, chapter_end = 1, blob_hash = 'h',
+         local_blob_hash = 'h' WHERE id = ?`,
+    ).run(id)
+    writeFileSync(join(CONTENT, 'cur-ch0.html'), '<div class="chapter"><p>zero</p></div>')
+    db.prepare(
+      'INSERT INTO items_fts (rowid, title, author, content) SELECT rowid, title, author, ? FROM items WHERE id = ?',
+    ).run('zero', id)
+    vi.mocked(captureRoyalRoad).mockResolvedValue(
+      siteContent({ html: '<div class="chapter"><p>one</p></div>', textContent: 'one' }),
+    )
+
+    await appendChapters(id, 2)
+    expect(readFileSync(join(CONTENT, 'cur-ch1.html'), 'utf8')).toContain('one')
+  })
+
   // T1-3 regression: the new chapter files are written before the DB transaction,
   // so a txn failure must roll them back — otherwise orphaned -chN.html files
   // inflate the next append's chapter count and duplicate chapters. Force the txn
