@@ -460,8 +460,11 @@ async function appendChaptersInner(
   // On a device that has this item's metadata but has never opened it, the existing
   // chapters live only in the cloud backup. Pull them first: appending onto nothing
   // would number the new chapters from ch0 and (once re-backed-up) replace the
-  // backup with an archive missing every earlier chapter.
-  await ensureLocalContent(item.file_path)
+  // backup with an archive missing every earlier chapter. Likewise a copy that's
+  // older than the synced row (CLO-14) must be refreshed, not built on: the new
+  // chapters are fetched after the row's chapter_end but numbered after the files
+  // on disk, so a stale copy would silently drop another device's chapters.
+  await ensureLocalContent(item.file_path, { requireCurrent: true })
 
   const appendStart = item.chapter_end + 1
   if (newEnd < appendStart) throw new Error(`New end (${newEnd}) must be ≥ ${appendStart}.`)

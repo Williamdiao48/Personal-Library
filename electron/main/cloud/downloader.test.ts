@@ -285,3 +285,269 @@ describe('ensureLocalCover', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
+
+// CLO-14: a local file existing isn't enough — it must be the version the synced
+// pointer names. `local_blob_hash` records which hash the on-disk bytes came from.
+describe('ensureLocalContent — freshness (CLO-14)', () => {
+  const marker = (id: string) =>
+    (
+      db.prepare('SELECT local_blob_hash FROM items WHERE id = ?').get(id) as {
+        local_blob_hash: string | null
+      }
+    ).local_blob_hash
+
+  /** A serial whose local copy is `local` chapters at hash `old`, and whose synced
+   *  pointer now names `archive`. */
+  const seedStale = (local: string[], remote: string[]) => {
+    const id = seedItem(db, { file_path: 'placeholder' })
+    const file_path = `${id}-ch0.html`
+    local.forEach((s, i) => writeFileSync(join(contentPath, `${id}-ch${i}.html`), s))
+    const archive = packArchive(remote.map((s, i) => entry(`${id}-ch${i}.html`, s)))
+    db.prepare(
+      `UPDATE items SET file_path = ?, blob_hash = ?, local_blob_hash = 'old' WHERE id = ?`,
+    ).run(file_path, sha256Hex(archive), id)
+    return { id, file_path, archive }
+  }
+  const chapters = (id: string) =>
+    [0, 1, 2, 3, 4]
+      .map((n) => join(contentPath, `${id}-ch${n}.html`))
+      .filter(existsSync)
+      .map((p) => readFileSync(p, 'utf8'))
+
+  it('fast path: local copy at the current hash → no network', async () => {
+    const archive = packArchive([entry('a.epub', 'X')])
+    const id = seedBacked('a.epub', archive)
+    db.prepare('UPDATE items SET local_blob_hash = blob_hash WHERE id = ?').run(id)
+    writeFileSync(join(contentPath, 'a.epub'), 'X')
+
+    await ensureLocalContent('a.epub')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('adopts a local copy with no marker (pre-tracking / dedup adoption) without downloading', async () => {
+    const archive = packArchive([entry('a.epub', 'X')])
+    const id = seedBacked('a.epub', archive) // local_blob_hash NULL
+    writeFileSync(join(contentPath, 'a.epub'), 'X')
+
+    await ensureLocalContent('a.epub')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(marker(id)).toBe(sha256Hex(archive))
+  })
+
+  it('a first download records the marker', async () => {
+    const archive = packArchive([entry('a.epub', 'X')])
+    const id = seedBacked('a.epub', archive)
+    fetchMock.mockResolvedValue(okBytes(archive))
+
+    await ensureLocalContent('a.epub')
+    expect(marker(id)).toBe(sha256Hex(archive))
+  })
+
+  it('refreshes a stale local copy to the newer version and records its hash', async () => {
+    const { id, file_path, archive } = seedStale(['zero', 'one'], ['zero', 'one', 'two'])
+    fetchMock.mockResolvedValue(okBytes(archive))
+
+    await ensureLocalContent(file_path)
+    expect(h.presignBlobUrl).toHaveBeenCalledWith('get', 'content', sha256Hex(archive))
+    expect(chapters(id)).toEqual(['zero', 'one', 'two'])
+    expect(marker(id)).toBe(sha256Hex(archive))
+  })
+
+  it('removes chapter files the newer version no longer has (re-scrape shrink)', async () => {
+    const { id, file_path, archive } = seedStale(['a', 'b', 'c', 'd'], ['A', 'B'])
+    fetchMock.mockResolvedValue(okBytes(archive))
+
+    await ensureLocalContent(file_path)
+    expect(chapters(id)).toEqual(['A', 'B'])
+  })
+
+  it.each([
+    ['offline', () => fetchMock.mockRejectedValue(new Error('offline'))],
+    [
+      'not uploaded yet (404)',
+      () => fetchMock.mockResolvedValue({ ok: false, status: 404 } as unknown as Response),
+    ],
+    ['integrity mismatch', () => fetchMock.mockResolvedValue(okBytes(Buffer.from('nope')))],
+    ['signed out', () => h.getSession.mockResolvedValue({ data: { session: null } } as never)],
+  ])(
+    'a failed refresh (%s) keeps the local copy, keeps the marker, and does not throw',
+    async (_, fail) => {
+      const { id, file_path } = seedStale(['zero', 'one'], ['zero', 'one', 'two'])
+      fail()
+
+      await expect(ensureLocalContent(file_path)).resolves.toBeUndefined()
+      expect(chapters(id)).toEqual(['zero', 'one'])
+      expect(marker(id)).toBe('old') // still stale → the next open retries
+    },
+  )
+
+  it('a first download still throws when it fails (nothing local to fall back to)', async () => {
+    seedBacked('a.epub', packArchive([entry('a.epub', 'X')]))
+    fetchMock.mockResolvedValue({ ok: false, status: 404 } as unknown as Response)
+    await expect(ensureLocalContent('a.epub')).rejects.toThrow(/R2 404/)
+  })
+
+  it('concurrent opens share one download', async () => {
+    const { id, file_path, archive } = seedStale(['zero'], ['zero', 'one'])
+    fetchMock.mockResolvedValue(okBytes(archive))
+
+    await Promise.all([ensureLocalContent(file_path), ensureLocalContent(file_path)])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(chapters(id)).toEqual(['zero', 'one'])
+  })
+
+  it('refreshes a single-file item (EPUB) in place', async () => {
+    const id = seedItem(db, { file_path: 'b.epub' })
+    writeFileSync(join(contentPath, 'b.epub'), 'OLD')
+    const archive = packArchive([entry('b.epub', 'NEW')])
+    db.prepare(`UPDATE items SET blob_hash = ?, local_blob_hash = 'old' WHERE id = ?`).run(
+      sha256Hex(archive),
+      id,
+    )
+    fetchMock.mockResolvedValue(okBytes(archive))
+
+    await ensureLocalContent('b.epub')
+    expect(readFileSync(join(contentPath, 'b.epub'), 'utf8')).toBe('NEW')
+    expect(marker(id)).toBe(sha256Hex(archive))
+  })
+
+  // SEC-1 must hold on the refresh path too: a rogue archive is rejected before
+  // ANY write, so neither this item's copy nor another item's files change.
+  it('a refresh whose archive names another item writes nothing and keeps the local copy', async () => {
+    writeFileSync(join(contentPath, 'victim.epub'), 'ORIGINAL')
+    seedItem(db, { file_path: 'victim.epub' })
+    const { id, file_path } = seedStale(['zero'], ['zero'])
+    const evil = packArchive([entry(`${id}-ch0.html`, 'X'), entry('victim.epub', 'PWNED')])
+    db.prepare('UPDATE items SET blob_hash = ? WHERE id = ?').run(sha256Hex(evil), id)
+    fetchMock.mockResolvedValue(okBytes(evil))
+
+    await ensureLocalContent(file_path) // reader: falls back, no throw
+    expect(readFileSync(join(contentPath, 'victim.epub'), 'utf8')).toBe('ORIGINAL')
+    expect(chapters(id)).toEqual(['zero'])
+    expect(marker(id)).toBe('old')
+  })
+
+  it("the shrink cleanup never touches another item's chapter files", async () => {
+    const other = seedItem(db, { file_path: 'placeholder' })
+    writeFileSync(join(contentPath, `${other}-ch0.html`), 'theirs-0')
+    writeFileSync(join(contentPath, `${other}-ch1.html`), 'theirs-1')
+    const { file_path, archive } = seedStale(['a', 'b', 'c'], ['A'])
+    fetchMock.mockResolvedValue(okBytes(archive))
+
+    await ensureLocalContent(file_path)
+    expect(chapters(other)).toEqual(['theirs-0', 'theirs-1'])
+  })
+
+  it('a non-cloud item with a local file is left alone: no network, no marker', async () => {
+    const id = seedItem(db, { file_path: 'local-ch0.html' }) // blob_hash NULL
+    writeFileSync(join(contentPath, 'local-ch0.html'), 'mine')
+
+    await ensureLocalContent('local-ch0.html', { requireCurrent: true })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(marker(id)).toBeNull()
+  })
+})
+
+// A copy that's older than the synced pointer is fine to READ, not to WRITE on
+// (appending chapters numbers them after the stale files). Writers ask for
+// requireCurrent and must get an error instead of the fallback.
+describe('ensureLocalContent — requireCurrent (for writers)', () => {
+  const staleSerial = (local: string[], remote: string[]) => {
+    const id = seedItem(db, { file_path: 'placeholder' })
+    const file_path = `${id}-ch0.html`
+    local.forEach((s, i) => writeFileSync(join(contentPath, `${id}-ch${i}.html`), s))
+    const archive = packArchive(remote.map((s, i) => entry(`${id}-ch${i}.html`, s)))
+    db.prepare(
+      `UPDATE items SET file_path = ?, blob_hash = ?, local_blob_hash = 'old' WHERE id = ?`,
+    ).run(file_path, sha256Hex(archive), id)
+    return { id, file_path, archive }
+  }
+
+  it('throws when the refresh fails, leaving the local copy untouched', async () => {
+    const { id, file_path } = staleSerial(['zero'], ['zero', 'one'])
+    fetchMock.mockResolvedValue({ ok: false, status: 404 } as unknown as Response)
+
+    await expect(ensureLocalContent(file_path, { requireCurrent: true })).rejects.toThrow(
+      /updated on another device/,
+    )
+    expect(readFileSync(join(contentPath, `${id}-ch0.html`), 'utf8')).toBe('zero')
+    expect(existsSync(join(contentPath, `${id}-ch1.html`))).toBe(false)
+  })
+
+  it("still throws when it joined a reader's in-flight refresh that failed", async () => {
+    const { file_path } = staleSerial(['zero'], ['zero', 'one'])
+    fetchMock.mockRejectedValue(new Error('offline'))
+
+    const [reader, writer] = await Promise.allSettled([
+      ensureLocalContent(file_path),
+      ensureLocalContent(file_path, { requireCurrent: true }),
+    ])
+    expect(fetchMock).toHaveBeenCalledTimes(1) // they shared one attempt
+    expect(reader.status).toBe('fulfilled')
+    expect(writer.status).toBe('rejected')
+  })
+
+  it('succeeds once the refresh succeeds', async () => {
+    const { file_path, archive } = staleSerial(['zero'], ['zero', 'one'])
+    fetchMock.mockResolvedValue(okBytes(archive))
+    await expect(ensureLocalContent(file_path, { requireCurrent: true })).resolves.toBeUndefined()
+  })
+
+  it('does not block a current or unmarked local copy', async () => {
+    const archive = packArchive([entry('a.epub', 'X')])
+    const id = seedBacked('a.epub', archive)
+    writeFileSync(join(contentPath, 'a.epub'), 'X')
+
+    await ensureLocalContent('a.epub', { requireCurrent: true }) // unmarked → adopt
+    await ensureLocalContent('a.epub', { requireCurrent: true }) // now current
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(id).toBeTruthy()
+  })
+})
+
+describe('ensureLocalCover — freshness (CLO-14)', () => {
+  const seedStaleCover = (local: string, remote: Buffer) => {
+    const id = seedItem(db, {})
+    writeFileSync(join(contentPath, 'c-cover.jpg'), local)
+    db.prepare(
+      `UPDATE items SET cover_path = 'content/c-cover.jpg', cover_hash = ?,
+         local_cover_hash = 'old' WHERE id = ?`,
+    ).run(sha256Hex(remote), id)
+    return id
+  }
+  const coverMarker = (id: string) =>
+    (
+      db.prepare('SELECT local_cover_hash FROM items WHERE id = ?').get(id) as {
+        local_cover_hash: string | null
+      }
+    ).local_cover_hash
+
+  it('replaces a stale cover with the current one and records its hash', async () => {
+    const remote = Buffer.from('NEW')
+    const id = seedStaleCover('OLD', remote)
+    fetchMock.mockResolvedValue(okBytes(remote))
+
+    await ensureLocalCover('content/c-cover.jpg')
+    expect(readFileSync(join(contentPath, 'c-cover.jpg'), 'utf8')).toBe('NEW')
+    expect(coverMarker(id)).toBe(sha256Hex(remote))
+  })
+
+  it('keeps the old cover when the refresh fails', async () => {
+    const id = seedStaleCover('OLD', Buffer.from('NEW'))
+    fetchMock.mockResolvedValue({ ok: false, status: 404 } as unknown as Response)
+
+    await ensureLocalCover('content/c-cover.jpg')
+    expect(readFileSync(join(contentPath, 'c-cover.jpg'), 'utf8')).toBe('OLD')
+    expect(coverMarker(id)).toBe('old')
+  })
+
+  it('adopts an unmarked local cover without downloading', async () => {
+    const remote = Buffer.from('X')
+    const id = seedStaleCover('X', remote)
+    db.prepare('UPDATE items SET local_cover_hash = NULL WHERE id = ?').run(id)
+
+    await ensureLocalCover('content/c-cover.jpg')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(coverMarker(id)).toBe(sha256Hex(remote))
+  })
+})

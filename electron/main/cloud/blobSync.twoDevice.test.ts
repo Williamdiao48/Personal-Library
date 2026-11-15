@@ -52,7 +52,7 @@ vi.mock('../recommender/lifecycle', () => ({ triggerBackfill: vi.fn() }))
 vi.mock('./sync/syncService', () => ({ notifyLocalMutation: vi.fn() }))
 
 import { registerLibraryHandlers } from '../ipc/library'
-import { enqueueItemBackup, drainOutbox } from './uploader'
+import { enqueueItemBackup, drainOutbox, refreshItemBackup } from './uploader'
 import { ensureLocalContent, ensureLocalCover } from './downloader'
 import { captureRoyalRoad, getRoyalRoadChapterCount } from '../capture/sites/royalroad'
 
@@ -60,6 +60,7 @@ import { captureRoyalRoad, getRoyalRoadChapterCount } from '../capture/sites/roy
 const r2 = new Map<string, Buffer>()
 const violations: string[] = []
 const puts: string[] = []
+const gets: string[] = []
 
 async function fakeFetch(input: unknown, init?: { method?: string; body?: Uint8Array }) {
   const url = String(input)
@@ -74,6 +75,7 @@ async function fakeFetch(input: unknown, init?: { method?: string; body?: Uint8A
     r2.set(key, body)
     return { ok: true, status: 200, text: async () => '' }
   }
+  gets.push(key)
   const obj = r2.get(key)
   if (!obj) return { ok: false, status: 404, headers: { get: () => null } }
   return {
@@ -199,6 +201,7 @@ beforeEach(() => {
   r2.clear()
   violations.length = 0
   puts.length = 0
+  gets.length = 0
   h.signedIn = true
   server = makeFakeServer()
   vi.stubGlobal('fetch', vi.fn(fakeFetch))
@@ -332,12 +335,9 @@ describe('two devices, one backed-up serial', () => {
     expect(readFileSync(join(B.userData, cover_path!), 'utf8')).toBe('NEW-COVER-BYTES')
   })
 
-  // KNOWN GAP (CLO-7 follow-up, not fixed here): a peer that ALREADY opened the book
-  // keeps its old local files. ensureLocalContent short-circuits on existsSync(ch0), so
-  // the re-addressed blob is never fetched and the appended chapters never appear.
-  // `it.fails` passes while the bug exists; when it's fixed this flips red, prompting
-  // removal of `.fails`.
-  it.fails('a B that already opened the book picks up chapters A appends later', async () => {
+  // CLO-14: a peer that already holds an item's files must still pick up a newer
+  // version — pull-on-open compares the local copy's hash, not just its existence.
+  it('a B that already opened the book picks up chapters A appends later', async () => {
     const A = newDevice('A')
     const B = newDevice('B')
     const id = await captureBackedUpSerial(A)
@@ -350,5 +350,145 @@ describe('two devices, one backed-up serial', () => {
     await sync(B)
 
     expect(await openOn(B, id)).toEqual([0, 1, 2].map((n) => `${id}-ch${n}.html`))
+    for (const n of [0, 1, 2])
+      expect(read(B, `${id}-ch${n}.html`)).toBe(read(A, `${id}-ch${n}.html`))
+  })
+
+  it("B's own append is never re-downloaded", async () => {
+    const A = newDevice('A')
+    const B = newDevice('B')
+    const id = await captureBackedUpSerial(A)
+    await sync(A)
+    await sync(B)
+    await openOn(B, id)
+    expect(gets).toHaveLength(1)
+
+    await appendViaRefresh(B, id, 3, 2)
+    await sync(B)
+    expect(await openOn(B, id)).toEqual([0, 1, 2].map((n) => `${id}-ch${n}.html`))
+    expect(gets).toHaveLength(1) // B's bytes ARE the new version — nothing to fetch
+
+    await sync(A)
+    expect(await openOn(A, id)).toEqual([0, 1, 2].map((n) => `${id}-ch${n}.html`))
+    expect(read(A, `${id}-ch2.html`)).toBe(chapterHtml(2)) // and A picks up B's append
+  })
+
+  it('B keeps reading its old copy while A has synced the new pointer but not uploaded yet', async () => {
+    const A = newDevice('A')
+    const B = newDevice('B')
+    const id = await captureBackedUpSerial(A)
+    await sync(A)
+    await sync(B)
+    await openOn(B, id)
+
+    h.signedIn = false // A's upload stays queued; its row still pushes
+    await appendViaRefresh(A, id, 3, 2)
+    await sync(A)
+    h.signedIn = true
+    await sync(B)
+
+    // R2 404s the new key: B serves what it has instead of failing the open.
+    expect(await openOn(B, id)).toEqual([0, 1].map((n) => `${id}-ch${n}.html`))
+
+    await sync(A) // the upload drains
+    on(B)
+    expect(await openOn(B, id)).toEqual([0, 1, 2].map((n) => `${id}-ch${n}.html`))
+  })
+
+  // Reading an older copy is fine; WRITING on top of one is not. An append numbers
+  // its new chapters after the files on disk but fetches them after the synced
+  // chapter_end — on a stale copy that silently drops A's chapters and then
+  // publishes the gap to every device.
+  it("B can't append onto a stale copy it failed to refresh (A's chapters are never dropped)", async () => {
+    const A = newDevice('A')
+    const B = newDevice('B')
+    const id = await captureBackedUpSerial(A)
+    await sync(A)
+    await sync(B)
+    await openOn(B, id) // B holds ch0–1
+
+    h.signedIn = false // A's upload of ch2–3 stays queued; its row still pushes
+    await appendViaRefresh(A, id, 4, 2)
+    await sync(A)
+    h.signedIn = true
+    await sync(B) // B: chapter_end 4, but R2 404s the new archive
+
+    on(B)
+    const pointer = itemRow(B, id).blob_hash
+    vi.mocked(getRoyalRoadChapterCount).mockResolvedValue(6)
+    vi.mocked(captureRoyalRoad).mockResolvedValue(site([4, 5]))
+    await expect(invoke('library:refresh', id)).rejects.toThrow()
+    await settle()
+
+    expect(contentFiles(B)).toEqual([0, 1].map((n) => `${id}-ch${n}.html`)) // nothing written
+    expect(itemRow(B, id)).toMatchObject({ blob_hash: pointer, chapter_end: 4 })
+
+    // Once A's upload lands, the same append succeeds with every chapter in order.
+    await sync(A)
+    on(B)
+    const res = (await invoke('library:refresh', id)) as { changed: boolean }
+    expect(res.changed).toBe(true)
+    await settle()
+    expect(contentFiles(B)).toEqual([0, 1, 2, 3, 4, 5].map((n) => `${id}-ch${n}.html`))
+    for (const n of [0, 1, 2, 3])
+      expect(read(B, `${id}-ch${n}.html`)).toBe(read(A, `${id}-ch${n}.html`))
+  })
+
+  it('a version with FEWER chapters leaves no phantom chapters on B', async () => {
+    const A = newDevice('A')
+    const B = newDevice('B')
+    const id = await captureBackedUpSerial(A)
+    await appendViaRefresh(A, id, 4, 2)
+    await sync(A)
+    await sync(B)
+    expect(await openOn(B, id)).toHaveLength(4)
+
+    // A's copy shrinks back to two chapters (e.g. a re-scrape after the author
+    // pulled chapters) and is re-addressed.
+    on(A)
+    rmSync(join(A.userData, 'content', `${id}-ch2.html`))
+    rmSync(join(A.userData, 'content', `${id}-ch3.html`))
+    refreshItemBackup(id)
+    await sync(A)
+    await sync(B)
+
+    expect(await openOn(B, id)).toEqual([0, 1].map((n) => `${id}-ch${n}.html`))
+  })
+
+  it('a cover changed on A replaces the cover B already has', async () => {
+    const A = newDevice('A')
+    const B = newDevice('B')
+    const id = await captureBackedUpSerial(A)
+    const pick = async (bytes: string) => {
+      on(A)
+      const src = join(A.userData, 'picked.png')
+      writeFileSync(src, bytes)
+      vi.spyOn(dialog, 'showOpenDialog').mockResolvedValue({ canceled: false, filePaths: [src] })
+      await invoke('library:pickCover', id)
+      await sync(A)
+      await sync(B)
+      on(B)
+      const { cover_path } = itemRow(B, id)
+      await ensureLocalCover(cover_path!)
+      return readFileSync(join(B.userData, cover_path!), 'utf8')
+    }
+
+    expect(await pick('FIRST-COVER')).toBe('FIRST-COVER')
+    expect(await pick('SECOND-COVER')).toBe('SECOND-COVER')
+  })
+
+  it('the device that picked a cover never re-downloads it', async () => {
+    const A = newDevice('A')
+    const id = await captureBackedUpSerial(A)
+    on(A)
+    const src = join(A.userData, 'picked.png')
+    writeFileSync(src, 'MINE')
+    vi.spyOn(dialog, 'showOpenDialog').mockResolvedValue({ canceled: false, filePaths: [src] })
+    await invoke('library:pickCover', id)
+    await sync(A)
+
+    await ensureLocalCover(itemRow(A, id).cover_path!)
+    expect(gets).toEqual([])
+    expect(readFileSync(join(A.userData, itemRow(A, id).cover_path!), 'utf8')).toBe('MINE')
   })
 })

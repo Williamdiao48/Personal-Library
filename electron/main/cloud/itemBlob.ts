@@ -24,9 +24,7 @@ const MULTI_CHAPTER_RE = /-ch(\d+)\.html$/
 /** The content filenames (relative to `content/`) that make up an item's bytes. */
 export function contentFileNames(item: ItemBlobRow): string[] {
   if (!MULTI_CHAPTER_RE.test(item.file_path)) return [item.file_path]
-  const names = readdirSync(contentDir())
-    .filter((n) => n.startsWith(`${item.id}-ch`) && MULTI_CHAPTER_RE.test(n))
-    .sort((a, b) => chapterIndex(a) - chapterIndex(b))
+  const names = itemChapterFiles(item.id)
   // Defensive: if enumeration finds nothing, fall back to the recorded file_path.
   if (!names.length) return [item.file_path]
   // Chapters are written contiguously from ch0. A gap means this device holds only
@@ -38,6 +36,21 @@ export function contentFileNames(item: ItemBlobRow): string[] {
     }
   })
   return names
+}
+
+/** Every `<id>-chK.html` file for `id` on disk, in chapter order. Gaps included —
+ *  no contiguity check (contentFileNames layers that on). Empty if the content dir
+ *  doesn't exist yet. */
+export function itemChapterFiles(id: string): string[] {
+  let names: string[]
+  try {
+    names = readdirSync(contentDir())
+  } catch {
+    return []
+  }
+  return names
+    .filter((n) => n.startsWith(`${id}-ch`) && MULTI_CHAPTER_RE.test(n))
+    .sort((a, b) => chapterIndex(a) - chapterIndex(b))
 }
 
 function chapterIndex(name: string): number {

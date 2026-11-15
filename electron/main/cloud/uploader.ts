@@ -95,13 +95,24 @@ export function recordItemBlobs(itemId: string): void {
   // synced columns. Without re-dirtying, the freshly-recorded hash never pushes, so
   // another device keeps blob_hash = NULL and pull-on-open ENOENTs the book forever.
   // Same reasoning as backfillFileHashes; the server restamps updated_at on push.
+  // The local_* markers move with the pointers: the hash was computed from THIS
+  // device's bytes, so they already match it — the downloader must not treat this
+  // device's own change as stale and re-fetch it (CLO-14).
   const content = buildContentBlob(item)
-  db.prepare(`UPDATE items SET blob_hash = ?, dirty = 1 WHERE id = ?`).run(content.hash, itemId)
+  db.prepare(`UPDATE items SET blob_hash = ?, local_blob_hash = ?, dirty = 1 WHERE id = ?`).run(
+    content.hash,
+    content.hash,
+    itemId,
+  )
   enqueueBlob(content.hash, 'content')
 
   const cover = buildCoverBlob(item)
   if (cover) {
-    db.prepare(`UPDATE items SET cover_hash = ?, dirty = 1 WHERE id = ?`).run(cover.hash, itemId)
+    db.prepare(`UPDATE items SET cover_hash = ?, local_cover_hash = ?, dirty = 1 WHERE id = ?`).run(
+      cover.hash,
+      cover.hash,
+      itemId,
+    )
     enqueueBlob(cover.hash, 'cover')
   }
 }

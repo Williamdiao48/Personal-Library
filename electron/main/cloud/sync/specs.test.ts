@@ -21,6 +21,15 @@ describe('SYNC_SPECS', () => {
     expect(SYNC_SPEC_BY_TABLE.items.columns).toContain('purged_at')
   })
 
+  it('never syncs the device-local materialized-hash markers (CLO-14)', () => {
+    // local_blob_hash/local_cover_hash describe THIS device's disk. Synced, a peer's
+    // marker would overwrite ours and the downloader would skip a needed refresh.
+    for (const spec of Object.values(SYNC_SPEC_BY_TABLE)) {
+      expect(spec.columns).not.toContain('local_blob_hash')
+      expect(spec.columns).not.toContain('local_cover_hash')
+    }
+  })
+
   it('flags annotation_themes as userScopedId (its preset ids collide across users)', () => {
     // annotation_themes seeds fixed preset ids ('preset-love', …) identically on
     // every device, so `id` is NOT globally unique — the server PK is (user_id,

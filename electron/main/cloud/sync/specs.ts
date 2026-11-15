@@ -5,8 +5,8 @@
 // (reconcile.ts) and the cloudRepo/orchestrator (Chunk 4). Column names are the
 // LOCAL SQLite names, which are 1:1 with the Postgres mirror (server/supabase
 // migrations) MINUS `user_id` (cloudRepo adds it on push, strips it on pull) and
-// MINUS device-local columns (file_path, cover_path, cloud_backup, dirty — never
-// synced).
+// MINUS device-local columns (cloud_backup, dirty, and the CLO-14 materialized-hash
+// markers local_blob_hash/local_cover_hash — never synced).
 //
 // purged_at IS synced (Tier 1 #4): permanent-delete cascades globally so the
 // shared R2 blob can be reaped once no un-purged item references it — and so a
